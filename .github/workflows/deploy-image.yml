@@ -798,12 +798,17 @@ jobs:
             exit 1
           fi
           cat "$RUNNER_TEMP/back-sem-rollback.log"
-          grep -F "Can't locate revision" "$RUNNER_TEMP/back-sem-rollback.log"
-          grep -F 'ROLLBACK=1' "$RUNNER_TEMP/back-sem-rollback.log"
+          grep -F 'revisão incompatível' "$RUNNER_TEMP/back-sem-rollback.log"
+          grep -F 'a stack não foi mexida' "$RUNNER_TEMP/back-sem-rollback.log"
           test "$(versions)" = "$before"
           ROLLBACK=1 IMAGE=gerador-planos:ci ./deploy.sh > "$RUNNER_TEMP/back.log" 2>&1 || { cat "$RUNNER_TEMP/back.log"; exit 1; }
           cat "$RUNNER_TEMP/back.log"
           grep -F 'sem migrations' "$RUNNER_TEMP/back.log"
+          if grep -F 'deploy.sh: migrations com ' "$RUNNER_TEMP/back.log"; then
+            echo 'ROLLBACK=1 não devia executar migrations'
+            exit 1
+          fi
+          test "$(psql_db 'select version_num from alembic_version')" = ci_futura
           psql_db "update alembic_version set version_num = '$head'"
           for service in api worker; do
             echo "$service: $(state "$service"), $(image "$service")"
