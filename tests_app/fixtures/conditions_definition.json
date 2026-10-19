@@ -1,0 +1,458 @@
+{
+  "format": 1,
+  "slug": "condicional-definicao",
+  "title": "Diagnóstico com perguntas condicionais (teste)",
+  "intro": "Conte como você organiza seu projeto fictício. As respostas ajudam a escolher atividades para experimentar nas próximas semanas.",
+  "minutes": 3,
+  "steps": [
+    {
+      "title": "Seu momento",
+      "questions": [
+        {
+          "name": "nome",
+          "kind": "text",
+          "label": "Nome",
+          "contact": true,
+          "max_length": 120
+        },
+        {
+          "name": "email",
+          "kind": "email",
+          "label": "E-mail"
+        },
+        {
+          "name": "whatsapp",
+          "kind": "tel",
+          "label": "WhatsApp",
+          "required": false
+        },
+        {
+          "name": "situacao",
+          "kind": "choice",
+          "label": "Situação profissional",
+          "options": [
+            {
+              "value": "clt_escritorio",
+              "label": "CLT em escritório"
+            },
+            {
+              "value": "clt_fora",
+              "label": "CLT fora da contabilidade"
+            },
+            {
+              "value": "estudante",
+              "label": "Estudante"
+            },
+            {
+              "value": "autonomo",
+              "label": "Autônomo"
+            },
+            {
+              "value": "escritorio_proprio",
+              "label": "Escritório próprio"
+            }
+          ]
+        },
+        {
+          "name": "clientes_proprios",
+          "kind": "choice",
+          "label": "Atende clientes próprios?",
+          "show_when": {
+            "mode": "all",
+            "rules": [
+              {
+                "field": "situacao",
+                "operator": "in",
+                "value": [
+                  "clt_escritorio",
+                  "clt_fora",
+                  "estudante"
+                ]
+              }
+            ]
+          },
+          "options": [
+            {
+              "value": "sim",
+              "label": "Sim"
+            },
+            {
+              "value": "nao",
+              "label": "Não"
+            }
+          ]
+        },
+        {
+          "name": "carteira",
+          "kind": "choice",
+          "label": "Quantos clientes?",
+          "show_when": {
+            "mode": "any",
+            "rules": [
+              {
+                "field": "situacao",
+                "operator": "in",
+                "value": [
+                  "autonomo",
+                  "escritorio_proprio"
+                ]
+              },
+              {
+                "field": "clientes_proprios",
+                "operator": "equals",
+                "value": "sim"
+              }
+            ]
+          },
+          "options": [
+            {
+              "value": "zero",
+              "label": "Nenhum",
+              "show_when": {
+                "mode": "all",
+                "rules": [
+                  {
+                    "field": "situacao",
+                    "operator": "in",
+                    "value": [
+                      "autonomo",
+                      "escritorio_proprio"
+                    ]
+                  }
+                ]
+              },
+              "points": 0
+            },
+            {
+              "value": "um_a_dez",
+              "label": "1 a 10",
+              "points": 1
+            },
+            {
+              "value": "onze_a_trinta",
+              "label": "11 a 30",
+              "points": 3
+            },
+            {
+              "value": "mais_de_trinta",
+              "label": "Mais de 30",
+              "points": 5
+            }
+          ]
+        },
+        {
+          "name": "nome_escritorio",
+          "kind": "text",
+          "label": "Nome do escritório",
+          "required": false,
+          "contact": true,
+          "max_length": 160,
+          "show_when": {
+            "mode": "any",
+            "rules": [
+              {
+                "field": "situacao",
+                "operator": "in",
+                "value": [
+                  "autonomo",
+                  "escritorio_proprio"
+                ]
+              },
+              {
+                "field": "clientes_proprios",
+                "operator": "equals",
+                "value": "sim"
+              }
+            ]
+          }
+        },
+        {
+          "name": "equipe",
+          "kind": "choice",
+          "label": "Quantas pessoas na equipe?",
+          "show_when": {
+            "mode": "all",
+            "rules": [
+              {
+                "field": "carteira",
+                "operator": "in",
+                "value": [
+                  "um_a_dez",
+                  "onze_a_trinta",
+                  "mais_de_trinta"
+                ]
+              }
+            ]
+          },
+          "options": [
+            {
+              "value": "so_eu",
+              "label": "Só eu",
+              "points": 0
+            },
+            {
+              "value": "duas_tres",
+              "label": "2 a 3",
+              "points": 2
+            },
+            {
+              "value": "quatro_mais",
+              "label": "4 ou mais",
+              "points": 4
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "O que pesa",
+      "questions": [
+        {
+          "name": "dor_principal",
+          "kind": "choice",
+          "label": "O que mais pesa?",
+          "options": [
+            {
+              "value": "retrabalho",
+              "label": "Retrabalho"
+            },
+            {
+              "value": "captacao",
+              "label": "Captação"
+            },
+            {
+              "value": "outra",
+              "label": "Outra situação"
+            }
+          ]
+        },
+        {
+          "name": "dores_adicionais",
+          "kind": "choices",
+          "label": "Outras situações",
+          "required": false,
+          "options": [
+            {
+              "value": "retrabalho",
+              "label": "Retrabalho"
+            },
+            {
+              "value": "captacao",
+              "label": "Captação"
+            },
+            {
+              "value": "outra",
+              "label": "Outra situação"
+            }
+          ]
+        },
+        {
+          "name": "outra_dor",
+          "kind": "textarea",
+          "label": "Qual é a outra situação?",
+          "required": false,
+          "max_length": 300,
+          "show_when": {
+            "mode": "any",
+            "rules": [
+              {
+                "field": "dor_principal",
+                "operator": "equals",
+                "value": "outra"
+              },
+              {
+                "field": "dores_adicionais",
+                "operator": "contains",
+                "value": "outra"
+              }
+            ]
+          }
+        },
+        {
+          "name": "pausa_7_dias",
+          "kind": "choice",
+          "label": "E se você ficasse 7 dias fora?",
+          "required": false,
+          "show_when": {
+            "mode": "all",
+            "rules": [
+              {
+                "field": "carteira",
+                "operator": "in",
+                "value": [
+                  "um_a_dez",
+                  "onze_a_trinta",
+                  "mais_de_trinta"
+                ]
+              }
+            ]
+          },
+          "options": [
+            {
+              "value": "trava",
+              "label": "Trava"
+            },
+            {
+              "value": "segue",
+              "label": "Segue"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "O resultado",
+      "questions": [
+        {
+          "name": "resultado",
+          "kind": "choice",
+          "label": "Qual resultado você quer?",
+          "options": [
+            {
+              "value": "rotina",
+              "label": "Organizar a rotina"
+            },
+            {
+              "value": "clientes",
+              "label": "Conseguir clientes"
+            }
+          ]
+        },
+        {
+          "name": "pergunta",
+          "kind": "textarea",
+          "label": "Uma pergunta para a equipe",
+          "required": false,
+          "max_length": 500
+        }
+      ]
+    }
+  ],
+  "identity": {
+    "email": "email",
+    "name": "nome",
+    "phone": "whatsapp"
+  },
+  "consent": {
+    "version": "condicional-definicao-v1",
+    "processing": "Concordo com o uso das minhas respostas para gerar o meu plano de ação.",
+    "notice": "Usamos suas respostas para montar o seu plano. Parte do processamento é feita por fornecedores de nuvem e de inteligência artificial, que podem armazenar dados fora do Brasil. Você pode pedir a exclusão dos seus dados quando quiser.",
+    "marketing": {
+      "email": "Quero receber dicas e novidades da Leadkit por e-mail.",
+      "whatsapp": "Quero receber dicas e novidades da Leadkit pelo WhatsApp."
+    }
+  },
+  "instructions": "Você é consultora de gestão de escritórios contábeis da Leadkit.\nEscreva um plano de ação curto, prático e em português do Brasil, falando diretamente com a pessoa (\"você\").\nUse apenas as informações do diagnóstico. Não prometa resultados financeiros nem use termos como \"garantido\".\nResponda somente no formato estruturado solicitado.\n",
+  "prompt": "Situação: {{ labels.situacao }}\nAtende clientes próprios: {{ labels.clientes_proprios or \"não perguntado\" }}\nCarteira: {{ labels.carteira or \"não perguntado\" }}\nEscritório: {{ answers.nome_escritorio or \"não informado\" }}\nEquipe: {{ labels.equipe or \"não perguntado\" }}\nDor principal: {{ labels.dor_principal }}\nOutra situação: {{ answers.outra_dor or \"não informado\" }}\nSete dias fora: {{ labels.pausa_7_dias or \"não informado\" }}\nResultado: {{ labels.resultado }}\nMonte um plano de 90 dias com um título, um resumo, de 3 a 5 ações e um próximo passo.\n",
+  "plan": {
+    "fields": [
+      {
+        "name": "titulo",
+        "kind": "text",
+        "min_length": 3,
+        "max_length": 120
+      },
+      {
+        "name": "resumo",
+        "kind": "text",
+        "min_length": 20,
+        "max_length": 1200
+      },
+      {
+        "name": "acoes",
+        "kind": "list",
+        "min_items": 3,
+        "max_items": 5,
+        "items": {
+          "kind": "text"
+        }
+      },
+      {
+        "name": "proximo_passo",
+        "kind": "text",
+        "min_length": 10,
+        "max_length": 400
+      }
+    ]
+  },
+  "pdf": {
+    "html": "<!doctype html>\n<html lang=\"pt-BR\">\n<head>\n  <meta charset=\"utf-8\">\n  <title>{{ plan.titulo }}</title>\n  <meta name=\"author\" content=\"Leadkit\">\n</head>\n<body>\n  <header class=\"cover\">\n    <p class=\"eyebrow\">Plano de ação personalizado</p>\n    <h1>{{ plan.titulo }}</h1>\n    <p class=\"meta\">\n      {%- if lead.name %}Preparado para <strong>{{ lead.name }}</strong> · {% endif -%}\n      {{ generated_date }}\n    </p>\n  </header>\n\n  <section>\n    <h2>Seu momento</h2>\n    <p>{{ plan.resumo }}</p>\n  </section>\n\n  <section>\n    <h2>Ações para os próximos 90 dias</h2>\n    <ol class=\"actions\">\n      {% for acao in plan.acoes %}\n      <li>{{ acao }}</li>\n      {% endfor %}\n    </ol>\n  </section>\n\n  <aside class=\"next\">\n    <h2>Comece por aqui</h2>\n    <p>{{ plan.proximo_passo }}</p>\n  </aside>\n\n  <p class=\"fineprint\">\n    {{ form.title }}. Plano inicial gerado com apoio de IA a partir das suas respostas: orienta os\n    próximos passos, mas não substitui uma consultoria, e os resultados dependem da execução.\n  </p>\n</body>\n</html>\n",
+    "css": "/* PDF do formulário demo. Tokens de cor de mockups/00-design-system.html; corpo 11/15,5 pt e\n   margens de 18 mm (05-ui-ux.md §4.11). Source Sans Pro ainda não está embutida: títulos em Source Sans. */\n:root {\n  --obsidian-950: #120D0B;\n  --on-dark: #F7F2EA;\n  --ink-900: #1A1613;\n  --ink-700: #3F3832;\n  --ink-600: #5B534A;\n  --line: #D8D0C5;\n  --wine-700: #9B1C28;\n  --gold-50: #FBF3DF;\n  --gold-300: #EBCB8B;\n  --gold-500: #B8863B;\n  --gold-700: #7A5714;\n}\n\n@page {\n  size: A4;\n  margin: 18mm 18mm 22mm;\n  @bottom-left {\n    content: \"Leadkit · Plano de ação personalizado\";\n    width: 70%;\n    padding-top: 6pt;\n    border-top: 0.5pt solid #D8D0C5;\n    vertical-align: top;\n    font: 8.5pt \"Source Sans Pro\";\n    color: #5B534A;\n  }\n  @bottom-right {\n    content: \"Página \" counter(page) \" de \" counter(pages);\n    width: 30%;\n    padding-top: 6pt;\n    border-top: 0.5pt solid #D8D0C5;\n    vertical-align: top;\n    text-align: right;\n    font: 8.5pt \"Source Sans Pro\";\n    color: #5B534A;\n  }\n}\n\nhtml {\n  font-size: 11pt;\n  line-height: 15.5pt;\n  color: var(--ink-900);\n  hyphens: manual; /* hífen automático entra como texto e atrapalha a busca no PDF */\n  overflow-wrap: break-word;\n}\nbody { margin: 0; }\np { margin: 0 0 6pt; orphans: 3; widows: 3; }\nh1, h2 { margin: 0; font-weight: 700; break-after: avoid; }\n\n.cover {\n  padding: 22pt 24pt 20pt;\n  margin-bottom: 8pt;\n  border-radius: 10pt;\n  /* brilho vinho da marca sobre obsidiana; paradas sólidas (sem alfa) imprimem igual em todo leitor */\n  background: radial-gradient(farthest-corner at 100% 0%, #55161F 0%, #2E1015 35%, #120D0B 70%);\n  color: var(--on-dark);\n}\n.cover::before {\n  content: \"\";\n  display: block;\n  width: 30pt;\n  height: 2.5pt;\n  margin-bottom: 10pt;\n  background: var(--gold-500);\n}\n.eyebrow {\n  margin-bottom: 6pt;\n  font-size: 8.5pt;\n  font-weight: 700;\n  letter-spacing: 0.08em;\n  text-transform: uppercase;\n  color: var(--gold-300);\n}\n.cover h1 { font-size: 24pt; line-height: 28pt; margin-bottom: 10pt; color: #FFFFFF; }\n.cover .meta { margin: 0; font-size: 10.5pt; color: rgba(247, 242, 234, 0.86); }\n.cover .meta strong { font-weight: 600; color: #FFFFFF; }\n\nh2 {\n  margin: 18pt 0 8pt;\n  padding-bottom: 4pt;\n  border-bottom: 0.75pt solid var(--line);\n  font-size: 13pt;\n  line-height: 17pt;\n  color: var(--wine-700);\n}\n\n/* Número em bloco inline (e não posicionado): o PDF continua na ordem de leitura do conteúdo. */\nol.actions { margin: 0; padding: 0; list-style: none; counter-reset: acao; }\nol.actions li { margin-bottom: 9pt; padding-left: 26pt; counter-increment: acao; }\nol.actions li::before {\n  content: counter(acao);\n  display: inline-block;\n  width: 16pt;\n  height: 16pt;\n  margin-left: -26pt;\n  margin-right: 10pt;\n  border-radius: 8pt;\n  background: var(--wine-700);\n  color: #FFFFFF;\n  font-size: 9pt;\n  font-weight: 700;\n  line-height: 16pt;\n  text-align: center;\n  vertical-align: 1pt;\n}\n\n.next {\n  margin-top: 16pt;\n  padding: 12pt 16pt 8pt;\n  border-left: 3pt solid var(--gold-500);\n  background: var(--gold-50);\n  break-inside: avoid;\n}\n.next h2 {\n  margin: 0 0 4pt;\n  padding: 0;\n  border: 0;\n  font-size: 9pt;\n  letter-spacing: 0.08em;\n  text-transform: uppercase;\n  color: var(--gold-700);\n}\n\n.fineprint {\n  margin-top: 20pt;\n  font-size: 8.5pt;\n  line-height: 12pt;\n  color: var(--ink-600);\n  break-before: avoid; /* o aviso não fica sozinho numa página */\n}\n"
+  },
+  "preview": "{#- Prévia do plano na página de resultado. Recebe `plan` (documento validado contra `Plan`). -#}\n<section class=\"section\" aria-labelledby=\"previa-titulo\">\n  <h2 id=\"previa-titulo\">{{ plan.titulo }}</h2>\n  <div class=\"summary\">\n    <p>{{ plan.resumo }}</p>\n  </div>\n</section>\n\n<section class=\"section\" aria-labelledby=\"acoes-titulo\">\n  <h2 id=\"acoes-titulo\">Suas ações para os próximos 90 dias</h2>\n  <ol class=\"actions-list\">\n    {%- for acao in plan.acoes %}\n    <li>{{ acao }}</li>\n    {%- endfor %}\n  </ol>\n</section>\n\n<section class=\"section\" aria-labelledby=\"passo-titulo\">\n  <h2 id=\"passo-titulo\">Para começar esta semana</h2>\n  <div class=\"summary\">\n    <p>{{ plan.proximo_passo }}</p>\n  </div>\n</section>\n",
+  "data": {},
+  "examples": {
+    "answers": {
+      "nome": "Contadora Exemplo",
+      "email": "contadora@example.test",
+      "situacao": "escritorio_proprio",
+      "carteira": "onze_a_trinta",
+      "nome_escritorio": "Escritório Exemplo",
+      "equipe": "duas_tres",
+      "dor_principal": "outra",
+      "outra_dor": "Preciso conferir tudo antes de enviar.",
+      "pausa_7_dias": "trava",
+      "resultado": "rotina"
+    },
+    "plan": {
+      "titulo": "Organizar atividades do projeto",
+      "resumo": "A participante combina uma atividade simples com a equipe e registra o próximo passo. A participante combina uma atividade simples com a equipe e registra o próxi.",
+      "acoes": [
+        "A participante combina uma atividade simples com a equipe e registra o próximo.",
+        "A participante combina uma atividade simples com a equipe e.",
+        "A participante combina uma atividade simples com a equipe e registra."
+      ],
+      "proximo_passo": "A participante combina uma atividade simples com a equipe e registra o próx."
+    }
+  },
+  "scoring": {
+    "scores": [
+      {
+        "name": "porte",
+        "formula": "pontos(carteira) + pontos(equipe)",
+        "bands": {
+          "key": "nivel",
+          "label": "nivel_rotulo",
+          "levels": [
+            {
+              "min": 6,
+              "key": "alto",
+              "label": "Alto"
+            },
+            {
+              "min": 2,
+              "key": "medio",
+              "label": "Médio"
+            },
+            {
+              "key": "baixo",
+              "label": "Baixo"
+            }
+          ]
+        }
+      }
+    ],
+    "priority": [
+      {
+        "when": "porte >= 6",
+        "value": "P1"
+      },
+      {
+        "when": "porte >= 2",
+        "value": "P2"
+      },
+      {
+        "value": "P3"
+      }
+    ],
+    "persona": [
+      {
+        "when": "porte >= 6",
+        "value": "carteira grande"
+      },
+      {
+        "answer": "situacao"
+      }
+    ]
+  }
+}

@@ -1,0 +1,247 @@
+{% extends "admin/layout.html" %}
+{% import "admin/macros.html" as m %}
+{% set section = "forms" %}
+{% block title %}Integração com o Baserow · {{ page.form_title }}{% endblock %}
+{% block content %}
+<nav class="crumbs" aria-label="Você está em"><a href="/admin/forms">Formulários</a><span aria-hidden="true">/</span><a href="{{ page.form_url }}">{{ page.form_title }}</a><span aria-hidden="true">/</span><span>Integração com o Baserow</span></nav>
+
+<div class="page-head">
+  <div>
+    <h1>Integração com o Baserow</h1>
+    <p>Cada pedido concluído de “{{ page.form_title }}” vira uma linha numa tabela do Baserow. Se o pedido é reenviado ou reprocessado, a linha dele é atualizada, nunca duplicada.</p>
+  </div>
+  {% if page.state %}<div class="badges">{{ m.badge(page.state) }}</div>{% endif %}
+</div>
+
+<div class="stackcol">
+{% if cipher_missing %}
+<div class="alert alert--error" role="alert">{{ m.icon('alert-circle', 'icon--lg') }}<div><strong class="alert__title">Falta WEBHOOK_ENCRYPTION_KEY</strong><p>Sem a chave, o app não guarda o token do Baserow nem abre o guardado. Defina a chave no ambiente e reinicie a API e o worker (app/README.md).</p></div></div>
+{% endif %}
+{% if not page.published %}
+<div class="alert alert--warn" role="status">{{ m.icon('alert-triangle', 'icon--lg') }}<div><strong class="alert__title">Este formulário ainda não tem versão publicada</strong><p>O mapeamento parte das perguntas da versão publicada. Publique o formulário e volte aqui.</p></div></div>
+{% endif %}
+{% if errors.get("mapping") or errors.get("activate") or errors.get("remove") %}
+<div class="alert alert--error" role="alert">{{ m.icon('alert-circle', 'icon--lg') }}<div><p>{{ errors.get("mapping") or errors.get("activate") or errors.get("remove") }}</p></div></div>
+{% endif %}
+
+<section class="box" id="conexao" aria-labelledby="con-titulo">
+  <h2 id="con-titulo">Conexão</h2>
+  {% if page.stored %}
+  <dl class="kv">
+    <dt>Baserow</dt><dd class="mono">{{ page.stored.base_url }}</dd>
+    <dt>Tabela</dt><dd>{{ page.stored.table_id }}</dd>
+    <dt>Token</dt><dd>guardado, cifrado; não aparece de novo · trocado em {{ m.when(page.stored.token_changed) }}</dd>
+    <dt>Criada</dt><dd>{{ page.stored.created_by }} · {{ m.when(page.stored.created) }}</dd>
+    <dt>Última mudança</dt><dd>{{ page.stored.updated_by }} · {{ m.when(page.stored.updated) }}</dd>
+  </dl>
+  {% if page.stored.token_unreadable %}
+  <div class="alert alert--error" role="alert">{{ m.icon('alert-circle', 'icon--lg') }}<div><strong class="alert__title">O token guardado não abre com a WEBHOOK_ENCRYPTION_KEY atual</strong><p>As sincronizações esperam. Confira a chave no ambiente do app, ou cole o token de novo abaixo.</p></div></div>
+  {% endif %}
+  {% endif %}
+  {% if errors.get("connect") %}
+  <div class="alert alert--error" role="alert">{{ m.icon('alert-circle', 'icon--lg') }}<div><strong class="alert__title">A conexão não foi guardada</strong><p>{{ errors["connect"] }}</p></div></div>
+  {% endif %}
+  <form class="form-stack" method="post" action="{{ page.url }}/connect">
+    <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+    <input type="hidden" name="version" value="{{ page.stored.version if page.stored else 0 }}">
+    <p class="muted">O token é o <strong>token de banco de dados</strong> do Baserow (em Configurações › Tokens de banco de dados), com permissão de ler, criar e atualizar linhas desta tabela. Ao conectar, o app lê os campos da tabela com ele; se o Baserow recusar, nada é guardado.</p>
+    <div class="field">
+      <label for="base_url">Endereço do Baserow <span class="opt">(https, sem usuário e senha)</span></label>
+      <input class="input mono" id="base_url" name="base_url" type="url" value="{{ typed.base_url }}" maxlength="{{ max_url_length }}" required autocomplete="off" spellcheck="false" placeholder="https://baserow.example.test"{% if errors.get("base_url") %} aria-invalid="true" aria-describedby="base_url-erro"{% endif %}>
+      {% if errors.get("base_url") %}<p class="error" id="base_url-erro">{{ m.icon('alert-circle') }}{{ errors["base_url"] }}</p>{% endif %}
+    </div>
+    <div class="field">
+      <label for="table_id">Número da tabela <span class="opt">(o que vem depois de /table/ no endereço dela)</span></label>
+      <input class="input mono" id="table_id" name="table_id" type="text" inputmode="numeric" pattern="[0-9]+" value="{{ typed.table_id }}" required autocomplete="off"{% if errors.get("table_id") %} aria-invalid="true" aria-describedby="table_id-erro"{% endif %}>
+      {% if errors.get("table_id") %}<p class="error" id="table_id-erro">{{ m.icon('alert-circle') }}{{ errors["table_id"] }}</p>{% endif %}
+    </div>
+    <div class="field">
+      <label for="token">Token de banco de dados{% if page.stored %} <span class="opt">(deixe em branco para manter o guardado)</span>{% endif %}</label>
+      <input class="input mono" id="token" name="token" type="password" value="" {% if not page.stored %}required {% endif %}autocomplete="off" spellcheck="false"{% if errors.get("token") %} aria-invalid="true" aria-describedby="token-erro"{% endif %}>
+      {% if errors.get("token") %}<p class="error" id="token-erro">{{ m.icon('alert-circle') }}{{ errors["token"] }}</p>{% endif %}
+    </div>
+    {% if page.stored %}<div class="note">{{ m.icon('alert-triangle') }}<p>Mudar o endereço ou a tabela apaga o mapeamento e desativa a integração: os campos eram de outra tabela. Mudar só o token mantém tudo.</p></div>{% endif %}
+    <div class="btns"><button class="btn btn--primary" type="submit"{% if not page.published %} disabled{% endif %}>{{ m.icon('send') }}{{ "Salvar a conexão" if page.stored else "Conectar" }}</button></div>
+  </form>
+</section>
+
+{% if page.stored %}
+<section class="box" id="mapeamento" aria-labelledby="map-titulo">
+  <h2 id="map-titulo">Mapeamento</h2>
+  {% if page.fields is none %}
+  <div class="alert alert--error" role="alert">{{ m.icon('alert-circle', 'icon--lg') }}<div><strong class="alert__title">Não deu para ler os campos da tabela</strong><p>{{ page.read_error or "Publique o formulário para mapear." }}</p></div></div>
+  <p class="muted">{{ page.mapped }} {{ "campo está" if page.mapped == 1 else "campos estão" }} mapeados no que foi guardado.</p>
+  {% else %}
+  <p class="muted">Escolha, para cada campo da tabela, o que o preenche. Os campos de seleção recebem a opção do Baserow que tem o mesmo texto da opção que a lead viu (sem diferença de maiúsculas, acentos e traços); o que não casar aparece no relatório. Precisa de um campo de texto para o <strong>código do pedido</strong>: é por ele que o app acha a linha de volta.</p>
+  {% if problems %}
+  <div class="alert alert--error" role="alert" id="problemas">{{ m.icon('alert-circle', 'icon--lg') }}<div><strong class="alert__title">O mapeamento não foi guardado: {{ problems|length }} {{ "problema" if problems|length == 1 else "problemas" }}</strong>
+    <ul class="items">{% for problem in problems %}<li>{{ problem }}</li>{% endfor %}</ul>
+  </div></div>
+  {% endif %}
+  <form class="form-stack" method="post" action="{{ page.url }}/mapping">
+    <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+    <input type="hidden" name="version" value="{{ page.stored.version }}">
+    <div class="tablewrap" role="region" aria-label="Campos da tabela" tabindex="0">
+      <table class="table table--compact">
+        <caption class="sr-only">Campos da tabela do Baserow e o que preenche cada um</caption>
+        <thead><tr><th scope="col">Campo da tabela</th><th scope="col">Tipo</th><th scope="col">Recebe</th></tr></thead>
+        <tbody>
+        {% for field in page.fields %}
+          <tr>
+            <td><b>{{ field.name }}</b>{% if field.primary %}<span class="sub">campo principal da tabela</span>{% endif %}</td>
+            <td>{{ field.type_label }}</td>
+            <td>
+              {% if field.disabled %}
+              <span class="muted">{{ field.disabled }}: a integração não o preenche</span>
+              {% else %}
+              <label class="sr-only" for="fonte-{{ field.id }}">O que preenche o campo {{ field.name }}</label>
+              <select class="select" id="fonte-{{ field.id }}" name="source_{{ field.id }}">
+                <option value="">Nada (não preencher)</option>
+                {% for group in field.groups %}
+                <optgroup label="{{ group.label }}">
+                  {% for option in group.options %}<option value="{{ option.key }}"{% if option.key == field.selected %} selected{% endif %}>{{ option.label }}</option>{% endfor %}
+                </optgroup>
+                {% endfor %}
+              </select>
+              {% if field.suggested %}<span class="sub">sugerido pelo nome do campo</span>{% endif %}
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="btns"><button class="btn btn--primary" type="submit">Salvar o mapeamento</button></div>
+  </form>
+  <p class="muted footnote">A tabela é lida no Baserow a cada vez que esta página abre: um campo ou uma opção que você acrescentou lá aparece aqui na hora.</p>
+  {% endif %}
+</section>
+
+{% if page.report %}
+{% set report = page.report %}
+<section class="box" id="relatorio" aria-labelledby="rel-titulo">
+  <h2 id="rel-titulo">Relatório antes de ativar</h2>
+  {% if report.ok %}
+  <div class="alert alert--ok" role="status">{{ m.icon('check', 'icon--lg') }}<div><strong class="alert__title">Tudo casa: nenhuma pendência</strong><p>Todas as opções de seleção têm par no Baserow e os campos mapeados existem na tabela.</p></div></div>
+  {% else %}
+  <div class="alert alert--warn" role="status">{{ m.icon('alert-triangle', 'icon--lg') }}<div><strong class="alert__title">Pendências que impedem a ativação</strong>
+    {% if report.problems %}<ul class="items">{% for problem in report.problems %}<li>{{ problem }}</li>{% endfor %}</ul>{% endif %}
+    {% if report.unmatched %}<p>{{ report.unmatched }} {{ "opção do formulário não tem" if report.unmatched == 1 else "opções do formulário não têm" }} par no Baserow. Acrescente-as no campo da tabela com o mesmo texto que a lead vê, ou ajuste o texto da opção no formulário.</p>{% endif %}
+  </div></div>
+  {% endif %}
+  {% if report.fields %}
+  <div class="tablewrap" role="region" aria-label="Campos mapeados" tabindex="0">
+    <table class="table table--compact">
+      <caption class="sr-only">Campos mapeados e as opções de seleção</caption>
+      <thead><tr><th scope="col">Campo da tabela</th><th scope="col">Recebe</th><th scope="col">Opções</th></tr></thead>
+      <tbody>
+      {% for item in report.fields %}
+        <tr>
+          <td><b>{{ item.name }}</b><span class="sub">{{ item.type_label }}</span></td>
+          <td>{{ item.source }}</td>
+          <td>
+            {% if item.pairs %}
+            <details class="acc"{% if item.unmatched %} open{% endif %}><summary>{{ item.pairs|length - item.unmatched|length }} de {{ item.pairs|length }} casam {{ m.icon('chevron-down') }}</summary>
+              <ul class="items">
+                {% for pair in item.pairs %}
+                <li>{{ pair.label }} {% if pair.baserow is none %}<strong>— sem par no Baserow</strong>{% else %}<span class="muted">→ {{ pair.baserow }}</span>{% endif %}</li>
+                {% endfor %}
+              </ul>
+            </details>
+            {% else %}<span class="muted">—</span>{% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</section>
+{% endif %}
+
+<section class="box" id="teste" aria-labelledby="teste-titulo">
+  <h2 id="teste-titulo">Enviar teste</h2>
+  <p>Manda para a tabela uma linha de mentira, pelo mesmo caminho de um pedido de verdade: a lead de exemplo, no domínio <span class="mono">exemplo</span>, com respostas inventadas e o código <span class="mono">teste-{{ page.form_slug }}</span>. Nenhum dado de lead sai. A linha <strong>fica na tabela</strong>, para você conferi-la; testar de novo atualiza a mesma, e o app não a apaga.</p>
+  <form method="post" action="{{ page.url }}/test" hx-post="{{ page.url }}/test" hx-target="#resultado-teste" hx-select="#resultado-teste" hx-swap="outerHTML" hx-sync="this:drop" hx-disabled-elt="find button">
+    <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+    <button class="btn btn--secondary" type="submit">{{ m.icon('send') }}Enviar a linha de teste</button>
+  </form>
+  <div id="resultado-teste" aria-live="polite">
+    {% if sample %}
+    <div class="alert alert--{{ 'ok' if sample.ok else 'warn' }}" role="status">{{ m.icon('check' if sample.ok else 'alert-triangle', 'icon--lg') }}<div><strong class="alert__title">{{ sample.headline }}</strong><p>{{ sample.note }}</p></div></div>
+    {% endif %}
+  </div>
+</section>
+
+<section class="box" id="ativacao" aria-labelledby="ativ-titulo">
+  <h2 id="ativ-titulo">Ativação</h2>
+  {% if page.active %}
+  <p><strong>Ativa:</strong> cada pedido que fica pronto vira uma linha na tabela, em segundo plano, com tentativas e espera se o Baserow falhar.</p>
+  <form method="post" action="{{ page.url }}/deactivate">
+    <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+    <input type="hidden" name="version" value="{{ page.stored.version }}">
+    <button class="btn btn--secondary" type="submit">{{ m.icon('x') }}Desativar</button>
+  </form>
+  {% else %}
+  <p><strong>Desativada:</strong> os pedidos que ficam prontos não geram linha. Ativar só vale para os pedidos que ficarem prontos depois; os que já estavam prontos só entram se você reprocessar o pedido.</p>
+  <form method="post" action="{{ page.url }}/activate">
+    <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+    <input type="hidden" name="version" value="{{ page.stored.version }}">
+    <button class="btn btn--primary" type="submit"{% if not page.report %} disabled{% endif %}>{{ m.icon('check') }}Ativar a integração</button>
+    {% if not page.report %}<p class="muted footnote">Salve um mapeamento para ver o relatório e poder ativar.</p>{% endif %}
+  </form>
+  {% endif %}
+</section>
+
+<section class="box" id="sincronizacoes" aria-labelledby="sinc-titulo">
+  <h2 id="sinc-titulo">Sincronizações</h2>
+  <dl class="kv">
+    <dt>Sincronizadas</dt><dd>{{ page.counts.succeeded }}</dd>
+    <dt>Pendentes</dt><dd>{{ page.counts.pending }}</dd>
+    <dt>Com falha</dt><dd>{{ page.counts.failed }}</dd>
+  </dl>
+  {% if page.failures %}
+  <div class="tablewrap" role="region" aria-label="Últimas sincronizações com falha" tabindex="0">
+    <table class="table table--compact">
+      <caption class="sr-only">Últimas sincronizações com falha</caption>
+      <thead><tr><th scope="col">Pedido</th><th scope="col">Tentativas</th><th scope="col">Motivo</th><th scope="col">Quando</th></tr></thead>
+      <tbody>
+      {% for sync in page.failures %}
+        <tr>
+          <td><a class="mono" href="{{ sync.job_url }}">{{ sync.job_public_id }}</a></td>
+          <td class="num">{{ sync.attempts }}</td>
+          <td>{% if sync.last_error %}<span class="mono">{{ sync.last_error }}</span>{% else %}<span class="muted">—</span>{% endif %}</td>
+          <td class="num">{{ m.when(sync.when) }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <form method="post" action="{{ page.url }}/resend-failed">
+    <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+    <p class="muted">Depois de corrigir o token, a tabela ou o mapeamento, reenvie todas de uma vez (até 200).</p>
+    <button class="btn btn--secondary" type="submit">{{ m.icon('send') }}Reenviar as que falharam</button>
+  </form>
+  {% else %}
+  <p class="muted">Nenhuma sincronização com falha. O estado de cada uma aparece também no detalhe do pedido, onde dá para reenviá-la.</p>
+  {% endif %}
+</section>
+
+<section class="box" id="remover" aria-labelledby="rem-titulo">
+  <h2 id="rem-titulo">Remover a integração</h2>
+  <details class="reprocess"{% if errors.get("remove") %} open{% endif %}>
+    <summary class="btn btn--secondary">{{ m.icon('x') }}Remover…</summary>
+    <form method="post" action="{{ page.url }}/remove" aria-labelledby="rem-form-titulo">
+      <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+      <input type="hidden" name="version" value="{{ page.stored.version }}">
+      <h3 id="rem-form-titulo">Remover esta integração</h3>
+      <div class="note">{{ m.icon('alert-triangle') }}<p>O app para de sincronizar este formulário e apaga o token e o estado das sincronizações. As linhas que já estão no Baserow ficam lá: o app nunca apaga linhas da tabela.</p></div>
+      <label class="choice choice--check"><input type="checkbox" name="confirm" value="on" required{% if errors.get("remove") %} aria-invalid="true" aria-describedby="rem-erro"{% endif %}><span class="choice__body"><span class="choice__mark">{{ m.icon('check') }}</span><span>Entendo o que acontece com as linhas e com o estado das sincronizações.</span></span></label>
+      {% if errors.get("remove") %}<p class="error" id="rem-erro">{{ m.icon('alert-circle') }}{{ errors["remove"] }}</p>{% endif %}
+      <div class="btns"><button class="btn btn--primary" type="submit">Remover a integração</button></div>
+    </form>
+  </details>
+</section>
+{% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow, noarchive">
+<meta name="referrer" content="no-referrer">
+{%- if content_policy is defined %}
+<meta http-equiv="Content-Security-Policy" content="{{ content_policy }}">
+{%- endif %}
+{%- if base_href is defined %}
+<base href="{{ base_href }}">
+{%- endif %}
+<title>{% block title %}{% endblock %} · {{ site_brand() }}</title>
+<link rel="stylesheet" href="{{ static_url('css/public.css') }}">
+{%- block head %}{% endblock %}
+{%- block scripts %}
+<script src="{{ static_url('js/conditions.js') }}" defer></script>
+<script src="{{ static_url('js/public.js') }}" defer></script>
+{%- endblock %}
+</head>
+<body{% block body_attrs %}{% endblock %}>
+{% include "public/_icons.html" %}
+<a class="skip-link" href="#conteudo">Ir para o conteúdo</a>
+<header class="site-header">
+  <div class="container {% block header_class %}{% endblock %} site-header__inner">
+    <span class="brand">{{ site_brand() }}</span>
+  </div>
+</header>
+{% block main %}{% endblock %}
+<footer class="site-footer">
+  <div class="container">
+    {%- block footer %}
+    <p>Este diagnóstico gera uma orientação inicial e não substitui consultoria nem parecer técnico.</p>
+    {%- endblock %}
+  </div>
+</footer>
+</body>
+</html>

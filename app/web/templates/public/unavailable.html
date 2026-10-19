@@ -1,0 +1,11 @@
+{% extends "public/base.html" %}
+{% import "public/_macros.html" as ui %}
+{#- O formulário existe, mas está inativo no admin: a lead sabe que o problema não é com ela. -#}
+{% block title %}Formulário indisponível{% endblock %}
+{% block main %}
+<main id="conteudo" class="container container--narrow page">
+  <div class="statusicon statusicon--neutral">{{ ui.icon("info") }}</div>
+  <h1>Este formulário não está disponível</h1>
+  <p class="lead">{% if submitted %}Suas respostas não foram enviadas. {% endif %}O diagnóstico não está recebendo respostas agora, e não é um problema com o seu aparelho nem com a sua conexão. Se você chegou aqui por um link da {{ site_brand() }}, fale com a equipe.</p>
+</main>
+{% endblock %}

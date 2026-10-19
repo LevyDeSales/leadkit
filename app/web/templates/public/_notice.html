@@ -1,0 +1,12 @@
+{#- O aviso extra das páginas de espera e de falha, escrito na definição do formulário (`notices`).
+    É texto puro: o título, os parágrafos e o rótulo do link saem escapados, e o endereço do link só
+    chega aqui se a definição o aceitou como https. Nenhum formulário é citado neste template. -#}
+<section class="panel notice" id="aviso" aria-labelledby="aviso-titulo">
+  <h2 id="aviso-titulo">{{ notice.title }}</h2>
+  {%- for paragraph in notice.paragraphs %}
+  <p>{{ paragraph }}</p>
+  {%- endfor %}
+  {%- if notice.link %}
+  <p><a href="{{ notice.link.url }}" target="_blank" rel="noopener noreferrer">{{ notice.link.label }}<span class="sr-only"> (abre em outra aba)</span></a></p>
+  {%- endif %}
+</section>

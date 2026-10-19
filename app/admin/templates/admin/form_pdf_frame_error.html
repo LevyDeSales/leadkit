@@ -1,0 +1,21 @@
+{% extends "admin/base.html" %}
+{% import "admin/macros.html" as m %}
+{#- O que o quadro da prévia mostra quando o PDF ou a página de resultado não saem: o motivo, com a
+    linha do template. Roda dentro de um iframe da página do editor do PDF. -#}
+{% block title %}Prévia{% endblock %}
+{% block body %}
+<main id="conteudo" class="frame-error">
+  {%- if problems %}
+  <div class="alert alert--error" role="alert">{{ m.icon('alert-circle', 'icon--lg') }}<div><strong class="alert__title">{{ problems|length }} {{ "problema" if problems|length == 1 else "problemas" }} no que está na página</strong>
+    <ul class="items">
+      {%- for problem in problems %}
+      <li>{{ problem.where }}: {{ problem.message }}</li>
+      {%- endfor %}
+    </ul>
+  </div></div>
+  {%- endif %}
+  {%- if message %}
+  <div class="alert alert--warn" role="alert">{{ m.icon('alert-triangle', 'icon--lg') }}<div><p>{{ message }}</p></div></div>
+  {%- endif %}
+</main>
+{% endblock %}

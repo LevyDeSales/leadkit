@@ -1,0 +1,348 @@
+{
+  "intro": "Planeje um projeto que faça sentido para você. Conte como está a sua organização e receba uma sugestão de atividades para experimentar ao longo de 90 dias.",
+  "minutes": 4,
+  "steps": [
+    {
+      "title": "Vamos começar por você",
+      "help": "Estes dados identificam seu plano. Você pode deixar os campos opcionais em branco.",
+      "questions": [
+        {
+          "name": "nome",
+          "kind": "text",
+          "label": "Seu nome",
+          "contact": true,
+          "autocomplete": "name",
+          "min_length": 2,
+          "max_length": 120
+        },
+        {
+          "name": "email",
+          "kind": "email",
+          "label": "Seu e-mail",
+          "help": "Use um e-mail que você confere com frequência.",
+          "autocomplete": "email"
+        },
+        {
+          "name": "whatsapp",
+          "kind": "tel",
+          "label": "Seu WhatsApp, com DDD",
+          "required": false,
+          "placeholder": "(11) 91234-5678",
+          "autocomplete": "tel"
+        },
+        {
+          "name": "escritorio",
+          "kind": "text",
+          "label": "Nome do projeto",
+          "required": false,
+          "contact": true,
+          "autocomplete": "organization",
+          "max_length": 160
+        }
+      ]
+    },
+    {
+      "title": "Seu projeto hoje",
+      "help": "Pense no projeto que você pretende organizar, mesmo que ele ainda esteja começando.",
+      "questions": [
+        {
+          "name": "equipe",
+          "kind": "choice",
+          "label": "Quantas pessoas participam do projeto com você?",
+          "options": [
+            {
+              "value": "so_eu",
+              "label": "Trabalho sozinha"
+            },
+            {
+              "value": "2_a_5",
+              "label": "Somos de 2 a 5 pessoas"
+            },
+            {
+              "value": "6_a_15",
+              "label": "Somos de 6 a 15 pessoas"
+            },
+            {
+              "value": "mais_de_15",
+              "label": "Somos mais de 15 pessoas"
+            }
+          ]
+        },
+        {
+          "name": "carteira",
+          "kind": "choice",
+          "label": "Quantas atividades vocês acompanham atualmente?",
+          "options": [
+            {
+              "value": "ate_30",
+              "label": "Até 30 atividades"
+            },
+            {
+              "value": "31_a_80",
+              "label": "De 31 a 80 atividades"
+            },
+            {
+              "value": "81_a_200",
+              "label": "De 81 a 200 atividades"
+            },
+            {
+              "value": "mais_de_200",
+              "label": "Mais de 200 atividades"
+            }
+          ]
+        },
+        {
+          "name": "desafio",
+          "kind": "choice",
+          "label": "Qual parte da organização mais precisa de atenção?",
+          "options": [
+            {
+              "value": "captacao",
+              "label": "Convidar participantes"
+            },
+            {
+              "value": "precificacao",
+              "label": "Planejar recursos"
+            },
+            {
+              "value": "processos",
+              "label": "Acompanhar as atividades"
+            },
+            {
+              "value": "equipe",
+              "label": "Dividir responsabilidades"
+            },
+            {
+              "value": "tempo",
+              "label": "Encontrar tempo para planejar"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "O caminho que você quer experimentar",
+      "questions": [
+        {
+          "name": "focos",
+          "kind": "choices",
+          "label": "O que você deseja organizar primeiro?",
+          "help": "Escolha até 3.",
+          "options": [
+            {
+              "value": "comercial",
+              "label": "Participação"
+            },
+            {
+              "value": "precos",
+              "label": "Recursos disponíveis"
+            },
+            {
+              "value": "rotina",
+              "label": "Rotina das atividades"
+            },
+            {
+              "value": "pessoas",
+              "label": "Responsabilidades"
+            },
+            {
+              "value": "atendimento",
+              "label": "Comunicação"
+            },
+            {
+              "value": "tecnologia",
+              "label": "Ferramentas de apoio"
+            }
+          ],
+          "max_choices": 3
+        },
+        {
+          "name": "objetivo",
+          "kind": "textarea",
+          "label": "O que você gostaria de experimentar ou concluir nos próximos 90 dias?",
+          "help": "Descreva uma mudança observável, sem incluir informações pessoais de outras pessoas.",
+          "min_length": 10,
+          "max_length": 600
+        }
+      ]
+    }
+  ],
+  "identity": {
+    "email": "email",
+    "name": "nome",
+    "phone": "whatsapp"
+  },
+  "consent": {
+    "processing": "Concordo com o tratamento das minhas respostas para preparar este plano.",
+    "notice": "A operadora usa fornecedores de processamento e inteligência artificial para gerar o documento. Consulte a política da instalação para conhecer fornecedores, prazos e como solicitar a exclusão dos dados.",
+    "marketing": {
+      "email": "Quero receber novidades deste projeto por e-mail.",
+      "whatsapp": "Quero receber novidades deste projeto pelo WhatsApp."
+    }
+  },
+  "plan": {
+    "description": "Roteiro experimental de organização de um projeto fictício em três etapas de 30 dias.",
+    "fields": [
+      {
+        "name": "titulo",
+        "kind": "text",
+        "description": "Título próprio deste plano, que nomeia a virada principal do projeto a partir do desafio e do objetivo. Não comece com 'Plano' e não use títulos genéricos.",
+        "min_length": 10,
+        "max_length": 100
+      },
+      {
+        "name": "resumo",
+        "kind": "text",
+        "description": "Leitura do momento do projeto em 3 a 5 frases, ligada às respostas.",
+        "min_length": 120,
+        "max_length": 700
+      },
+      {
+        "name": "fases",
+        "kind": "list",
+        "description": "As três fases do plano, nesta ordem: dias 1 a 30, 31 a 60 e 61 a 90.",
+        "min_items": 3,
+        "max_items": 3,
+        "items": {
+          "kind": "group",
+          "model": "Fase",
+          "description": "Um bloco de 30 dias do plano.",
+          "fields": [
+            {
+              "name": "nome",
+              "kind": "text",
+              "description": "Tema da fase em 2 a 5 palavras, sem 'Fase', 'Dias' nem números: o PDF já mostra os dias.",
+              "min_length": 3,
+              "max_length": 60
+            },
+            {
+              "name": "objetivo",
+              "kind": "text",
+              "description": "O que a fase resolve.",
+              "min_length": 20,
+              "max_length": 240
+            },
+            {
+              "name": "acoes",
+              "kind": "list",
+              "description": "As ações da fase, na ordem em que acontecem.",
+              "min_items": 2,
+              "max_items": 4,
+              "items": {
+                "kind": "group",
+                "model": "Acao",
+                "description": "Uma ação executável dentro da fase.",
+                "fields": [
+                  {
+                    "name": "titulo",
+                    "kind": "text",
+                    "description": "Verbo no infinitivo e objeto, de 3 a 8 palavras, como 'Listar os serviços de cada cliente'.",
+                    "min_length": 10,
+                    "max_length": 90
+                  },
+                  {
+                    "name": "como_fazer",
+                    "kind": "text",
+                    "description": "Como executar, de forma concreta e compatível com o porte do projeto.",
+                    "min_length": 30,
+                    "max_length": 320
+                  }
+                ]
+              }
+            },
+            {
+              "name": "entrega",
+              "kind": "text",
+              "description": "O que precisa estar pronto no fim da fase, de um jeito que dê para conferir.",
+              "min_length": 15,
+              "max_length": 200
+            }
+          ]
+        }
+      },
+      {
+        "name": "proximo_passo",
+        "kind": "text",
+        "description": "Uma ação para fazer ainda esta semana.",
+        "min_length": 20,
+        "max_length": 300
+      },
+      {
+        "name": "mensagem_final",
+        "kind": "text",
+        "description": "Fechamento curto e encorajador, sem promessa de resultado.",
+        "min_length": 40,
+        "max_length": 400
+      }
+    ]
+  },
+  "examples": {
+    "answers": {
+      "nome": "Marina Exemplo",
+      "email": "marina@example.test",
+      "whatsapp": "11900000000",
+      "escritorio": "Clube de leitura Aurora (fictício)",
+      "equipe": "2_a_5",
+      "carteira": "ate_30",
+      "desafio": "processos",
+      "focos": [
+        "rotina",
+        "pessoas"
+      ],
+      "objetivo": "Organizar os encontros do clube fictício e dividir a preparação entre as participantes."
+    },
+    "plan": {
+      "titulo": "Encontros de leitura com preparação compartilhada",
+      "resumo": "Você quer tornar os encontros do clube mais fáceis de preparar. Um grupo pequeno já participa das atividades, mas os combinados ainda precisam ficar visíveis para todas. O roteiro começa pelo levantamento das tarefas e avança para um ciclo de encontros com revisão dos aprendizados.",
+      "fases": [
+        {
+          "nome": "Enxergar as atividades",
+          "objetivo": "Reunir o que precisa acontecer para preparar cada encontro do clube.",
+          "acoes": [
+            {
+              "titulo": "Registrar as tarefas de um encontro",
+              "como_fazer": "Anote o que acontece antes, durante e depois de uma conversa de leitura. Convide as participantes a completar a lista com tarefas que costumam passar despercebidas."
+            },
+            {
+              "titulo": "Escolher um lugar para os combinados",
+              "como_fazer": "Use uma folha compartilhada ou um quadro simples com tarefa, responsável e data. Comece com os recursos que o grupo já conhece."
+            }
+          ],
+          "entrega": "Lista de tarefas visível e combinada com as participantes."
+        },
+        {
+          "nome": "Experimentar uma preparação conjunta",
+          "objetivo": "Preparar um encontro usando a lista e a divisão de responsabilidades.",
+          "acoes": [
+            {
+              "titulo": "Combinar responsabilidades para o próximo encontro",
+              "como_fazer": "Cada participante escolhe uma tarefa que consegue assumir. Registre a data combinada e deixe espaço para pedir ajuda com antecedência."
+            },
+            {
+              "titulo": "Conferir os preparativos em conjunto",
+              "como_fazer": "Faça uma conversa breve antes do encontro para revisar o que está pronto e ajustar as tarefas que precisam de apoio."
+            }
+          ],
+          "entrega": "Um encontro preparado com responsabilidades compartilhadas."
+        },
+        {
+          "nome": "Aprender com a experiência",
+          "objetivo": "Identificar o que ajudou o grupo e ajustar os combinados para o próximo ciclo.",
+          "acoes": [
+            {
+              "titulo": "Conversar sobre a preparação do encontro",
+              "como_fazer": "Peça que cada participante diga o que facilitou sua tarefa e o que poderia ser mais simples. Registre os aprendizados sem atribuir culpa."
+            },
+            {
+              "titulo": "Ajustar a lista para o ciclo seguinte",
+              "como_fazer": "Escolha com o grupo uma melhoria pequena para testar no próximo encontro. Atualize a lista e combine uma data para conferir o resultado."
+            }
+          ],
+          "entrega": "Lista revisada com uma melhoria escolhida pelo grupo."
+        }
+      ],
+      "proximo_passo": "Reserve um momento nesta semana para listar as tarefas do último encontro e compartilhar o rascunho com o grupo.",
+      "mensagem_final": "Um projeto ganha clareza quando os combinados cabem na rotina de quem participa. Use este roteiro como um experimento e ajuste o caminho a partir das conversas e dos aprendizados do grupo."
+    }
+  }
+}

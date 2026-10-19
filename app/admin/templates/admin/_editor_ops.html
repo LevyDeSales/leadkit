@@ -1,0 +1,30 @@
+{#- O botão de operação do editor do rascunho (incluir, remover, reordenar, trocar o tipo), para os
+    editores do modelo do plano e dos dados. Sem JavaScript é um envio do formulário para a operação;
+    com o HTMX, troca só o trecho do editor. `formnovalidate`: um campo ainda vazio não trava a
+    operação. Importado com o contexto: lê o endereço das operações e o campo que recebe o foco. -#}
+{%- import "admin/macros.html" as m -%}
+
+{% macro op(value, text, icon, name=None, id=None) -%}
+<button class="btn btn--ghost btn--sm" type="submit" name="op" value="{{ value }}" formaction="{{ page.structure.edit_url }}" formnovalidate hx-post="{{ page.structure.edit_url }}"{% if id %} id="{{ id }}"{% endif %}{% if name %} aria-label="{{ name }}"{% endif %}{% if id and page.structure.focus == id %} autofocus{% endif %}>{{ m.icon(icon) }}{{ text }}</button>
+{%- endmacro %}
+
+{#- Uma lista de escolhas. Com `refresh`, trocar a escolha desenha o trecho de novo, com os campos
+    do tipo novo: o HTMX manda a operação junto com o formulário; sem JavaScript, o botão faz o
+    mesmo. -#}
+{% macro kind_select(name, kinds, current, refresh=None, label="Tipo") -%}
+{%- set id = page.structure.field_id(name) %}
+<div class="field">
+  <label for="{{ id }}">{{ label }}</label>
+  <select class="select" id="{{ id }}" name="{{ name }}"{% if refresh %} hx-post="{{ page.structure.edit_url }}" hx-trigger="change" hx-vals='{"op": "{{ refresh }}"}'{% endif %}{% if page.structure.focus == id %} autofocus{% endif %}{% if page.structure.errors.get(name) %} aria-invalid="true" aria-describedby="{{ id }}-erro"{% endif %}>
+    {%- for value, text in kinds %}
+    <option value="{{ value }}"{% if value == current %} selected{% endif %}>{{ text }}</option>
+    {%- endfor %}
+  </select>
+  {%- if refresh %}
+  <noscript><button class="btn btn--ghost btn--sm" type="submit" name="op" value="{{ refresh }}" formaction="{{ page.structure.edit_url }}" formnovalidate>Mostrar os campos do tipo</button></noscript>
+  {%- endif %}
+  {%- if page.structure.errors.get(name) %}
+  <p class="error" id="{{ id }}-erro">{{ m.icon('alert-circle') }}{{ page.structure.errors[name] }}</p>
+  {%- endif %}
+</div>
+{%- endmacro %}

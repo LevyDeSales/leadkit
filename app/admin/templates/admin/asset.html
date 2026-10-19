@@ -1,0 +1,88 @@
+{% extends "admin/layout.html" %}
+{% import "admin/macros.html" as m %}
+{% set section = "assets" %}
+{% block title %}{{ page.row.name }} · Imagens{% endblock %}
+{% block content %}
+<nav class="crumbs" aria-label="Você está em"><a href="/admin/assets">Imagens</a><span aria-hidden="true">/</span><span>{{ page.row.name }}</span></nav>
+
+<header class="detail-head">
+  <div>
+    <h1>{{ page.row.name }}</h1>
+    <p class="meta"><span class="mono">{{ page.row.reference }}</span><span>{% if page.row.library %}biblioteca geral{% else %}só em {{ page.row.scope }}{% endif %}</span></p>
+  </div>
+</header>
+
+<div class="cols">
+  <div class="stackcol">
+    {% if page.message %}
+    <div class="alert alert--warn" role="alert" id="aviso">{{ m.icon('alert-triangle', 'icon--lg') }}<div><strong class="alert__title">{{ page.message }}</strong></div></div>
+    {% endif %}
+
+    <section class="box" id="imagem" aria-labelledby="imagem-titulo">
+      <h2 id="imagem-titulo">A imagem</h2>
+      <p class="preview"><img class="asset-preview" src="{{ page.row.thumbnail }}" alt="A imagem {{ page.row.name }}" width="{{ page.row.width }}" height="{{ page.row.height }}"></p>
+      <dl class="kv">
+        <dt>Como usar</dt><dd><span class="mono">&lt;img src="{{ page.row.reference }}"&gt;</span></dd>
+        <dt>Guardada</dt><dd>{{ page.stored }}</dd>
+        <dt>Enviada</dt><dd>{{ page.original }}{% if page.row.saved %} <span class="muted">· a otimização deixou o arquivo {{ page.row.saved }}</span>{% endif %}</dd>
+        <dt>Enviada por</dt><dd>{{ page.created_by }} <span class="muted">em {{ m.when(page.created) }}</span></dd>
+        {%- if page.replaced %}
+        <dt>Trocada por</dt><dd>{{ page.updated_by }} <span class="muted">em {{ m.when(page.updated) }}</span></dd>
+        {%- endif %}
+        <dt>sha256</dt><dd class="mono">{{ page.sha256 }}</dd>
+      </dl>
+    </section>
+
+    <section class="box" id="usos" aria-labelledby="usos-titulo">
+      <h2 id="usos-titulo">Quem usa</h2>
+      {%- if page.uses %}
+      <p class="muted">Estas versões publicadas fixaram o conteúdo da imagem na publicação e continuam com ele, mesmo que a imagem seja trocada.</p>
+      <ul class="items">
+        {%- for use in page.uses %}
+        <li><a href="{{ use.url }}">{{ use.label }}</a></li>
+        {%- endfor %}
+      </ul>
+      {%- else %}
+      <p>Nenhuma versão publicada usa esta imagem. Ela aparece no PDF e na prévia de um rascunho que a pede por <span class="mono">{{ page.row.reference }}</span>, e só vai aos envios depois que o formulário for publicado.</p>
+      {%- endif %}
+    </section>
+  </div>
+
+  <div class="stackcol">
+    <section class="box" id="trocar" aria-labelledby="trocar-titulo">
+      <h2 id="trocar-titulo">Trocar a imagem</h2>
+      <p class="muted">O nome continua o mesmo. As versões publicadas seguem com a imagem de antes, e o PDF dos pedidos antigos sai igual; os formulários que a usam passam a ter uma mudança para publicar.</p>
+      <form class="form-stack" method="post" action="{{ page.replace_action }}" enctype="multipart/form-data">
+        <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+        <input type="hidden" name="expected" value="{{ page.expected }}">
+        <div class="field">
+          <label for="f-file">Arquivo novo</label>
+          <input class="input" id="f-file" name="file" type="file" accept="{{ page.accept }}" required aria-describedby="f-file-ajuda{% if page.errors.get('file') %} f-file-erro{% endif %}"{% if page.errors.get("file") %} aria-invalid="true"{% endif %}>
+          <p class="muted" id="f-file-ajuda">{{ page.limits }}</p>
+          {% if page.errors.get("file") %}<p class="error" id="f-file-erro">{{ m.icon('alert-circle') }}{{ page.errors["file"] }}</p>{% endif %}
+        </div>
+        <div class="btns"><button class="btn btn--primary" type="submit">Trocar e otimizar</button></div>
+      </form>
+    </section>
+
+    <section class="box" id="remover" aria-labelledby="remover-titulo">
+      <h2 id="remover-titulo">Remover</h2>
+      {%- if not page.removable %}
+      <p>Uma versão publicada usa esta imagem, e por isso ela não pode ser removida: o PDF dos pedidos antigos depende dela.</p>
+      {%- endif %}
+      <details class="reprocess"{% if page.errors.get("remove") %} open{% endif %}>
+        <summary class="btn btn--secondary">{{ m.icon('trash') }}Remover…</summary>
+        <form method="post" action="{{ page.remove_action }}" aria-labelledby="rem-titulo">
+          <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+          <input type="hidden" name="expected" value="{{ page.expected }}">
+          <h3 id="rem-titulo">Remover esta imagem</h3>
+          <div class="note">{{ m.icon('alert-triangle') }}<p>O arquivo sai do storage. Um rascunho que a pede por <span class="mono">{{ page.row.reference }}</span> deixa de salvar e de publicar até o nome ser tirado do template ou a imagem ser enviada de novo.</p></div>
+          <label class="choice choice--check"><input type="checkbox" name="confirm" value="on" required{% if page.errors.get("remove") %} aria-invalid="true" aria-describedby="rem-erro"{% endif %}><span class="choice__body"><span class="choice__mark">{{ m.icon('check') }}</span><span>Entendo que a imagem sai do sistema.</span></span></label>
+          {% if page.errors.get("remove") %}<p class="error" id="rem-erro">{{ m.icon('alert-circle') }}{{ page.errors["remove"] }}</p>{% endif %}
+          <div class="btns"><button class="btn btn--primary" type="submit">Remover a imagem</button></div>
+        </form>
+      </details>
+    </section>
+  </div>
+</div>
+{% endblock %}

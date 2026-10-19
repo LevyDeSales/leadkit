@@ -1,0 +1,68 @@
+{% extends "admin/layout.html" %}
+{% import "admin/macros.html" as m %}
+{% set section = "assets" %}
+{% block title %}Imagens{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Imagens</h1>
+    <p>As imagens que o PDF e a prévia da página de resultado usam. Elas ficam no storage, fora do código, e o template as chama pelo nome: <span class="mono">&lt;img src="asset:logo-black"&gt;</span>. Cada versão publicada fixa o conteúdo das imagens que usa; trocar uma imagem pede publicar o formulário de novo.</p>
+  </div>
+</div>
+
+<div class="stackcol">
+<section class="box" id="enviar" aria-labelledby="enviar-titulo">
+  <h2 id="enviar-titulo">Enviar uma imagem</h2>
+  <p class="muted">{{ page.limits }}</p>
+  <form class="form-stack" method="post" action="{{ page.action }}" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+    <div class="field">
+      <label for="f-scope">Onde ela vale</label>
+      <select class="input" id="f-scope" name="scope" aria-describedby="f-scope-ajuda{% if page.errors.get('scope') %} f-scope-erro{% endif %}"{% if page.errors.get("scope") %} aria-invalid="true"{% endif %}>
+        {%- for option in page.scopes %}
+        <option value="{{ option.value }}"{% if option.value == page.scope %} selected{% endif %}>{{ option.label }}</option>
+        {%- endfor %}
+      </select>
+      <p class="muted" id="f-scope-ajuda">A biblioteca geral serve a todos os formulários. Uma imagem de um formulário vale só nele, e vale mais que a da biblioteca com o mesmo nome.</p>
+      {% if page.errors.get("scope") %}<p class="error" id="f-scope-erro">{{ m.icon('alert-circle') }}{{ page.errors["scope"] }}</p>{% endif %}
+    </div>
+    <div class="field">
+      <label for="f-name">Nome</label>
+      <input class="input mono" id="f-name" name="name" type="text" value="{{ page.name }}" maxlength="{{ page.name_max_length }}" required autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="logo-black" aria-describedby="f-name-ajuda{% if page.errors.get('name') %} f-name-erro{% endif %}"{% if page.errors.get("name") %} aria-invalid="true"{% endif %}>
+      <p class="muted" id="f-name-ajuda">O nome que o template usa, depois de <span class="mono">asset:</span>. {{ page.name_hint|capitalize }}.</p>
+      {% if page.errors.get("name") %}<p class="error" id="f-name-erro">{{ m.icon('alert-circle') }}{{ page.errors["name"] }}</p>{% endif %}
+    </div>
+    <div class="field">
+      <label for="f-file">Arquivo</label>
+      <input class="input" id="f-file" name="file" type="file" accept="{{ page.accept }}" required aria-describedby="f-file-ajuda{% if page.errors.get('file') %} f-file-erro{% endif %}"{% if page.errors.get("file") %} aria-invalid="true"{% endif %}>
+      <p class="muted" id="f-file-ajuda">O arquivo é conferido pelo conteúdo, não pela extensão.</p>
+      {% if page.errors.get("file") %}<p class="error" id="f-file-erro">{{ m.icon('alert-circle') }}{{ page.errors["file"] }}</p>{% endif %}
+    </div>
+    <div class="btns"><button class="btn btn--primary" type="submit">{{ m.icon('plus') }}Enviar e otimizar</button></div>
+  </form>
+</section>
+
+{% if page.rows %}
+<div class="tablewrap" role="region" aria-label="Tabela de imagens" tabindex="0">
+  <table class="table table--cards">
+    <caption class="sr-only">Imagens dos formulários</caption>
+    <thead>
+      <tr><th scope="col">Imagem</th><th scope="col">Onde vale</th><th scope="col">Arquivo</th><th scope="col">Enviada por</th></tr>
+    </thead>
+    <tbody>
+    {% for row in page.rows %}
+      <tr>
+        <td class="who" data-label="Imagem"><img class="thumb" src="{{ row.thumbnail }}" alt="" width="64" height="48" loading="lazy"><a href="{{ row.url }}">{{ row.name }}<span class="sr-only"> — abrir a imagem</span></a><span class="mono">{{ row.reference }}</span></td>
+        <td data-label="Onde vale">{% if row.library %}<span class="badge badge--neutral">Biblioteca geral</span>{% else %}{{ row.scope }}{% endif %}</td>
+        <td data-label="Arquivo">{{ row.type_label }}, {{ row.dimensions }}<span class="sub">{{ row.size }}{% if row.saved %} · {{ row.saved }} que o enviado{% endif %}</span></td>
+        <td data-label="Enviada por">{{ row.created_by }}<span class="sub">{{ m.when(row.created) }}</span></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<p class="muted">Nenhuma imagem enviada ainda.</p>
+{% endif %}
+</div>
+{% endblock %}

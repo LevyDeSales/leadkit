@@ -1,0 +1,1 @@
+A partir das respostas, escreva um roteiro que a participante possa adaptar à rotina do projeto. Comece por uma atividade pequena e observável. Distribua as ações em três fases e encerre com um próximo passo para esta semana.

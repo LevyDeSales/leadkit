@@ -1,0 +1,1159 @@
+name: Deploy image
+
+# Valida a imagem e o Swarm sem publicar. Chamado pelo Tests do mesmo commit.
+# Conserva os ensaios de atualização, rollback, backup, autenticação e isolamento entre stacks.
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  # Por padrão o build-push-action sobe um artefato `.dockerbuild` por build (dois por execução),
+  # que ocupa o armazenamento do repositório privado e ninguém abre.
+  DOCKER_BUILD_RECORD_UPLOAD: "false"
+
+jobs:
+  changes:
+    # Decide se o `swarm` roda. Fora de um PR (push em main) e num PR para main, sempre; nos outros
+    # PRs, só se algum arquivo mudado está na lista abaixo: o que o swarm exercita e os Tests não
+    # cobrem, ou seja, o empacotamento (Dockerfile e o que entra na imagem, deploy/, as
+    # dependências, este workflow) e o que a stack liga de verdade (a configuração do app em
+    # produção, as migrations, a API e o worker subindo, o login do admin atrás do Traefik, a
+    # conexão com o Hatchet). Mudança de regra de negócio, de página, de formulário e de teste fica
+    # com o Tests e o `image`. Se o filtro falhar, o PR fica vermelho: não se pula o swarm em silêncio.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read  # o filtro lista os arquivos do PR pela API, sem checkout
+    outputs:
+      swarm: ${{ github.event_name != 'pull_request' || github.base_ref == 'main' || steps.filter.outputs.swarm == 'true' }}
+    steps:
+      - name: List what the pull request changes
+        id: filter
+        if: github.event_name == 'pull_request'
+        # As actions de terceiros ficam fixadas pelo commit da tag (a versão vai ao lado).
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d  # v4.0.3
+        with:
+          filters: |
+            swarm:
+              - 'deploy/**'
+              - 'Dockerfile'
+              - '.dockerignore'
+              - '.github/workflows/deploy-image.yml'
+              - '.github/workflows/tests.yml'
+              - 'examples/**'
+              - 'pyproject.toml'
+              - 'uv.lock'
+              - 'app/alembic.ini'
+              - 'app/migrations/**'
+              - 'app/settings.py'
+              - 'app/db.py'
+              - 'app/hatchet_client.py'
+              - 'app/worker.py'
+              - 'app/api/main.py'
+              - 'app/admin/auth.py'
+
+  image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      APP_IMAGE_TAG: ci
+      COMPOSE: docker compose -f deploy/compose.yaml
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # O cache de camadas (a base, o apt e as dependências do uv.lock) vem do cache do Actions e é
+      # compartilhado entre o `image` e o `swarm`: veja o cabeçalho do arquivo.
+      # `use: false`: só o passo de build usa este builder, e `load: true` põe a imagem no Docker do
+      # runner, de onde os passos seguintes a usam pela tag local.
+      - name: Set up Buildx
+        id: buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069  # v4.4.1
+        with:
+          use: false
+
+      - name: Build the image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc  # v7.4.0
+        with:
+          context: .
+          builder: ${{ steps.buildx.outputs.name }}
+          tags: leadkit:ci
+          load: true
+          provenance: false
+          cache-from: type=gha,scope=leadkit
+          cache-to: type=gha,mode=max,scope=leadkit,ignore-error=true
+
+      - name: Render every form's example PDF inside the image
+        run: |
+          docker run --rm -i -v "$PWD/examples:/examples:ro" leadkit:ci python -I - <<'PY'
+          import json
+          from datetime import UTC, datetime
+          from pathlib import Path
+
+          from app.adapters.weasyprint_pdf import WeasyPrintRenderer
+          from app.forms import starter
+          from app.forms.definition import compile_definition
+
+
+          renderer = WeasyPrintRenderer()
+          # O demo neutro é importado explicitamente nos bancos de CI; não existe seed no startup.
+          documents = [json.loads(Path("/examples/demo.json").read_text(encoding="utf-8"))]
+          documents.append(starter.definition(slug="modelo-inicial", title="Modelo inicial"))
+          assert len(documents) == 2, len(documents)
+          for document in documents:
+              spec = compile_definition(document)
+              # As notas das respostas de exemplo, que o pedido de verdade grava no envio.
+              answers = spec.answers_model.model_validate(document["examples"]["answers"])
+              context = {
+                  "lead": {"name": "Imagem de Teste"},
+                  "form": {"slug": spec.slug, "title": spec.title},
+                  "scores": spec.score(answers).scores if spec.score else {},
+                  "generated_at": datetime.now(UTC),
+              }
+              pdf = renderer.render(spec, spec.example_plan, context)
+              assert pdf.content.startswith(b"%PDF"), spec.slug
+              print(spec.slug, pdf.page_count, "page(s)", len(pdf.content), "bytes")
+          PY
+
+      - name: Write a dummy deploy/.env from the example
+        run: |
+          python3 - <<'PY'
+          import base64
+          import json
+          import re
+          from pathlib import Path
+          from urllib.parse import quote
+
+
+          def b64(data):
+              return base64.urlsafe_b64encode(json.dumps(data).encode()).decode().rstrip("=")
+
+
+          # Token só no formato JWT (não é credencial): o SDK do Hatchet valida o formato ao subir.
+          claims = {
+              "sub": "00000000-0000-0000-0000-000000000001",
+              "server_url": "http://localhost:8888",
+              "grpc_broadcast_address": "localhost:7077",
+          }
+          text = Path("deploy/.env.example").read_text()
+
+          def required(name):
+              found = re.findall(rf"^{name}=(.+)$", text, flags=re.M)
+              assert len(found) == 1 and found[0].strip(), name
+              return found[0].strip()
+
+          user, database = required("POSTGRES_USER"), required("POSTGRES_DB")
+          password = "ci0123456789abcdef"
+          dummy = {
+              "POSTGRES_PASSWORD": password,
+              "DATABASE_URL": (
+                  f"postgresql+psycopg://{quote(user, safe='')}:{password}"
+                  f"@postgres:5432/{quote(database, safe='')}"
+              ),
+              "TOKEN_SECRETS": "ci-token-secret-0123456789abcdefghijklmnop",
+              "OPENAI_API_KEY": "sk-ci-dummy",
+              "S3_BUCKET": "ci-bucket",
+              "HATCHET_CLIENT_TOKEN": f"{b64({'alg': 'none', 'typ': 'JWT'})}.{b64(claims)}.offline",
+          }
+          for key, value in dummy.items():
+              text, found = re.subn(rf"^{key}=.*$", f"{key}={value}", text, flags=re.M)
+              assert found == 1, key
+          Path("deploy/.env").write_text(text)
+          PY
+
+      - name: Validate the compose file
+        run: $COMPOSE config --quiet
+
+      - name: Validate the Caddyfile
+        run: >-
+          docker run --rm -e DOMAIN=planos.example.test
+          -v "$PWD/deploy/Caddyfile:/etc/caddy/Caddyfile:ro"
+          caddy:2 caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+
+      - name: Start Postgres, migrations and the API
+        run: |
+          $COMPOSE up --detach --no-build api
+          for _ in $(seq 1 45); do
+            status=$(docker inspect --format '{{.State.Health.Status}}' "$($COMPOSE ps -q api)")
+            [ "$status" = healthy ] && break
+            sleep 2
+          done
+          $COMPOSE ps --all
+          test "$status" = healthy
+
+      - name: Import the neutral demo explicitly in the CI database
+        run: |
+          $COMPOSE exec -T api python -c 'from app.deps import get_deps; from app.forms.stored import import_definition; import sys; import_definition(get_deps(), sys.stdin.buffer.read(), actor="ci")' < examples/demo.json
+
+      - name: Request pages from inside the API container
+        run: |
+          $COMPOSE exec -T api python - <<'PY'
+          import urllib.request
+
+          for path in ("/readyz", "/healthz", "/p/demo", "/static/css/public.css", "/admin/login"):
+              with urllib.request.urlopen("http://127.0.0.1:8000" + path, timeout=5) as response:
+                  assert response.status == 200, (path, response.status)
+                  print(path, response.status)
+          PY
+
+      - name: Load the worker settings and run the retention once
+        run: |
+          $COMPOSE run --rm --no-deps -T worker python - <<'PY'
+          import app.worker  # noqa: F401  (importa workflows e crons como o worker)
+          from app.deps import get_deps
+          from app.retention import purge_expired
+
+          print(purge_expired(get_deps()))
+          PY
+
+      - name: Validate the Swarm stack file
+        # Depois do compose: o `docker stack config` pode exigir um nó do Swarm, e o runner vira um.
+        run: |
+          docker swarm init >/dev/null 2>&1 || true
+          cp deploy/swarm/app.env.example deploy/swarm/app.env
+          cp deploy/swarm/db.env.example deploy/swarm/db.env
+          IMAGE=gerador-planos:ci DOMAIN=planos.example.test \
+            docker stack config -c deploy/swarm/stack.yaml > /dev/null
+
+      - name: Show the logs
+        if: failure()
+        run: $COMPOSE logs --no-color
+
+      - name: Stop the stack
+        if: always()
+        run: $COMPOSE down --volumes || true  # sem deploy/.env (falha antes dele) não há o que parar
+
+  swarm:
+    needs: changes
+    if: needs.changes.outputs.swarm == 'true'
+    # A stack de deploy/swarm/ como no servidor: Swarm de um nó, Traefik v2.11 com os argumentos do
+    # servidor e uma pasta de configuração igual à dele. Um Hatchet Lite faz o worker passar no
+    # healthcheck. O deploy.sh passa pela atualização, pela versão quebrada que o Swarm desfaz, pela
+    # volta de versão e pelo primeiro deploy, sem nenhum pedido sem 200 nas trocas. No fim, uma
+    # segunda stack sobe ao lado da primeira, com outro nome e outro domínio.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DOMAIN: planos.ci.test
+      # O domínio e a pasta de configuração da segunda stack, gerador-planos-b.
+      DOMAIN_B: planos-b.ci.test
+      # Nomes internos dos ensaios: explícitos, sem depender do padrão dos exemplos públicos.
+      CI_STACK_NAME: gerador-planos
+      # curl até o Traefik do runner, com os domínios de mentira apontados para ele.
+      CURL: >-
+        curl --silent --show-error --insecure --max-time 10
+        --resolve planos.ci.test:443:127.0.0.1 --resolve planos.ci.test:80:127.0.0.1
+        --resolve planos-b.ci.test:443:127.0.0.1 --resolve planos-b.ci.test:80:127.0.0.1
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # Como no job `image`. Com `use: false` o builder padrão segue valendo para o `docker build`
+      # do passo "Update, break and go back with deploy.sh", que parte de `FROM gerador-planos:ci`:
+      # só o builder padrão enxerga essa imagem local (o do cache buscaria no registro).
+      - name: Set up Buildx
+        id: buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069  # v4.4.1
+        with:
+          use: false
+
+      - name: Build the image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc  # v7.4.0
+        with:
+          context: .
+          builder: ${{ steps.buildx.outputs.name }}
+          tags: gerador-planos:ci
+          load: true
+          provenance: false
+          cache-from: type=gha,scope=leadkit
+          cache-to: type=gha,mode=max,scope=leadkit,ignore-error=true
+
+      - name: Start a single-node Swarm with a Traefik like the server's
+        run: |
+          docker swarm init --advertise-addr "$(ip -4 route get 1.1.1.1 | awk '{for (i = 1; i < NF; i++) if ($i == "src") print $(i + 1)}')"
+          docker network create --driver overlay --attachable traefik-public
+          # Os argumentos do Traefik do servidor (provider em modo Swarm, só o que tem
+          # traefik.enable, a rede traefik-public, os entrypoints web e websecure e o redirect para
+          # https), menos o Let's Encrypt: sem DNS público, o router usa o certificado padrão. A API
+          # do Traefik (porta 9000) só existe aqui, para conferir o router.
+          docker service create --detach=false --name traefik \
+            --constraint node.role==manager --network traefik-public \
+            --publish mode=host,published=80,target=80 \
+            --publish mode=host,published=443,target=443 \
+            --publish mode=host,published=9000,target=9000 \
+            --mount type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock,readonly \
+            traefik:v2.11 \
+            --providers.docker=true --providers.docker.swarmMode=true \
+            --providers.docker.exposedbydefault=false --providers.docker.network=traefik-public \
+            --entrypoints.web.address=:80 \
+            --entrypoints.web.http.redirections.entrypoint.to=websecure \
+            --entrypoints.web.http.redirections.entrypoint.scheme=https \
+            --entrypoints.websecure.address=:443 \
+            --entrypoints.traefik.address=:9000 --api.insecure=true
+
+      - name: Start a Hatchet Lite for the worker
+        run: |
+          # Na rede do host: os contêineres da stack chegam nele pelo gateway do docker_gwbridge,
+          # que vai no token (server_url e grpc_broadcast_address).
+          gateway=$(docker network inspect docker_gwbridge --format '{{(index .IPAM.Config 0).Gateway}}')
+          docker run --detach --name hatchet-db --publish 127.0.0.1:5433:5432 \
+            --env POSTGRES_USER=hatchet --env POSTGRES_DB=hatchet \
+            --env POSTGRES_HOST_AUTH_METHOD=trust postgres:16-trixie
+          for _ in $(seq 1 30); do
+            docker exec hatchet-db pg_isready -U hatchet -d hatchet >/dev/null 2>&1 && break
+            sleep 1
+          done
+          docker run --detach --name hatchet-lite --network host \
+            --env DATABASE_URL="postgresql://hatchet@127.0.0.1:5433/hatchet?sslmode=disable" \
+            --env SERVER_AUTH_COOKIE_DOMAIN=localhost --env SERVER_AUTH_COOKIE_INSECURE=t \
+            --env SERVER_AUTH_SET_EMAIL_VERIFIED=t \
+            --env SERVER_GRPC_BIND_ADDRESS=0.0.0.0 --env SERVER_GRPC_INSECURE=t \
+            --env SERVER_GRPC_PORT=7077 --env SERVER_GRPC_BROADCAST_ADDRESS="$gateway:7077" \
+            --env SERVER_URL="http://$gateway:8888" \
+            --env SERVER_INTERNAL_CLIENT_INTERNAL_GRPC_BROADCAST_ADDRESS=127.0.0.1:7077 \
+            ghcr.io/hatchet-dev/hatchet/hatchet-lite:v0.110.5
+          for _ in $(seq 1 90); do
+            curl -fsS http://127.0.0.1:8733/ready >/dev/null 2>&1 && break
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:8733/ready
+          echo
+          docker exec hatchet-lite ./hatchet-admin token create --config ./config \
+            --tenant-id 707d0855-80ab-4e1f-a156-f1c4546cbf52 > "$RUNNER_TEMP/hatchet-token"
+          test -s "$RUNNER_TEMP/hatchet-token"
+
+      - name: Write the config folder like the server's
+        run: |
+          # Como ~/gerador-de-planos/swarm: cópias do stack.yaml e do deploy.sh, e o app.env e o
+          # db.env feitos dos modelos. Escritos dentro da imagem, que tem o argon2. Os segredos são
+          # sorteados a cada execução, então nada com cara de segredo entra no repositório; o hash
+          # do admin entra sem aspas, como o guia pede.
+          conf="$RUNNER_TEMP/swarm"
+          echo "CONF=$conf" >> "$GITHUB_ENV"
+          mkdir -p "$conf"
+          cp deploy/swarm/stack.yaml deploy/swarm/deploy.sh "$conf/"
+          docker run --rm -i --user "$(id -u):$(id -g)" --env DOMAIN --env CI_STACK_NAME \
+            -v "$PWD/deploy/swarm:/modelos:ro" -v "$conf:/conf" -v "$RUNNER_TEMP:/out" \
+            gerador-planos:ci python - /modelos /conf /out <<'PY'
+          import os
+          import re
+          import secrets
+          import sys
+          from pathlib import Path
+          from urllib.parse import quote
+
+          from argon2 import PasswordHasher
+
+          domain = os.environ["DOMAIN"]
+          models, configuration, out = map(Path, sys.argv[1:])
+          stack = os.environ["CI_STACK_NAME"]
+          database_model = (models / "db.env.example").read_text()
+
+          def required(name):
+              found = re.findall(rf"^{name}=(.+)$", database_model, flags=re.M)
+              assert len(found) == 1 and found[0].strip(), name
+              return found[0].strip()
+
+          user, database = required("POSTGRES_USER"), required("POSTGRES_DB")
+          admin_password = secrets.token_urlsafe(24)
+          (out / "admin-password").write_text(admin_password)
+          db_password = secrets.token_hex(24)
+
+
+          def fill(name, values):
+              text = (models / f"{name}.example").read_text()
+              for key, value in values.items():
+                  line = f"{key}={value}"
+                  text, found = re.subn(rf"^{key}=.*$", lambda _: line, text, flags=re.M)
+                  assert found == 1, key
+              return text
+
+
+          app_env = fill(
+              "app.env",
+              {
+                  "STACK_NAME": stack,
+                  "DATABASE_URL": (
+                      f"postgresql+psycopg://{quote(user, safe='')}:{db_password}"
+                      f"@{stack}_db:5432/{quote(database, safe='')}"
+                  ),
+                  "PUBLIC_BASE_URL": f"https://{domain}",
+                  "TOKEN_SECRETS": secrets.token_urlsafe(48),
+                  "OPENAI_API_KEY": "sk-ci-dummy",
+                  "S3_BUCKET": "ci-bucket",
+                  "HATCHET_CLIENT_TOKEN": (out / "hatchet-token").read_text().split()[-1],
+                  "ADMIN_USERNAME": "ci-admin",
+                  "ADMIN_PASSWORD_HASH": PasswordHasher().hash(admin_password),
+                  "ADMIN_SESSION_SECRET": secrets.token_urlsafe(48),
+              },
+          )
+          # O Hatchet Lite do CI fala gRPC sem TLS.
+          (configuration / "app.env").write_text(app_env + "HATCHET_CLIENT_TLS_STRATEGY=none\n")
+          (configuration / "db.env").write_text(fill("db.env", {"POSTGRES_PASSWORD": db_password}))
+          PY
+          # Os ensaios mantêm seus nomes internos, sem exigir esse padrão no exemplo distribuído.
+          grep -qx "STACK_NAME=$CI_STACK_NAME" "$conf/app.env"
+          chmod 600 "$conf/app.env" "$conf/db.env"
+          ls -l "$conf"
+
+      - name: Check that two stack names never share a Traefik name
+        run: |
+          # O que o Swarm recebe do stack.yaml com STACK=stack-a e com STACK=stack-b: os dois routers,
+          # o serviço e os três middlewares de cada uma, sem nenhum nome em comum. Sem STACK (ou
+          # vazio), o fallback técnico do YAML continua gerador-planos. O exemplo distribuído
+          # escolhe leadkit explicitamente e é conferido à parte. Só nomes saem no log.
+          export LC_ALL=C
+          cd "$CONF"
+          config() { env -u STACK "$@" IMAGE=gerador-planos:ci DOMAIN="$DOMAIN" docker stack config -c stack.yaml; }
+          names() { config "$@" | grep -o 'traefik\.http\.[a-z]*\.[A-Za-z0-9_-]*' | sort -u; }
+          names STACK=stack-a > "$RUNNER_TEMP/names-a"
+          names STACK=stack-b > "$RUNNER_TEMP/names-b"
+          names STACK= > "$RUNNER_TEMP/names-empty"
+          names > "$RUNNER_TEMP/names-unset"
+          echo "stack-a:"; cat "$RUNNER_TEMP/names-a"
+          echo "stack-b:"; cat "$RUNNER_TEMP/names-b"
+          test "$(wc -l < "$RUNNER_TEMP/names-a")" -eq 6
+          test "$(wc -l < "$RUNNER_TEMP/names-b")" -eq 6
+          common=$(comm -12 "$RUNNER_TEMP/names-a" "$RUNNER_TEMP/names-b")
+          if [ -n "$common" ]; then
+            echo "as duas stacks repetem nomes do Traefik:"
+            echo "$common"
+            exit 1
+          fi
+          # Os middlewares que os routers chamam são os da própria stack.
+          config STACK=stack-a | grep -qF 'stack-a-hsts,stack-a-compress'
+          config STACK=stack-a | grep -qF 'stack-a-ratelimit,stack-a-hsts,stack-a-compress'
+          # Ausente e vazio acionam o fallback do YAML, sem herdar STACK do runner.
+          names STACK=gerador-planos > "$RUNNER_TEMP/names-default"
+          diff "$RUNNER_TEMP/names-default" "$RUNNER_TEMP/names-empty"
+          diff "$RUNNER_TEMP/names-default" "$RUNNER_TEMP/names-unset"
+          # O exemplo é uma configuração explícita diferente, não o default do YAML.
+          template_stack=$(sed -n 's/^STACK_NAME=//p' "$GITHUB_WORKSPACE/deploy/swarm/app.env.example")
+          test -n "$template_stack"
+          names STACK="$template_stack" > "$RUNNER_TEMP/names-template"
+          test "$(wc -l < "$RUNNER_TEMP/names-template")" -eq 6
+          for name in "routers.$template_stack" "routers.${template_stack}_submit" \
+                      "services.$template_stack" "middlewares.${template_stack}-hsts" \
+                      "middlewares.${template_stack}-compress" "middlewares.${template_stack}-ratelimit"; do
+            grep -qxF "traefik.http.$name" "$RUNNER_TEMP/names-template"
+          done
+          echo "fallback técnico e exemplo explícito conferidos separadamente"
+
+      - name: First deploy by hand, with the guide's commands
+        run: |
+          # Como a stack do servidor de produção subiu: o `docker stack deploy` e as migrations.
+          cd "$CONF"
+          FORWARDED_ALLOW_IPS=$(docker network inspect traefik-public --format '{{range $i, $c := .IPAM.Config}}{{if $i}},{{end}}{{$c.Subnet}}{{end}}')
+          echo "FORWARDED_ALLOW_IPS=$FORWARDED_ALLOW_IPS"
+          test -n "$FORWARDED_ALLOW_IPS"
+          IMAGE=gerador-planos:ci STACK="$CI_STACK_NAME" FORWARDED_ALLOW_IPS="$FORWARDED_ALLOW_IPS" \
+            docker stack deploy --detach=false --resolve-image changed -c stack.yaml gerador-planos
+          docker run --rm --network gerador-planos_internal --env-file app.env gerador-planos:ci migrate
+          docker stack ps gerador-planos
+          for service in db api worker; do
+            name="gerador-planos_$service"
+            ports=$(docker service inspect --format '{{json .Endpoint.Ports}}' "$name")
+            case "$ports" in null|"[]") ;; *) echo "$name publica portas: $ports"; exit 1 ;; esac
+            container=$(docker ps -q -f "label=com.docker.swarm.service.name=$name" | head -n 1)
+            health=$(docker inspect --format '{{.State.Health.Status}}' "$container")
+            echo "$name: $health, sem portas publicadas"
+            test "$health" = healthy
+          done
+
+      - name: Import the neutral demo explicitly in the first Swarm database
+        run: |
+          docker run --rm -i --network gerador-planos_internal --env-file "$CONF/app.env" gerador-planos:ci python -c 'from app.deps import get_deps; from app.forms.stored import import_definition; import sys; import_definition(get_deps(), sys.stdin.buffer.read(), actor="ci")' < examples/demo.json
+
+      - name: Check the API through Traefik
+        run: |
+          # O Traefik lê os serviços do Swarm a cada 15 s.
+          for _ in $(seq 1 30); do
+            [ "$($CURL -o /dev/null -w '%{http_code}' "https://$DOMAIN/readyz")" = 200 ] && break
+            sleep 2
+          done
+          $CURL --fail "https://$DOMAIN/readyz"
+          echo
+          # http vai para https no Traefik, como no servidor.
+          redirect=$($CURL -o /dev/null -w '%{http_code} %{redirect_url}' "http://$DOMAIN/readyz")
+          echo "http: $redirect"
+          case "$redirect" in "30"[1278]" https://$DOMAIN/readyz") ;; *) exit 1 ;; esac
+          # A API confia no X-Forwarded-Proto do Traefik: o redirect absoluto dela sai em https.
+          location=$($CURL -o /dev/null -D - "https://$DOMAIN/healthz/" | tr -d '\r' | sed -n 's/^[Ll]ocation: //p')
+          echo "redirect da API: $location"
+          test "$location" = "https://$DOMAIN/healthz"
+          # Os middlewares gerador-planos-hsts e gerador-planos-compress.
+          $CURL -o /dev/null -D - "https://$DOMAIN/readyz" | tr -d '\r' \
+            | grep -i '^strict-transport-security: max-age=31536000$'
+          $CURL -o /dev/null -D - -H 'Accept-Encoding: gzip' "https://$DOMAIN/static/css/public.css" \
+            | tr -d '\r' | grep -i '^content-encoding: gzip$'
+          $CURL --fail -o /dev/null "https://$DOMAIN/p/demo"
+
+      - name: Log in to the admin through Traefik
+        run: |
+          # O hash do admin chegou inteiro (com os `$`), a origem https bate e o cookie sai Secure.
+          jar="$RUNNER_TEMP/cookies"
+          headers=$($CURL -o /dev/null -D - -c "$jar" -H "Origin: https://$DOMAIN" \
+            --data-urlencode username=ci-admin --data-urlencode "password@$RUNNER_TEMP/admin-password" \
+            "https://$DOMAIN/admin/login" | tr -d '\r')
+          echo "$headers" | grep -qi '^location: /admin$'
+          echo "$headers" | grep -i '^set-cookie: mcc_admin=' | grep -i 'httponly' | grep -qi 'secure'
+          test "$($CURL -o /dev/null -w '%{http_code}' -b "$jar" "https://$DOMAIN/admin")" = 200
+          echo "login no admin: ok"
+
+      - name: Check the router in the Traefik API
+        run: |
+          # Os nomes que o servidor usa: router e serviço gerador-planos, middlewares
+          # gerador-planos-hsts e gerador-planos-compress.
+          curl -fsS "http://127.0.0.1:9000/api/http/routers/gerador-planos@docker" > "$RUNNER_TEMP/router.json"
+          curl -fsS "http://127.0.0.1:9000/api/http/services/gerador-planos@docker" > "$RUNNER_TEMP/service.json"
+          vips=$(docker service inspect --format '{{range .Endpoint.VirtualIPs}}{{.Addr}} {{end}}' gerador-planos_api)
+          VIPS="$vips" python3 - "$RUNNER_TEMP/router.json" "$RUNNER_TEMP/service.json" <<'PY'
+          import json
+          import os
+          import sys
+          from urllib.parse import urlsplit
+
+          router = json.load(open(sys.argv[1]))
+          service = json.load(open(sys.argv[2]))
+          print(json.dumps(router, indent=2))
+          print(json.dumps(service, indent=2))
+          assert router["status"] == "enabled", router
+          assert router["rule"] == "Host(`%s`)" % os.environ["DOMAIN"], router["rule"]
+          assert router["entryPoints"] == ["websecure"], router["entryPoints"]
+          assert router["tls"]["certResolver"] == "letsencrypt", router["tls"]
+          middlewares = [name.split("@")[0] for name in router["middlewares"]]
+          assert middlewares == ["gerador-planos-hsts", "gerador-planos-compress"], middlewares
+          # lbswarm: o Traefik fala com o IP virtual do serviço, não com os contêineres.
+          servers = [urlsplit(s["url"]) for s in service["loadBalancer"]["servers"]]
+          vips = {vip.split("/")[0] for vip in os.environ["VIPS"].split()}
+          assert [s.port for s in servers] == [8000], servers
+          assert servers[0].hostname in vips, (servers, vips)
+          PY
+
+      - name: Check the submit router and its rate limit in the Traefik API
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import urllib.request
+
+
+          def get(path):
+              with urllib.request.urlopen("http://127.0.0.1:9000/api/http/" + path, timeout=10) as response:
+                  return json.load(response)
+
+
+          domain = os.environ["DOMAIN"]
+          main = get("routers/gerador-planos@docker")
+          submit = get("routers/gerador-planos_submit@docker")
+          limit = get("middlewares/gerador-planos-ratelimit@docker")
+          print(json.dumps(submit, indent=2))
+          print(json.dumps(limit, indent=2))
+          assert submit["status"] == "enabled", submit
+          assert submit["rule"] == (
+              f"Host(`{domain}`) && Method(`POST`) && (PathPrefix(`/p/`) || PathPrefix(`/v1/forms/`))"
+          ), submit["rule"]
+          assert submit["entryPoints"] == ["websecure"], submit["entryPoints"]
+          assert submit["tls"]["certResolver"] == "letsencrypt", submit["tls"]
+          assert submit["service"].split("@")[0] == "gerador-planos", submit["service"]
+          names = [name.split("@")[0] for name in submit["middlewares"]]
+          assert names == ["gerador-planos-ratelimit", "gerador-planos-hsts", "gerador-planos-compress"], names
+          # Acima do router principal. Sem prioridade fixa, a dele é o tamanho da regra (a API não a
+          # mostra).
+          assert "priority" not in main, main
+          assert submit["priority"] > len(main["rule"]), (submit["priority"], main["rule"])
+          assert limit["status"] == "enabled", limit
+          rate = limit["rateLimit"]
+          assert (rate["average"], rate["burst"]) == (10, 20), rate
+          # Pelo IP da conexão, não por cabeçalho: o X-Forwarded-For é do cliente.
+          criterion = rate.get("sourceCriterion", {})
+          assert not criterion.get("requestHeaderName") and not criterion.get("requestHost"), criterion
+          assert "ipStrategy" in criterion and criterion["ipStrategy"].get("depth", 0) == 0, criterion
+          PY
+
+      - name: Rate-limit the form POSTs per IP, and only them
+        run: |
+          # O corpo `{}` é inválido de propósito: a API responde 422 e nada é gravado. O app só
+          # responde 429 por e-mail repetido ou fila cheia, e este corpo não chega a isso: todo 429
+          # daqui é do Traefik. O limite padrão é 10 por minuto, com rajada de 20.
+          post() {
+            $CURL -o /dev/null -w '%{http_code}\n' -X POST -H 'Content-Type: application/json' \
+              --data '{}' "https://$DOMAIN$1"
+          }
+          # O router dos envios roda o mesmo HSTS do principal.
+          headers=$($CURL -o /dev/null -D - -X POST -H 'Content-Type: application/json' --data '{}' \
+            "https://$DOMAIN/v1/forms/demo/submissions" | tr -d '\r')
+          echo "$headers" | head -n 1 | grep -q ' 422'
+          echo "$headers" | grep -i '^strict-transport-security: max-age=31536000$'
+
+          # 40 envios seguidos: a rajada passa (422 da API) e o resto é barrado (429), nada mais.
+          : > "$RUNNER_TEMP/posts"
+          for _ in $(seq 40); do post /v1/forms/demo/submissions >> "$RUNNER_TEMP/posts"; done
+          sort "$RUNNER_TEMP/posts" | uniq -c
+          test "$(grep -c '^422$' "$RUNNER_TEMP/posts")" -ge 15
+          test "$(grep -c '^429$' "$RUNNER_TEMP/posts")" -ge 5
+          test "$(grep -cv -e '^422$' -e '^429$' "$RUNNER_TEMP/posts")" -eq 0
+
+          # Os dois caminhos dividem o mesmo limite: com o IP sem crédito, o POST da página também cai.
+          page=$(for _ in 1 2 3 4 5; do post /p/demo; done)
+          echo "POST /p/demo: $(echo $page)"
+          test "$(echo "$page" | grep -c '^429$')" -ge 1
+
+          # Só o POST dos envios é limitado: o GET da página, e um POST fora dos dois caminhos, não.
+          gets=$(for _ in $(seq 40); do $CURL -o /dev/null -w '%{http_code}\n' "https://$DOMAIN/p/demo"; done)
+          echo "GET /p/demo: $(echo "$gets" | sort | uniq -c | tr -s ' ')"
+          test "$(echo "$gets" | grep -c '^200$')" -eq 40
+          others=$(for _ in $(seq 40); do post /readyz; done)
+          echo "POST /readyz: $(echo "$others" | sort | uniq -c | tr -s ' ')"
+          test "$(echo "$others" | grep -c '^405$')" -eq 40
+
+      - name: Check the memory limits of the three services
+        run: |
+          # Os padrões do stack.yaml chegam ao serviço (teto e reserva, em bytes) e ao cgroup do
+          # contêiner, que é o que de fato encerra um processo que passa do teto.
+          mb=$((1024 * 1024))
+          check() {
+            sizes=$(docker service inspect --format '{{.Spec.TaskTemplate.Resources.Limits.MemoryBytes}} {{.Spec.TaskTemplate.Resources.Reservations.MemoryBytes}}' "gerador-planos_$1")
+            echo "$1: teto e reserva em bytes: $sizes"
+            test "$sizes" = "$(($2 * mb)) $(($3 * mb))"
+            container=$(docker ps -q -f "label=com.docker.swarm.service.name=gerador-planos_$1" | head -n 1)
+            test "$(docker inspect --format '{{.HostConfig.Memory}}' "$container")" = "$(($2 * mb))"
+          }
+          check api 512 128
+          check worker 1536 512
+          check db 1024 256
+
+      - name: Keep the real client IP behind Traefik, and ignore a forged one from another network
+        run: |
+          # O deploy.sh e o comando à mão passam a sub-rede da traefik-public como FORWARDED_ALLOW_IPS.
+          # O IP que o bloqueio de login usa aparece no log do app (`login recusado ip=...`).
+          subnet=$(docker network inspect traefik-public --format '{{(index .IPAM.Config 0).Subnet}}')
+          internal=$(docker network inspect gerador-planos_internal --format '{{(index .IPAM.Config 0).Subnet}}')
+          env_value=$(docker service inspect --format '{{json .Spec.TaskTemplate.ContainerSpec.Env}}' gerador-planos_api)
+          echo "traefik-public: $subnet; interna: $internal"
+          echo "$env_value" | grep -qF "FORWARDED_ALLOW_IPS=$subnet"
+          api() { docker ps -q -f label=com.docker.swarm.service.name=gerador-planos_api | head -n 1; }
+          last_ip() {
+            docker logs "$(api)" 2>&1 | grep 'login recusado' | tail -n 1 | sed -n 's/.*ip=\([^ ]*\).*/\1/p'
+          }
+          wait_for_log() {
+            for _ in $(seq 1 15); do
+              [ "$(docker logs "$(api)" 2>&1 | grep -c 'login recusado')" -gt "$1" ] && return 0
+              sleep 1
+            done
+            echo "o log do app não mostrou o login recusado"
+            return 1
+          }
+          count() { docker logs "$(api)" 2>&1 | grep -c 'login recusado' || true; }
+          # Uma senha que não é a do admin, sorteada a cada execução.
+          export WRONG_LOGIN=$(python3 -c 'import secrets; print(secrets.token_hex(8))')
+
+          # 1. Pelo Traefik: o IP é o da conexão do runner, não o do Traefik na traefik-public. Se a API
+          # não confiasse no cabeçalho, ela veria o IP do Traefik, e todo mundo contaria como um só.
+          before=$(count)
+          $CURL -o /dev/null -H "Origin: https://$DOMAIN" \
+            --data-urlencode username=ci-admin --data-urlencode "password=$WRONG_LOGIN" "https://$DOMAIN/admin/login"
+          wait_for_log "$before"
+          real=$(last_ip)
+          echo "pelo Traefik, o bloqueio viu: $real"
+          SUBNET="$subnet" REAL="$real" python3 -c '
+          import ipaddress, os
+          ip = ipaddress.ip_address(os.environ["REAL"])
+          assert ip not in ipaddress.ip_network(os.environ["SUBNET"]), "a API viu o IP do Traefik"
+          '
+
+          # 2. De outra rede (a interna), um X-Forwarded-For forjado é ignorado: o IP é o do contêiner
+          # que falou, não o 203.0.113.77 que ele escreveu. Com FORWARDED_ALLOW_IPS=*, seria o forjado.
+          before=$(count)
+          docker run --rm -i --network gerador-planos_internal --env DOMAIN --env WRONG_LOGIN gerador-planos:ci python - <<'PY'
+          import os
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+
+          request = urllib.request.Request(
+              "http://gerador-planos_api:8000/admin/login",
+              data=urllib.parse.urlencode(
+                  {"username": "ci-admin", "password": os.environ["WRONG_LOGIN"]}
+              ).encode(),
+              headers={"Origin": f"https://{os.environ['DOMAIN']}", "X-Forwarded-For": "203.0.113.77"},
+          )
+          try:
+              urllib.request.urlopen(request, timeout=10)
+          except urllib.error.HTTPError as error:
+              print("status", error.code)
+          PY
+          wait_for_log "$before"
+          seen=$(last_ip)
+          echo "de outra rede, com X-Forwarded-For forjado, o bloqueio viu: $seen"
+          test "$seen" != 203.0.113.77
+          SUBNET="$internal" SEEN="$seen" python3 -c '
+          import ipaddress, os
+          assert ipaddress.ip_address(os.environ["SEEN"]) in ipaddress.ip_network(os.environ["SUBNET"])
+          '
+
+      - name: Run the retention inside the worker
+        run: |
+          worker=$(docker ps -q -f label=com.docker.swarm.service.name=gerador-planos_worker | head -n 1)
+          docker exec -i "$worker" python - <<'PY'
+          from app.deps import get_deps
+          from app.retention import purge_expired
+
+          print(purge_expired(get_deps()))
+          PY
+
+      - name: Run deploy.sh on the stack deployed by hand
+        run: |
+          # A primeira vez do deploy.sh no servidor, sem nada novo: nenhuma réplica é trocada, nem a
+          # do Postgres.
+          cd "$CONF"
+          running() {
+            docker service ps --filter desired-state=running --format '{{.Name}} {{.ID}}' \
+              gerador-planos_db gerador-planos_api gerador-planos_worker | sort
+          }
+          before=$(running)
+          IMAGE=gerador-planos:ci ./deploy.sh
+          after=$(running)
+          if [ "$after" != "$before" ]; then
+            echo "réplicas trocadas:"
+            diff <(echo "$before") <(echo "$after") || true
+            exit 1
+          fi
+
+      - name: Update, break and go back with deploy.sh without dropping requests
+        run: |
+          cd "$CONF"
+          probe="$RUNNER_TEMP/probe.txt"
+          : > "$probe"
+          ( while [ ! -e "$RUNNER_TEMP/stop-probe" ]; do
+              $CURL -o /dev/null -w '%{http_code}\n' "https://$DOMAIN/healthz" >> "$probe" || echo 000 >> "$probe"
+              sleep 0.2
+            done ) &
+          probe_pid=$!
+          state() { docker service inspect --format '{{.UpdateStatus.State}}' "gerador-planos_$1"; }
+          image() { docker service inspect --format '{{.Spec.TaskTemplate.ContainerSpec.Image}}' "gerador-planos_$1"; }
+          running() {
+            docker service ps --filter desired-state=running --format '{{.Name}} {{.ID}}' \
+              gerador-planos_db gerador-planos_api gerador-planos_worker | sort
+          }
+          db() { docker ps -q -f label=com.docker.swarm.service.name=gerador-planos_db | head -n 1; }
+          psql_db() { docker exec "$(db)" sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "$1"' sh "$1"; }
+          versions() { docker service inspect --format '{{.Spec.Name}} {{.Version.Index}}' gerador-planos_api gerador-planos_worker; }
+
+          echo "::group::1. versão nova: troca sem queda"
+          docker tag gerador-planos:ci gerador-planos:ci-novo
+          IMAGE=gerador-planos:ci-novo ./deploy.sh
+          for service in api worker; do
+            echo "$service: $(state "$service"), $(image "$service")"
+            test "$(state "$service")" = completed
+            case "$(image "$service")" in gerador-planos:ci-novo*) ;; *) exit 1 ;; esac
+          done
+          echo "::endgroup::"
+
+          echo "::group::2. versão quebrada: o Swarm desfaz e o deploy.sh sai com erro"
+          # Em produção, o app recusa PUBLIC_BASE_URL sem https: a API e o worker não sobem.
+          cp app.env "$RUNNER_TEMP/app.env.ok"
+          sed -i "s|^PUBLIC_BASE_URL=.*|PUBLIC_BASE_URL=http://$DOMAIN|" app.env
+          if IMAGE=gerador-planos:ci-novo ./deploy.sh > "$RUNNER_TEMP/broken.log" 2>&1; then
+            cat "$RUNNER_TEMP/broken.log"
+            echo "o deploy.sh devia ter acusado o rollback"
+            exit 1
+          fi
+          cat "$RUNNER_TEMP/broken.log"
+          grep -F 'gerador-planos_api (rollback_completed)' "$RUNNER_TEMP/broken.log"
+          grep -F 'gerador-planos_worker (rollback_completed)' "$RUNNER_TEMP/broken.log"
+          docker service inspect --format '{{json .Spec.TaskTemplate.ContainerSpec.Env}}' gerador-planos_api \
+            | grep -q "PUBLIC_BASE_URL=https://$DOMAIN"
+          echo "::endgroup::"
+
+          echo "::group::3. de volta à configuração boa: nada é trocado e o rollback antigo não conta"
+          cp "$RUNNER_TEMP/app.env.ok" app.env
+          before=$(running)
+          IMAGE=gerador-planos:ci-novo ./deploy.sh
+          after=$(running)
+          if [ "$after" != "$before" ]; then
+            echo "réplicas trocadas:"
+            diff <(echo "$before") <(echo "$after") || true
+            exit 1
+          fi
+          echo "::endgroup::"
+
+          echo "::group::4. volta para a versão anterior com o banco à frente da imagem"
+          # Uma migration que a imagem anterior não conhece, como depois de um deploy com migration
+          # nova. Sem ROLLBACK=1, o deploy.sh para sem mexer na stack, porque o banco também podia
+          # ser de outra linha de migrations; com ele, troca a versão sem migrar.
+          head=$(psql_db 'select version_num from alembic_version')
+          psql_db "update alembic_version set version_num = 'ci_futura'"
+          before=$(versions)
+          if IMAGE=gerador-planos:ci ./deploy.sh > "$RUNNER_TEMP/back-sem-rollback.log" 2>&1; then
+            cat "$RUNNER_TEMP/back-sem-rollback.log"
+            echo "sem ROLLBACK=1, o deploy.sh devia ter parado"
+            exit 1
+          fi
+          cat "$RUNNER_TEMP/back-sem-rollback.log"
+          grep -F "Can't locate revision" "$RUNNER_TEMP/back-sem-rollback.log"
+          grep -F 'ROLLBACK=1' "$RUNNER_TEMP/back-sem-rollback.log"
+          test "$(versions)" = "$before"
+          ROLLBACK=1 IMAGE=gerador-planos:ci ./deploy.sh > "$RUNNER_TEMP/back.log" 2>&1 || { cat "$RUNNER_TEMP/back.log"; exit 1; }
+          cat "$RUNNER_TEMP/back.log"
+          grep -F 'sem migrations' "$RUNNER_TEMP/back.log"
+          psql_db "update alembic_version set version_num = '$head'"
+          for service in api worker; do
+            echo "$service: $(state "$service"), $(image "$service")"
+            test "$(state "$service")" = completed
+            case "$(image "$service")" in gerador-planos:ci@*|gerador-planos:ci) ;; *) exit 1 ;; esac
+          done
+          echo "::endgroup::"
+
+          echo "::group::5. migration que falha: a stack não é mexida"
+          before=$(versions)
+          sed -i 's|@gerador-planos_db:|@gerador-planos_sem-banco:|' app.env
+          if IMAGE=gerador-planos:ci ./deploy.sh > "$RUNNER_TEMP/migrate.log" 2>&1; then
+            cat "$RUNNER_TEMP/migrate.log"
+            echo "o deploy.sh devia ter parado nas migrations"
+            exit 1
+          fi
+          cat "$RUNNER_TEMP/migrate.log"
+          grep -F 'a stack não foi mexida' "$RUNNER_TEMP/migrate.log"
+          test "$(versions)" = "$before"
+          cp "$RUNNER_TEMP/app.env.ok" app.env
+          echo "::endgroup::"
+
+          echo "::group::6. DOMAIN diferente do PUBLIC_BASE_URL: nada é mexido"
+          before=$(versions)
+          if DOMAIN=outro.ci.test IMAGE=gerador-planos:ci ./deploy.sh > "$RUNNER_TEMP/domain.log" 2>&1; then
+            cat "$RUNNER_TEMP/domain.log"
+            echo "o deploy.sh devia ter recusado o DOMAIN diferente"
+            exit 1
+          fi
+          cat "$RUNNER_TEMP/domain.log"
+          grep -F 'difere do domínio do PUBLIC_BASE_URL' "$RUNNER_TEMP/domain.log"
+          test "$(versions)" = "$before"
+          echo "::endgroup::"
+
+          echo "::group::7. tag reaproveitada para outra imagem: o Swarm não troca, e o deploy.sh acusa"
+          # Mesmo nome, imagem nova: com --resolve-image changed o Swarm fica com a que já tinha.
+          printf 'FROM gerador-planos:ci\nLABEL ci.build=reaproveitada\n' | docker build --quiet --tag gerador-planos:ci - > /dev/null
+          if IMAGE=gerador-planos:ci ./deploy.sh > "$RUNNER_TEMP/stale.log" 2>&1; then
+            cat "$RUNNER_TEMP/stale.log"
+            echo "o deploy.sh devia ter acusado a réplica com a imagem antiga"
+            exit 1
+          fi
+          cat "$RUNNER_TEMP/stale.log"
+          grep -F 'continua com outra imagem' "$RUNNER_TEMP/stale.log"
+          echo "::endgroup::"
+
+          touch "$RUNNER_TEMP/stop-probe"
+          wait "$probe_pid"
+          echo "respostas durante as trocas:"
+          sort "$probe" | uniq -c
+          test "$(grep -c . "$probe")" -gt 50
+          if grep -qv '^200$' "$probe"; then
+            echo "houve pedido sem 200 durante as trocas"
+            exit 1
+          fi
+
+      - name: Back up Postgres with backup.sh
+        run: |
+          BACKUP_DIR="$RUNNER_TEMP/backups" deploy/swarm/backup.sh
+          ls -l "$RUNNER_TEMP/backups"
+          dump=$(ls "$RUNNER_TEMP"/backups/mcc-*.dump)
+          db=$(docker ps -q -f label=com.docker.swarm.service.name=gerador-planos_db | head -n 1)
+          docker exec -i "$db" pg_restore --list < "$dump" > "$RUNNER_TEMP/backup.list"
+          grep -E ' TABLE public (leads|submissions|jobs) ' "$RUNNER_TEMP/backup.list"
+
+      - name: Remove the stack, keep the volume and deploy again with deploy.sh
+        run: |
+          docker stack rm gerador-planos
+          for _ in $(seq 1 60); do
+            if [ -z "$(docker ps -q -f label=com.docker.stack.namespace=gerador-planos)" ] \
+              && ! docker network inspect gerador-planos_internal >/dev/null 2>&1; then
+              break
+            fi
+            sleep 2
+          done
+          docker volume inspect --format '{{.Name}} continua' gerador-planos_pgdata
+          # Primeiro deploy pelo deploy.sh: sem a rede interna, ele sobe a stack e só depois roda as
+          # migrations, aqui sem nada a fazer, porque o banco do volume já está migrado.
+          cd "$CONF"
+          IMAGE=gerador-planos:ci ./deploy.sh
+          for _ in $(seq 1 30); do
+            [ "$($CURL -o /dev/null -w '%{http_code}' "https://$DOMAIN/readyz")" = 200 ] && break
+            sleep 2
+          done
+          $CURL --fail "https://$DOMAIN/readyz"
+          echo
+
+      - name: Start a second stack next to the first, with its own name and domain
+        run: |
+          # A pasta da segunda stack: a mesma configuração, com STACK_NAME, domínio e host do banco
+          # próprios (README, "Duas stacks no mesmo servidor").
+          conf_b="$RUNNER_TEMP/swarm-b"
+          echo "CONF_B=$conf_b" >> "$GITHUB_ENV"
+          mkdir -p "$conf_b"
+          cp "$CONF/stack.yaml" "$CONF/deploy.sh" "$CONF/app.env" "$CONF/db.env" "$conf_b/"
+          python3 - "$conf_b/app.env" "$DOMAIN_B" gerador-planos-b <<'PY'
+          import re
+          import sys
+          from pathlib import Path
+          from urllib.parse import urlsplit, urlunsplit
+
+          filename, domain, stack = sys.argv[1:]
+          path = Path(filename)
+          text = path.read_text()
+          values = dict(
+              line.split("=", 1) for line in text.splitlines()
+              if line and not line.startswith("#") and "=" in line
+          )
+          url = urlsplit(values["DATABASE_URL"])
+          assert url.hostname == f"{values['STACK_NAME']}_db"
+          credentials = url.netloc.rsplit("@", 1)[0]
+          changed = {
+              "PUBLIC_BASE_URL": f"https://{domain}",
+              "STACK_NAME": stack,
+              "DATABASE_URL": urlunsplit(
+                  url._replace(netloc=f"{credentials}@{stack}_db:{url.port or 5432}")
+              ),
+          }
+          for key, value in changed.items():
+              text, count = re.subn(rf"^{key}=.*$", lambda _: f"{key}={value}", text, flags=re.M)
+              assert count == 1, key
+          path.write_text(text)
+          PY
+          cd "$conf_b"
+          # O DOMAIN do job é o da primeira stack: o deploy.sh da segunda lê o dela do app.env.
+          env -u DOMAIN IMAGE=gerador-planos:ci ./deploy.sh > "$RUNNER_TEMP/deploy-b.log" 2>&1 || { cat "$RUNNER_TEMP/deploy-b.log"; exit 1; }
+          cat "$RUNNER_TEMP/deploy-b.log"
+          grep -F 'gerador-planos-b no ar com gerador-planos:ci' "$RUNNER_TEMP/deploy-b.log"
+          docker stack ls
+          for service in db api worker; do
+            container=$(docker ps -q -f "label=com.docker.swarm.service.name=gerador-planos-b_$service" | head -n 1)
+            health=$(docker inspect --format '{{.State.Health.Status}}' "$container")
+            echo "gerador-planos-b_$service: $health"
+            test "$health" = healthy
+          done
+
+      - name: Import the neutral demo explicitly in the second Swarm database
+        run: |
+          docker run --rm -i --network gerador-planos-b_internal --env-file "$CONF_B/app.env" gerador-planos:ci python -c 'from app.deps import get_deps; from app.forms.stored import import_definition; import sys; import_definition(get_deps(), sys.stdin.buffer.read(), actor="ci")' < examples/demo.json
+
+      - name: Check that both stacks answer, each on its own domain
+        run: |
+          # O Traefik lê os serviços do Swarm a cada 15 s. Com os nomes iguais ele descartaria os
+          # dois routers, e a primeira stack também deixaria de responder.
+          for domain in "$DOMAIN_B" "$DOMAIN"; do
+            for _ in $(seq 1 30); do
+              [ "$($CURL -o /dev/null -w '%{http_code}' "https://$domain/readyz")" = 200 ] && break
+              sleep 2
+            done
+            $CURL --fail "https://$domain/readyz"
+            echo
+            $CURL -o /dev/null -D - "https://$domain/readyz" | tr -d '\r' \
+              | grep -i '^strict-transport-security: max-age=31536000$'
+            $CURL --fail -o /dev/null "https://$domain/p/demo"
+          done
+          # Cada router é da sua stack: a regra, os middlewares e o IP virtual do serviço da stack.
+          STACKS="gerador-planos:$DOMAIN gerador-planos-b:$DOMAIN_B" python3 - <<'PY'
+          import json
+          import os
+          import subprocess
+          import urllib.request
+          from urllib.parse import urlsplit
+
+
+          def get(path):
+              with urllib.request.urlopen("http://127.0.0.1:9000/api/http/" + path, timeout=10) as response:
+                  return json.load(response)
+
+
+          for pair in os.environ["STACKS"].split():
+              stack, domain = pair.split(":")
+              router = get(f"routers/{stack}@docker")
+              service = get(f"services/{stack}@docker")
+              assert router["status"] == "enabled", router
+              assert router["rule"] == f"Host(`{domain}`)", router["rule"]
+              assert router["entryPoints"] == ["websecure"], router["entryPoints"]
+              assert router["tls"]["certResolver"] == "letsencrypt", router["tls"]
+              middlewares = [name.split("@")[0] for name in router["middlewares"]]
+              assert middlewares == [f"{stack}-hsts", f"{stack}-compress"], middlewares
+              inspect = subprocess.run(
+                  ["docker", "service", "inspect", "--format", "{{range .Endpoint.VirtualIPs}}{{.Addr}} {{end}}", f"{stack}_api"],
+                  capture_output=True, text=True, check=True,
+              )
+              vips = {vip.split("/")[0] for vip in inspect.stdout.split()}
+              servers = [urlsplit(s["url"]) for s in service["loadBalancer"]["servers"]]
+              assert [s.port for s in servers] == [8000], servers
+              assert servers[0].hostname in vips, (stack, servers, vips)
+              print(stack, "->", domain, "ok")
+          PY
+
+      - name: Refuse the wrong config folder and a STACK that is not the folder's
+        run: |
+          # A pasta da segunda stack sem o STACK_NAME cairia no nome da primeira e trocaria o domínio
+          # dela. O deploy.sh recusa sem mexer em nada: nenhuma réplica trocada, o router da
+          # primeira como estava e as duas stacks respondendo.
+          wrong="$RUNNER_TEMP/swarm-wrong"
+          cp -r "$CONF_B" "$wrong"
+          sed -i '/^STACK_NAME=/d' "$wrong/app.env"
+          versions() {
+            docker service inspect --format '{{.Spec.Name}} {{.Version.Index}}' \
+              gerador-planos_db gerador-planos_api gerador-planos_worker \
+              gerador-planos-b_db gerador-planos-b_api gerador-planos-b_worker
+          }
+          before=$(versions)
+          rule='{{index .Spec.Labels "traefik.http.routers.gerador-planos.rule"}}'
+          test "$(docker service inspect --format "$rule" gerador-planos_api)" = "Host(\`$DOMAIN\`)"
+
+          # Sem o DOMAIN do job, que é o da primeira stack: o que recusa aqui é o router no ar.
+          cd "$wrong"
+          if env -u DOMAIN IMAGE=gerador-planos:ci ./deploy.sh > "$RUNNER_TEMP/wrong.log" 2>&1; then
+            cat "$RUNNER_TEMP/wrong.log"
+            echo "o deploy.sh devia ter recusado a pasta da outra stack"
+            exit 1
+          fi
+          cat "$RUNNER_TEMP/wrong.log"
+          grep -F 'a stack gerador-planos está no ar com o router' "$RUNNER_TEMP/wrong.log"
+          grep -F "$DOMAIN_B" "$RUNNER_TEMP/wrong.log"
+          grep -F 'nada foi mexido' "$RUNNER_TEMP/wrong.log"
+
+          cd "$CONF_B"
+          if env -u DOMAIN STACK=gerador-planos IMAGE=gerador-planos:ci ./deploy.sh > "$RUNNER_TEMP/env-stack.log" 2>&1; then
+            cat "$RUNNER_TEMP/env-stack.log"
+            echo "o deploy.sh devia ter recusado o STACK diferente do STACK_NAME"
+            exit 1
+          fi
+          cat "$RUNNER_TEMP/env-stack.log"
+          grep -F 'STACK=gerador-planos difere do STACK_NAME do app.env (gerador-planos-b)' "$RUNNER_TEMP/env-stack.log"
+
+          test "$(versions)" = "$before"
+          test "$(docker service inspect --format "$rule" gerador-planos_api)" = "Host(\`$DOMAIN\`)"
+          for domain in "$DOMAIN" "$DOMAIN_B"; do
+            $CURL --fail "https://$domain/readyz"
+            echo
+          done
+
+      - name: Deploy the first stack again with the second one up
+        run: |
+          # Cada pasta continua atualizando a sua stack: nenhuma réplica de nenhuma das duas troca.
+          running() {
+            docker service ps --filter desired-state=running --format '{{.Name}} {{.ID}}' \
+              gerador-planos_db gerador-planos_api gerador-planos_worker \
+              gerador-planos-b_db gerador-planos-b_api gerador-planos-b_worker | sort
+          }
+          before=$(running)
+          (cd "$CONF" && IMAGE=gerador-planos:ci ./deploy.sh)
+          (cd "$CONF_B" && env -u DOMAIN IMAGE=gerador-planos:ci ./deploy.sh)
+          after=$(running)
+          if [ "$after" != "$before" ]; then
+            echo "réplicas trocadas:"
+            diff <(echo "$before") <(echo "$after") || true
+            exit 1
+          fi
+
+      - name: Tune the second stack through its app.env, and refuse values that do not serve
+        run: |
+          # Os ajustes do app.env chegam ao Swarm pelo deploy.sh: o teto de memória da API, e a média e
+          # a rajada do limite de envios no Traefik. A primeira stack segue com os padrões.
+          cd "$CONF_B"
+          cp app.env "$RUNNER_TEMP/app-b.env.ok"
+          versions() {
+            docker service inspect --format '{{.Spec.Name}} {{.Version.Index}}' \
+              gerador-planos_api gerador-planos-b_db gerador-planos-b_api gerador-planos-b_worker
+          }
+          rate() {
+            curl -fsS "http://127.0.0.1:9000/api/http/middlewares/$1-ratelimit@docker" \
+              | python3 -c 'import json, sys; rate = json.load(sys.stdin)["rateLimit"]; print(rate["average"], rate["burst"])'
+          }
+
+          # Um valor que o Traefik ou o Docker não leriam: o deploy.sh para sem mexer em nada.
+          before=$(versions)
+          for bad in RATE_LIMIT_BURST=abc API_MEMORY_LIMIT=512MiB; do
+            echo "$bad" >> app.env
+            if env -u DOMAIN IMAGE=gerador-planos:ci ./deploy.sh > "$RUNNER_TEMP/bad.log" 2>&1; then
+              cat "$RUNNER_TEMP/bad.log"
+              echo "o deploy.sh devia ter recusado $bad"
+              exit 1
+            fi
+            cat "$RUNNER_TEMP/bad.log"
+            grep -F "${bad%%=*}=${bad#*=} não serve" "$RUNNER_TEMP/bad.log"
+            cp "$RUNNER_TEMP/app-b.env.ok" app.env
+          done
+          test "$(versions)" = "$before"
+
+          # Valores bons: a segunda stack muda, a primeira não.
+          printf '%s\n' RATE_LIMIT_AVERAGE=7 RATE_LIMIT_BURST=9 API_MEMORY_LIMIT=640M >> app.env
+          env -u DOMAIN IMAGE=gerador-planos:ci ./deploy.sh
+          limit=$(docker service inspect --format '{{.Spec.TaskTemplate.Resources.Limits.MemoryBytes}}' gerador-planos-b_api)
+          echo "gerador-planos-b_api: teto $limit"
+          test "$limit" = "$((640 * 1024 * 1024))"
+          test "$(docker service inspect --format '{{.Spec.TaskTemplate.Resources.Limits.MemoryBytes}}' gerador-planos_api)" = "$((512 * 1024 * 1024))"
+          # O Traefik lê o Swarm a cada 15 s.
+          for _ in $(seq 1 30); do
+            [ "$(rate gerador-planos-b)" = "7 9" ] && break
+            sleep 2
+          done
+          test "$(rate gerador-planos-b)" = "7 9"
+          test "$(rate gerador-planos)" = "10 20"
+
+          # E o limite novo vale no router: com rajada de 9, a segunda stack barra antes da primeira.
+          : > "$RUNNER_TEMP/posts-b"
+          for _ in $(seq 25); do
+            $CURL -o /dev/null -w '%{http_code}\n' -X POST -H 'Content-Type: application/json' --data '{}' \
+              "https://$DOMAIN_B/v1/forms/demo/submissions" >> "$RUNNER_TEMP/posts-b"
+          done
+          sort "$RUNNER_TEMP/posts-b" | uniq -c
+          test "$(grep -c '^422$' "$RUNNER_TEMP/posts-b")" -ge 7
+          test "$(grep -c '^422$' "$RUNNER_TEMP/posts-b")" -le 14
+          test "$(grep -c '^429$' "$RUNNER_TEMP/posts-b")" -ge 8
+
+      - name: Back up the second stack with backup.sh
+        run: |
+          STACK=gerador-planos-b BACKUP_DIR="$RUNNER_TEMP/backups-b" deploy/swarm/backup.sh
+          dump=$(ls "$RUNNER_TEMP"/backups-b/mcc-*.dump)
+          db=$(docker ps -q -f label=com.docker.swarm.service.name=gerador-planos-b_db | head -n 1)
+          docker exec -i "$db" pg_restore --list < "$dump" > "$RUNNER_TEMP/backup-b.list"
+          grep -E ' TABLE public (leads|submissions|jobs) ' "$RUNNER_TEMP/backup-b.list"
+          # Um nome que não é de nenhuma stack não cai no banco da outra.
+          if STACK=nao-existe BACKUP_DIR="$RUNNER_TEMP/backups-x" deploy/swarm/backup.sh; then
+            echo "o backup.sh devia ter falhado para uma stack que não existe"
+            exit 1
+          fi
+
+      - name: Show the state and the logs
+        if: failure()
+        run: |
+          docker service ls || true
+          for service in $(docker service ls --format '{{.Name}}' 2>/dev/null); do
+            echo "::group::$service"
+            docker service ps --no-trunc "$service" || true
+            docker service logs --no-trunc --tail 200 "$service" 2>&1 || true
+            echo "::endgroup::"
+          done
+          echo "::group::hatchet-lite"
+          docker logs --tail 200 hatchet-lite 2>&1 || true
+          echo "::endgroup::"
+
+  validation:
+    if: always()
+    needs: [changes, image, swarm]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require image and the applicable Swarm validation
+        env:
+          SWARM_REQUIRED: ${{ needs.changes.outputs.swarm }}
+        run: |
+          test "${{ needs.changes.result }}" = success
+          test "${{ needs.image.result }}" = success
+          if [ "$SWARM_REQUIRED" = true ]; then
+            test "${{ needs.swarm.result }}" = success
+          else
+            test "${{ needs.swarm.result }}" = skipped
+          fi

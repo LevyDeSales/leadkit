@@ -1,0 +1,5 @@
+{#- Resposta do polling: o painel e, se a etapa mudou, o texto da região viva. -#}
+{% include "public/_progress.html" %}
+{%- if announce %}
+<p id="anuncio" hx-swap-oob="innerHTML">{{ progress.announcement }}</p>
+{%- endif %}

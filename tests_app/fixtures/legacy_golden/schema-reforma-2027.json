@@ -1,0 +1,142 @@
+{
+  "$defs": {
+    "Acao": {
+      "description": "Conteúdo demonstrativo de Acao.",
+      "properties": {
+        "tipo": {
+          "description": "Conteúdo demonstrativo de tipo.",
+          "enum": [
+            "decisao_da_opcao",
+            "desistencia",
+            "proxima_janela",
+            "outra"
+          ],
+          "type": "string"
+        },
+        "titulo": {
+          "description": "Conteúdo demonstrativo de titulo. Entre 15 e 90 caracteres.",
+          "type": "string"
+        },
+        "como_fazer": {
+          "description": "Conteúdo demonstrativo de como_fazer. Entre 20 e 360 caracteres.",
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "tipo",
+        "titulo",
+        "como_fazer"
+      ]
+    },
+    "Fase": {
+      "description": "Conteúdo demonstrativo de Fase.",
+      "properties": {
+        "nome": {
+          "description": "Conteúdo demonstrativo de nome. Entre 3 e 60 caracteres.",
+          "type": "string"
+        },
+        "objetivo": {
+          "description": "Conteúdo demonstrativo de objetivo. Entre 10 e 220 caracteres.",
+          "type": "string"
+        },
+        "acoes": {
+          "description": "Conteúdo demonstrativo de acoes. Entre 2 e 4 itens.",
+          "items": {
+            "$ref": "#/$defs/Acao"
+          },
+          "type": "array"
+        },
+        "entrega": {
+          "description": "Conteúdo demonstrativo de entrega. Entre 10 e 200 caracteres.",
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "nome",
+        "objetivo",
+        "acoes",
+        "entrega"
+      ]
+    },
+    "Prioridade": {
+      "description": "Conteúdo demonstrativo de Prioridade.",
+      "properties": {
+        "titulo": {
+          "description": "Conteúdo demonstrativo de titulo. Entre 3 e 80 caracteres.",
+          "type": "string"
+        },
+        "motivo": {
+          "description": "Conteúdo demonstrativo de motivo. Entre 20 e 320 caracteres.",
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "titulo",
+        "motivo"
+      ]
+    }
+  },
+  "description": "Conteúdo demonstrativo de atividade.",
+  "properties": {
+    "titulo": {
+      "description": "Conteúdo demonstrativo de titulo. Entre 8 e 110 caracteres.",
+      "type": "string"
+    },
+    "resumo": {
+      "description": "Conteúdo demonstrativo de resumo. Entre 60 e 700 caracteres.",
+      "type": "string"
+    },
+    "prioridades": {
+      "description": "Conteúdo demonstrativo de prioridades. Exatamente 3 itens.",
+      "items": {
+        "$ref": "#/$defs/Prioridade"
+      },
+      "type": "array"
+    },
+    "uso_da_janela": {
+      "description": "Conteúdo demonstrativo de uso_da_janela. Entre 40 e 1000 caracteres.",
+      "type": "string"
+    },
+    "fases": {
+      "description": "Conteúdo demonstrativo de fases. Exatamente 3 itens.",
+      "items": {
+        "$ref": "#/$defs/Fase"
+      },
+      "type": "array"
+    },
+    "pontos_de_atencao": {
+      "description": "Conteúdo demonstrativo de pontos_de_atencao. Entre 2 e 4 itens.",
+      "items": {
+        "description": "Entre 20 e 260 caracteres.",
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "proximo_passo": {
+      "description": "Conteúdo demonstrativo de proximo_passo. Entre 20 e 300 caracteres.",
+      "type": "string"
+    },
+    "mensagem_final": {
+      "description": "Conteúdo demonstrativo de mensagem_final. Entre 20 e 320 caracteres.",
+      "type": "string"
+    }
+  },
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "titulo",
+    "resumo",
+    "prioridades",
+    "uso_da_janela",
+    "fases",
+    "pontos_de_atencao",
+    "proximo_passo",
+    "mensagem_final"
+  ]
+}

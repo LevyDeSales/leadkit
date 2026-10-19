@@ -1,0 +1,31 @@
+{
+  "properties": {
+    "titulo": {
+      "description": "Entre 3 e 120 caracteres.",
+      "type": "string"
+    },
+    "resumo": {
+      "description": "Entre 20 e 1200 caracteres.",
+      "type": "string"
+    },
+    "acoes": {
+      "description": "Entre 3 e 5 itens.",
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "proximo_passo": {
+      "description": "Entre 10 e 400 caracteres.",
+      "type": "string"
+    }
+  },
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "titulo",
+    "resumo",
+    "acoes",
+    "proximo_passo"
+  ]
+}

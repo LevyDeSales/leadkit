@@ -1,0 +1,337 @@
+{% extends "admin/layout.html" %}
+{% import "admin/macros.html" as m %}
+{% set section = "forms" %}
+{% block title %}{{ form.title }}{% endblock %}
+
+{#- A árvore do modelo do plano: cada campo, o tipo, a descrição que vai ao LLM e os limites. -#}
+{% macro plan_fields(fields) -%}
+<ul class="plan-tree">
+  {%- for field in fields %}
+  <li>
+    <p class="plan-tree__head"><span class="mono">{{ field.name }}</span><span class="muted">{{ field.kind }}{% if field.optional %} · opcional{% endif %}</span>{% if field.internal %}<span class="badge badge--neutral">{{ m.icon('lock') }}interno</span>{% endif %}</p>
+    {%- if field.description %}<p class="plan-tree__text">{{ field.description }}</p>{% endif %}
+    {%- for limit in field.limits %}<p class="muted">{{ limit }}</p>{% endfor %}
+    {%- if field.values %}<p class="muted">Valores: {% for value in field.values %}<span class="mono">{{ value }}</span>{{ ", " if not loop.last }}{% endfor %}</p>{% endif %}
+    {%- if field.fields %}{{ plan_fields(field.fields) }}{% endif %}
+  </li>
+  {%- endfor %}
+</ul>
+{%- endmacro %}
+
+{% macro source(item, label) -%}
+<details class="acc"><summary>{{ item.title }} {{ m.icon('chevron-down') }}</summary>
+  <pre class="source" tabindex="0" aria-label="{{ label }}: {{ item.title }} (somente leitura)">{{ item.text }}</pre>
+</details>
+{%- endmacro %}
+
+{% block content %}
+<nav class="crumbs" aria-label="Você está em"><a href="/admin/forms">Formulários</a><span aria-hidden="true">/</span><span>{{ form.title }}</span></nav>
+
+<header class="detail-head">
+  <div>
+    <h1>{{ form.title }}</h1>
+    <p class="meta">
+      <span class="mono">{{ form.slug }}</span>
+      <span>{{ form.version.label }}</span>
+    </p>
+  </div>
+  <div class="badges">{{ m.badge(form.status) }}{% if form.draft %}{{ m.badge(form.draft) }}{% endif %}</div>
+  <p class="btns"><a class="btn btn--secondary" href="{{ form.duplicate_url }}">{{ m.icon('copy') }}Duplicar…</a></p>
+</header>
+
+{% if form.notices %}
+<section class="alert alert--warn" id="aviso-dos-dados" role="status" aria-label="Dados do formulário para conferir">{{ m.icon('alert-triangle', 'icon--lg') }}<div><strong class="alert__title">Confira os dados deste formulário</strong>
+  {%- for notice in form.notices %}
+  <p>{{ notice }}</p>
+  {%- endfor %}
+</div></section>
+{% endif %}
+
+{#- A coluna lateral vem primeiro: na tela estreita, a situação e as ações aparecem antes da leitura. -#}
+<div class="cols cols--aside-first">
+  <div class="stackcol">
+    <section class="box" id="situacao" aria-labelledby="sit-titulo">
+      <h2 id="sit-titulo">Situação</h2>
+      {% if form.active %}
+      <p><strong>Ativo:</strong> recebe envios no endereço público e na API.</p>
+      {% else %}
+      <p><strong>Inativo:</strong> a página pública diz à lead que o formulário está indisponível, e a API recusa envios novos. Os pedidos que já existem seguem a versão deles até o PDF e a entrega.</p>
+      {% endif %}
+      <dl class="kv kv--stack">
+        <dt>Endereço público</dt><dd>{{ m.copy_link("endereco-publico", form.public_url, "o endereço público") }}</dd>
+        <dt>Envios</dt><dd>{{ form.submissions }}</dd>
+      </dl>
+      {% if form.active %}
+      {#- Painel em linha, como o reprocessar: sem JS é um POST comum com 303 de volta para esta página. -#}
+      <details class="reprocess"{% if errors.get("deactivate") %} open{% endif %}>
+        <summary class="btn btn--secondary">{{ m.icon('x') }}Desativar…</summary>
+        <form method="post" action="{{ form.url }}/deactivate" aria-labelledby="des-titulo">
+          <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+          <h3 id="des-titulo">Desativar este formulário</h3>
+          <div class="note">{{ m.icon('alert-triangle') }}<p>A página pública passa a dizer à lead que o formulário está indisponível, e a API recusa envios novos. Os pedidos que já existem seguem até o PDF e a entrega. Dá para ativar de novo quando quiser.</p></div>
+          <label class="choice choice--check"><input type="checkbox" name="confirm" value="on" required{% if errors.get("deactivate") %} aria-invalid="true" aria-describedby="des-erro"{% endif %}><span class="choice__body"><span class="choice__mark">{{ m.icon('check') }}</span><span>Entendo que o formulário sai do ar para as leads.</span></span></label>
+          {% if errors.get("deactivate") %}<p class="error" id="des-erro">{{ m.icon('alert-circle') }}{{ errors["deactivate"] }}</p>{% endif %}
+          <div class="btns"><button class="btn btn--primary" type="submit">Desativar o formulário</button></div>
+        </form>
+      </details>
+      {% else %}
+      <form method="post" action="{{ form.url }}/activate">
+        <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+        <button class="btn btn--primary" type="submit">{{ m.icon('check') }}Ativar o formulário</button>
+      </form>
+      {% endif %}
+    </section>
+
+    <section class="box" id="versao" aria-labelledby="ver-titulo">
+      <h2 id="ver-titulo">Versão publicada</h2>
+      {% if form.unpublished %}
+      <p><strong>Nenhuma versão publicada.</strong> A página pública responde que não encontrou o formulário até a primeira publicação, que cria a versão 1.</p>
+      {% else %}
+      <dl class="kv">
+        <dt>Versão</dt><dd>{{ form.version.label }}{% if form.version.text %} · <span class="mono">{{ form.version.text }}</span>{% endif %}</dd>
+        {% if form.version.published_by %}<dt>Publicado</dt><dd>{{ form.version.published_by }} · {{ m.when(form.version.published) }}</dd>{% endif %}
+        {% if form.version.note %}<dt>Nota</dt><dd>{{ form.version.note }}</dd>{% endif %}
+        {% if form.version.fingerprint %}<dt>Impressão digital</dt><dd><span class="mono" title="{{ form.version.fingerprint }}">{{ form.version.fingerprint[:12] }}</span></dd>{% endif %}
+      </dl>
+      {% if form.version.export_url %}
+      <p class="btns footnote"><a class="btn btn--secondary" href="{{ form.version.export_url }}" download>{{ m.icon('download') }}Exportar a definição (JSON)</a></p>
+      {% endif %}
+      {% endif %}
+    </section>
+
+    {% if form.draft_summary %}
+    {% set draft = form.draft_summary %}
+    <section class="box" id="rascunho" aria-labelledby="ras-titulo">
+      <h2 id="ras-titulo">Rascunho</h2>
+      {% if not draft.published %}
+      <p>{{ m.badge(draft.badge) }}</p>
+      <p>Salvo por {{ draft.saved_by }} em {{ m.when(draft.saved) }}. O formulário ainda não foi publicado: edite, teste e publique a versão 1 para ele ir ao ar.</p>
+      {% elif draft.badge %}
+      <p>{{ m.badge(draft.badge) }}</p>
+      {% if draft.saved_by %}
+      <p>Salvo por {{ draft.saved_by }} em {{ m.when(draft.saved) }}, a partir da versão {{ draft.base_version }}. O que está no ar só muda quando ele for publicado.</p>
+      {% endif %}
+      {% if draft.stale_assets %}
+      <p>{{ "A imagem" if draft.stale_assets|length == 1 else "As imagens" }} <span class="mono">{{ draft.stale_assets|join(", ") }}</span> {{ "foi trocada" if draft.stale_assets|length == 1 else "foram trocadas" }} desde a versão {{ draft.current_version }}, que segue com {{ "a de antes" if draft.stale_assets|length == 1 else "as de antes" }}. Publique para os envios novos {{ "usarem a nova" if draft.stale_assets|length == 1 else "usarem as novas" }}.</p>
+      {% endif %}
+      {% else %}
+      <p>Nenhuma mudança pendente. Editar o rascunho parte da versão {{ draft.current_version }}, sem afetar o que está no ar.</p>
+      {% endif %}
+      <p class="btns footnote"><a class="btn btn--secondary" href="{{ draft.nav.draft_url }}">Editar o rascunho</a>{% if draft.badge %}<a class="btn btn--primary" href="{{ draft.nav.publish_url }}">Publicar…</a>{% endif %}</p>
+    </section>
+    {% endif %}
+
+    {% if form.history %}
+    <section class="box" id="historico" aria-labelledby="hist-titulo">
+      <h2 id="hist-titulo">Histórico</h2>
+      <ol class="versions">
+        {% for version in form.history %}
+        <li>
+          <p class="question__head"><b>Versão {{ version.number }}</b>{% if version.current %}<span class="badge badge--ok">{{ m.icon('check') }}publicada</span>{% endif %}</p>
+          <p class="muted">{{ version.published_by }} · {{ m.when(version.published) }}</p>
+          <p>{{ version.note }}</p>
+          <p class="btns">{% if version.compare_url %}<a class="btn btn--ghost btn--sm" href="{{ version.compare_url }}">O que mudou</a>{% endif %}<a class="btn btn--ghost btn--sm" href="{{ version.export_url }}" download>Exportar</a></p>
+          {% if not version.current %}
+          {% set failed = errors.get("revert_number") == version.number|string %}
+          <details class="reprocess"{% if failed %} open{% endif %}>
+            <summary class="btn btn--secondary btn--sm">Voltar a esta versão…</summary>
+            <form method="post" action="{{ version.revert_url }}" aria-labelledby="volta-{{ version.number }}">
+              <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+              <input type="hidden" name="expected" value="{{ form.draft_summary.token }}">
+              <h3 id="volta-{{ version.number }}">Voltar à versão {{ version.number }}</h3>
+              <div class="note">{{ m.icon('alert-triangle') }}<p>O rascunho passa a ser uma cópia da versão {{ version.number }}{% if form.draft_summary.badge %}, no lugar das mudanças que ele tem agora{% endif %}. Nada muda no ar até você publicar, e a publicação cria uma versão nova, igual à antiga.</p></div>
+              <label class="choice choice--check"><input type="checkbox" name="confirm" value="on" required{% if failed %} aria-invalid="true" aria-describedby="volta-erro-{{ version.number }}"{% endif %}><span class="choice__body"><span class="choice__mark">{{ m.icon('check') }}</span><span>Entendo que o rascunho passa a ser uma cópia da versão {{ version.number }}.</span></span></label>
+              {% if failed %}<p class="error" id="volta-erro-{{ version.number }}">{{ m.icon('alert-circle') }}{{ errors["revert"] }}</p>{% endif %}
+              <div class="btns"><button class="btn btn--primary" type="submit">Copiar para o rascunho</button></div>
+            </form>
+          </details>
+          {% endif %}
+        </li>
+        {% endfor %}
+      </ol>
+    </section>
+    {% endif %}
+
+    <section class="box" id="destino" aria-labelledby="dest-titulo">
+      <h2 id="dest-titulo">Destino do webhook</h2>
+      {% if form.destination %}
+      <p>Os planos vão para {{ form.destination }}.</p>
+      {% else %}
+      <div class="alert alert--warn" role="status">{{ m.icon('alert-triangle', 'icon--lg') }}<div><strong class="alert__title">Sem destino do webhook: os planos deste formulário não são entregues.</strong></div></div>
+      {% endif %}
+      <p class="footnote"><a href="{{ form.destination_url }}">Configurar o destino deste formulário</a> ou o <a href="/admin/destinations/default">destino padrão</a>.</p>
+    </section>
+
+    {% if form.integration %}
+    {% set integration = form.integration %}
+    <section class="box" id="integracao" aria-labelledby="int-titulo">
+      <h2 id="int-titulo">Integração com o Baserow</h2>
+      {% if integration.configured %}
+      <p>{{ m.badge(integration.badge) }} Cada pedido concluído vira uma linha na tabela {{ integration.table_id }} de <span class="mono">{{ integration.host }}</span>.</p>
+      {% if integration.failed %}
+      <div class="alert alert--warn" role="status">{{ m.icon('alert-triangle', 'icon--lg') }}<div><strong class="alert__title">{{ integration.failed }} {{ "sincronização falhou" if integration.failed == 1 else "sincronizações falharam" }}</strong><p>Veja o motivo e reenvie na página da integração.</p></div></div>
+      {% endif %}
+      <p class="footnote"><a href="{{ integration.url }}">Ver e configurar a integração</a></p>
+      {% else %}
+      <p class="muted">Sem integração. Dá para ligar este formulário a uma tabela do Baserow: cada pedido concluído vira uma linha, sem servidor à parte.</p>
+      <p class="btns footnote"><a class="btn btn--secondary" href="{{ integration.url }}">Conectar o Baserow…</a></p>
+      {% endif %}
+    </section>
+    {% endif %}
+
+    <section class="box" id="retencao" aria-labelledby="ret-titulo">
+      <h2 id="ret-titulo">Retenção</h2>
+      <dl class="kv">{% for row in form.retention %}<dt>{{ row.label }}</dt><dd>{{ row.value }} <span class="muted">· {{ row.source }}</span></dd>{% endfor %}</dl>
+      <p class="muted footnote">Sem prazo próprio, vale o padrão do ambiente. Valem também para os pedidos que já existem, e nada sai antes de o link da lead vencer.</p>
+      <p class="btns footnote"><a class="btn btn--secondary" href="{{ form.retention_url }}">Mudar os prazos…</a></p>
+    </section>
+  </div>
+
+  <div class="stackcol">
+    {% if form.unpublished %}
+    <div class="alert alert--warn" role="status" id="nao-publicado">{{ m.icon('alert-triangle', 'icon--lg') }}<div><strong class="alert__title">Ainda não há versão publicada: a leitura abaixo é a do rascunho.</strong><p>Nada disso chega à lead antes da primeira publicação.</p></div></div>
+    {% endif %}
+    {% if form.reading %}
+    {% set reading = form.reading %}
+    <section class="box" id="pagina" aria-labelledby="pag-titulo">
+      <h2 id="pag-titulo">Página pública</h2>
+      <dl class="kv"><dt>Título</dt><dd>{{ reading.title }} <span class="muted">(também no PDF)</span></dd></dl>
+      {% if reading.intro %}<p>{{ reading.intro }}</p>{% endif %}
+      {% if reading.minutes %}<p class="muted">Cerca de {{ reading.minutes }} {{ "minuto" if reading.minutes == 1 else "minutos" }} para responder.</p>{% endif %}
+      {% for step in reading.steps %}
+      <div class="step">
+        <h3>Etapa {{ loop.index }}: {{ step.title }}</h3>
+        {% if step.help %}<p class="muted">{{ step.help }}</p>{% endif %}
+        <ol class="questions">
+          {% for q in step.questions %}
+          <li>
+            <p class="question__head"><b>{{ q.label }}</b><span class="mono">{{ q.name }}</span></p>
+            <p class="muted">{{ q.kind }} · {{ q.requirement }}{% if q.limits %} · {{ q.limits }}{% endif %}{% if q.contact %} · dado de contato, fora do rascunho no aparelho{% endif %}</p>
+            {% if q.appears %}<p class="muted">{{ q.appears }}</p>{% endif %}
+            {% if q.help %}<p class="muted">Ajuda: {{ q.help }}</p>{% endif %}
+            {% if q.placeholder %}<p class="muted">No campo vazio: {{ q.placeholder }}</p>{% endif %}
+            {% if q.options %}
+            <dl class="kv kv--options">{% for option in q.options %}<dt class="mono">{{ option.value }}</dt><dd>{{ option.label }}{% if q.option_appears.get(option.value) %} <span class="muted">· {{ q.option_appears[option.value] }}</span>{% endif %}</dd>{% endfor %}</dl>
+            {% endif %}
+          </li>
+          {% endfor %}
+        </ol>
+      </div>
+      {% endfor %}
+      {% for page, notice in reading.notices %}
+      <div class="step">
+        <h3>Aviso da {{ page }}: {{ notice.title }}</h3>
+        {% for paragraph in notice.paragraphs %}<p>{{ paragraph }}</p>{% endfor %}
+        {% if notice.link %}<p class="muted">Link: {{ notice.link.label }} · <span class="mono">{{ notice.link.url }}</span></p>{% endif %}
+      </div>
+      {% endfor %}
+    </section>
+
+    <section class="box" id="identidade" aria-labelledby="id-titulo">
+      <h2 id="id-titulo">Identidade da lead</h2>
+      <p class="muted">As perguntas que identificam a lead no admin e no webhook.</p>
+      <dl class="kv">{% for role, question in reading.identity %}<dt>{{ role }}</dt><dd>{{ question or "não coletado" }}</dd>{% endfor %}</dl>
+    </section>
+
+    <section class="box" id="consentimento" aria-labelledby="cons-titulo">
+      <h2 id="cons-titulo">Consentimento</h2>
+      <dl class="kv kv--stack">{% for label, value in reading.consent %}<dt>{{ label }}</dt><dd>{{ value }}</dd>{% endfor %}</dl>
+    </section>
+
+    {% if reading.scoring %}
+    {% set scoring = reading.scoring %}
+    <section class="box" id="pontuacao" aria-labelledby="pont-titulo">
+      <h2 id="pont-titulo">Pontuação</h2>
+      <p class="internal">{{ m.icon('lock') }}Calculada a cada envio. As notas, a prioridade e a persona vão ao admin e ao webhook, nunca à lead.</p>
+      <h3>Notas</h3>
+      <ol class="questions">
+        {% for note in scoring.notes %}
+        <li>
+          <p class="question__head"><b class="mono">{{ note.name }}</b></p>
+          <pre class="source" tabindex="0" aria-label="Fórmula de {{ note.name }} (somente leitura)">{{ note.formula }}</pre>
+          {% if note.levels %}
+          <p class="muted">Faixas, gravadas como <span class="mono">{{ note.key }}</span> (o nível) e <span class="mono">{{ note.label }}</span> (o rótulo):</p>
+          <dl class="kv kv--options">{% for level in note.levels %}<dt class="mono">{{ level.key }}</dt><dd>{{ level.label }} <span class="muted">· {{ level.start }}</span></dd>{% endfor %}</dl>
+          {% endif %}
+        </li>
+        {% endfor %}
+      </ol>
+      {% for title, rules in (("Prioridade", scoring.priority), ("Persona", scoring.persona)) %}
+      {% if rules %}
+      <h3>{{ title }}</h3>
+      <p class="muted">Em ordem: vale a primeira regra que bater.</p>
+      <ol class="questions">
+        {% for rule in rules %}
+        <li><p>{% if rule.when %}Se <span class="mono">{{ rule.when }}</span>{% else %}Senão{% endif %}: <b>{{ rule.result }}</b></p></li>
+        {% endfor %}
+      </ol>
+      {% endif %}
+      {% endfor %}
+      {% if scoring.points %}
+      <h3>Pontos por opção</h3>
+      {% for item in scoring.points %}
+      <p class="question__head"><b>{{ item.label }}</b><span class="mono">{{ item.question }}</span></p>
+      <dl class="kv kv--options">{% for label, points in item.options %}<dt>{{ points }}</dt><dd>{{ label }}</dd>{% endfor %}</dl>
+      {% endfor %}
+      {% endif %}
+    </section>
+    {% endif %}
+
+    <section class="box" id="instrucoes" aria-labelledby="ins-titulo">
+      <h2 id="ins-titulo">Instruções</h2>
+      <p class="muted">O papel e as regras fixas que o LLM recebe, iguais para toda lead.</p>
+      <pre class="source" tabindex="0" aria-label="Instruções (somente leitura)">{{ reading.instructions }}</pre>
+    </section>
+
+    <section class="box" id="prompt" aria-labelledby="prompt-titulo">
+      <h2 id="prompt-titulo">Prompt</h2>
+      <p class="muted">O template montado a cada pedido com as respostas da lead (versão do prompt <span class="mono">{{ reading.prompt_version }}</span>). Só as respostas que ele cita saem para o LLM.</p>
+      <pre class="source" tabindex="0" aria-label="Prompt (somente leitura)">{{ reading.prompt }}</pre>
+    </section>
+
+    <section class="box" id="modelo-do-plano" aria-labelledby="plano-titulo">
+      <h2 id="plano-titulo">Modelo do plano</h2>
+      <p class="muted">Os campos na ordem em que o LLM escreve, com a descrição que ele recebe e os limites que o servidor confere.</p>
+      {% if reading.plan_description %}<p class="plan-tree__text">{{ reading.plan_description }}</p>{% endif %}
+      {{ plan_fields(reading.plan) }}
+      {% if reading.plan_checks %}
+      <h3>Conferência do plano</h3>
+      <p class="muted">O que o servidor confere em cada plano que o LLM escreve, além do formato. Se algo falhar, o LLM refaz o plano, recebendo só o campo e a regra.</p>
+      <ul class="items">{% for check in reading.plan_checks %}<li>{{ check }}</li>{% endfor %}</ul>
+      {% endif %}
+    </section>
+
+    <section class="box" id="dados" aria-labelledby="dados-titulo">
+      <h2 id="dados-titulo">Dados do formulário</h2>
+      {% if reading.data %}
+      <p class="muted">Os blocos que as instruções e o prompt leem pelo nome.</p>
+      {% for item in reading.data %}{{ source(item, "Dados") }}{% endfor %}
+      {% else %}
+      <p class="muted">Nenhum.</p>
+      {% endif %}
+    </section>
+
+    <section class="box" id="templates" aria-labelledby="tpl-titulo">
+      <h2 id="tpl-titulo">PDF e prévia</h2>
+      <p class="muted">Os templates do PDF e da prévia na página de resultado, como estão escritos.</p>
+      {% for item in reading.templates %}{{ source(item, "Template") }}{% endfor %}
+    </section>
+
+    <section class="box" id="exemplos" aria-labelledby="ex-titulo">
+      <h2 id="ex-titulo">Exemplos</h2>
+      {% if reading.example_answers %}
+      <h3>Respostas de exemplo</h3>
+      <pre class="source" tabindex="0" aria-label="Respostas de exemplo (somente leitura)">{{ reading.example_answers }}</pre>
+      {% endif %}
+      <h3>Plano de exemplo</h3>
+      <p class="muted">O que o modo de teste devolve no lugar do LLM.</p>
+      <pre class="source" tabindex="0" aria-label="Plano de exemplo (somente leitura)">{{ reading.example_plan }}</pre>
+    </section>
+    {% elif form.unpublished %}
+    <div class="alert alert--error" role="alert" id="nao-compila">{{ m.icon('alert-circle', 'icon--lg') }}<div><strong class="alert__title">O rascunho não compila com o código deste deploy</strong><p>Abra o rascunho: salvar mostra cada problema no campo dele.</p></div></div>
+    {% else %}
+    <div class="alert alert--error" role="alert" id="nao-compila">{{ m.icon('alert-circle', 'icon--lg') }}<div><strong class="alert__title">A versão publicada não compila com o código deste deploy</strong><p>A página pública responde que não encontrou o formulário, e o log diz qual versão falhou. Os pedidos das versões anteriores seguem a versão deles. Exporte a definição para conferir o que mudou.</p></div></div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

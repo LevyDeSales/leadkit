@@ -1,0 +1,32 @@
+{% extends "admin/base.html" %}
+{% import "admin/macros.html" as m %}
+{#- Páginas autenticadas. O HTMX manda o token CSRF da sessão em todo pedido (hx-headers). -#}
+{% block body_attrs %} hx-headers='{"X-CSRF-Token": "{{ session.csrf_token }}"}' hx-history="false"{% endblock %}
+{% block body %}
+<header class="topbar">
+  <a class="brand" href="/admin">{{ site_brand() }}<span>Operação</span></a>
+  <nav class="topnav" aria-label="Seções">
+    <a href="/admin"{% if section == "jobs" %} aria-current="page"{% endif %}>{{ m.icon('file-list') }}Pedidos</a>
+    <a href="/admin/forms"{% if section == "forms" %} aria-current="page"{% endif %}>{{ m.icon('file') }}Formulários</a>
+    <a href="/admin/assets"{% if section == "assets" %} aria-current="page"{% endif %}>{{ m.icon('image') }}Imagens</a>
+    <a href="/admin/destinations"{% if section == "destinations" %} aria-current="page"{% endif %}>{{ m.icon('send') }}Destinos</a>
+    <a href="/admin/api-keys"{% if section == "api-keys" %} aria-current="page"{% endif %}>{{ m.icon('key') }}Chaves de API</a>
+    <a href="/admin/mcp"{% if section == "mcp" %} aria-current="page"{% endif %}>{{ m.icon('terminal') }}MCP</a>
+  </nav>
+  {% if env_label %}<span class="badge badge--warn" title="Ambiente">{{ env_label }}</span>{% endif %}
+  <div class="topbar__user">
+    <span>{{ m.icon('lock') }}{{ session.username }}</span>
+    <form method="post" action="/admin/logout">
+      <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+      <button class="btn btn--ghost btn--sm" type="submit">{{ m.icon('log-out') }}Sair</button>
+    </form>
+  </div>
+</header>
+<main id="conteudo" class="main">
+  {% if flash %}
+  <div class="alert alert--{{ 'ok' if flash[0] == 'ok' else 'error' }} flash" role="status">{{ m.icon('check' if flash[0] == 'ok' else 'alert-circle') }}<div><p>{{ flash[1] }}</p></div></div>
+  {% endif %}
+  {% block content %}{% endblock %}
+</main>
+<footer class="footer" title="Versão do sistema">{{ version_label }}</footer>
+{% endblock %}

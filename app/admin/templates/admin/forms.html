@@ -1,0 +1,43 @@
+{% extends "admin/layout.html" %}
+{% import "admin/macros.html" as m %}
+{% set section = "forms" %}
+{% block title %}Formulários{% endblock %}
+{% block content %}
+<div class="page-head page-head--actions">
+  <div>
+    <h1>Formulários</h1>
+    <p>Todos os formulários. Abra um para ler a versão publicada, exportar a definição ou mudar a situação.</p>
+  </div>
+  <p class="btns"><a class="btn btn--primary" href="{{ new_url }}">Criar um formulário</a><a class="btn btn--secondary" href="{{ import_url }}">Importar um formulário</a></p>
+</div>
+
+{% set flagged = rows|selectattr("notices")|list %}
+{% if flagged %}
+<section class="alert alert--warn" id="avisos-dos-formularios" role="status" aria-label="Dados de formulário para conferir">{{ m.icon('alert-triangle', 'icon--lg') }}<div><strong class="alert__title">Há dados de formulário para conferir</strong>
+  {%- for row in flagged %}{% for notice in row.notices %}
+  <p><a href="{{ row.url }}">{{ row.title }}</a>: {{ notice }}</p>
+  {%- endfor %}{% endfor %}
+</div></section>
+{% endif %}
+
+<div class="tablewrap" role="region" aria-label="Tabela de formulários" tabindex="0">
+  <table class="table table--cards">
+    <caption class="sr-only">Formulários</caption>
+    <thead>
+      <tr><th scope="col">Formulário</th><th scope="col">Endereço público</th><th scope="col">Situação</th><th scope="col">Versão publicada</th><th scope="col">Envios</th></tr>
+    </thead>
+    <tbody>
+    {% for row in rows %}
+      <tr>
+        <td class="who" data-label="Formulário"><a href="{{ row.url }}">{{ row.title }}<span class="sr-only"> — abrir o formulário</span></a><span class="mono">{{ row.slug }}</span></td>
+        <td data-label="Endereço público">{{ m.copy_link("endereco-" ~ loop.index, row.public_url, "o endereço público de " ~ row.title) }}</td>
+        <td data-label="Situação"><span class="badges">{{ m.badge(row.status) }}{% if row.draft %}{{ m.badge(row.draft) }}{% endif %}{% if row.problem %}{{ m.badge(row.problem) }}{% endif %}{% if row.review %}{{ m.badge(row.review) }}{% endif %}</span></td>
+        <td data-label="Versão publicada">{{ row.version }}{% if row.published %}<span class="sub">{{ m.when(row.published) }}</span>{% endif %}</td>
+        <td class="num" data-label="Envios"><a href="{{ row.jobs_url }}">{{ row.submissions }}<span class="sr-only"> — ver os pedidos de {{ row.title }}</span></a></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+<p class="muted footnote">Os envios contam os pedidos que ainda estão no banco: a retenção apaga os antigos.</p>
+{% endblock %}

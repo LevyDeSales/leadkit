@@ -1,0 +1,27 @@
+htmx 2.0.11 (https://htmx.org; Zero-Clause BSD (0BSD), texto integral em vendor/htmx-2.0.11.LICENSE.txt e https://github.com/bigskysoftware/htmx/blob/v2.0.11/LICENSE), sha256 d6fdc75f204e6bdefa99b69bf1e6d4ac69b8a364f77929f45c13476b4000f717
+Scalar API Reference 1.74.0 (@scalar/api-reference, o arquivo único do navegador dist/browser/standalone.js, sem alteração, em vendor/scalar-1.74.0.js; https://registry.npmjs.org/@scalar/api-reference/-/api-reference-1.74.0.tgz, integridade do tarball sha512-U50whnOk0+2TUbUKMScsPemai0ZzkYRGeg5yulF3A4fffoTjeToaChakGmjm+NjE/eqjgzMUg9+7uQon83s+hA==; licença MIT, https://api.github.com/repos/scalar/scalar/git/blobs/05ee3dd23b2299a7f834a78f2519ce5d8211b293, transcrita abaixo), sha256 ea680608a3edc8fc3a27d6259d99ae8884d7061ee0149b166c01b45edb17bb73
+O Scalar embute 157 pacotes npm (Vue, Tailwind CSS, CodeMirror, Floating UI e as bibliotecas de markdown, entre outros): 146 MIT, 7 Apache-2.0, 2 ISC e 2 BSD, pela licença que o registro do npm declara para cada um. A lista, com a versão, a licença e os textos de licença de cada pacote, está em vendor/scalar-1.74.0.THIRD-PARTY.txt, gerada do dist/browser/standalone.js.map do tarball oficial (python -m app.web.scalar_licenses), com complemento de procedência das 19 licenças ausentes nos tarballs: 18 textos dos gitHead oficiais e um texto MIT padrão SPDX identificado, acompanhado da autoria e declaração oficiais da versão Replit.
+
+Licença do Scalar API Reference:
+
+MIT License
+
+Copyright (c) 2023-present Scalar
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

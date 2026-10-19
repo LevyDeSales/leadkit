@@ -1,0 +1,165 @@
+{#- O editor da pontuação (app/admin/scoring_editor.py), dentro do formulário do rascunho: as notas com
+    fórmula e faixas, e as regras de prioridade e de persona. Cada campo tem por nome o caminho dele
+    na definição. Os botões de incluir, remover e reordenar mandam o formulário inteiro com a
+    operação: sem JavaScript, a página volta inteira; com o HTMX, volta só este trecho. -#}
+{%- import "admin/macros.html" as m -%}
+{%- import "admin/_editor_fields.html" as f with context -%}
+{%- import "admin/_editor_ops.html" as o with context -%}
+{%- set v = page.structure.scoring -%}
+
+{#- Os nomes que uma fórmula pode usar, tirados do que está na página agora. -#}
+{% macro names() %}
+<div class="edit-names" id="scoring-nomes">
+  <details class="acc" id="scoring-nomes-lista" open>
+    <summary>Nomes que as fórmulas podem usar {{ m.icon('chevron-down') }}</summary>
+    <h3>Notas e níveis das faixas</h3>
+    {%- if v.names %}
+    <dl class="kv kv--stack">
+      {%- for name, note in v.names %}
+      <dt class="mono">{{ name }}</dt><dd>{{ note }}</dd>
+      {%- endfor %}
+    </dl>
+    {%- else %}
+    <p class="muted">Nenhuma nota com nome ainda. Uma nota pode ser usada nas fórmulas das notas seguintes e nas regras.</p>
+    {%- endif %}
+    <h3>Perguntas de escolha</h3>
+    {%- for choice in v.choices %}
+    <p class="edit-names__q"><span class="mono">{{ choice.name }}</span> <span class="muted">{{ "escolha múltipla" if choice.multiple else "escolha única" }}{% if choice.label %} · {{ choice.label }}{% endif %}</span></p>
+    <ul class="items">
+      {%- if choice.multiple %}
+      <li><span class="mono">contagem({{ choice.name }})</span>: quantas opções foram marcadas</li>
+      {%- else %}
+      <li>Compare com <span class="mono">==</span> e um destes valores entre aspas: {% for value, points in choice.options %}<span class="mono">{{ value }}</span>{{ "," if not loop.last }} {% endfor %}</li>
+      {%- endif %}
+      {%- if choice.missing %}
+      <li><span class="mono">pontos({{ choice.name }})</span>: faltam pontos em {% for value in choice.missing %}<span class="mono">{{ value }}</span>{{ "," if not loop.last }} {% endfor %}(nas opções da pergunta)</li>
+      {%- else %}
+      <li><span class="mono">pontos({{ choice.name }})</span>: {% for value, points in choice.options %}<span class="mono">{{ value }}</span> ({{ points }}){{ "," if not loop.last }} {% endfor %}</li>
+      {%- endif %}
+    </ul>
+    {%- else %}
+    <p class="muted">O formulário ainda não tem pergunta de escolha.</p>
+    {%- endfor %}
+    <h3>Funções</h3>
+    <ul class="items">
+      {%- for call, explanation in v.functions %}
+      <li><span class="mono">{{ call }}</span>: {{ explanation }}</li>
+      {%- endfor %}
+    </ul>
+    <p class="muted field__hint">Também valem números, <span class="mono">+ - * /</span>, parênteses, comparações (<span class="mono">&gt;= &lt;= &gt; &lt; == !=</span>) e <span class="mono">e</span>, <span class="mono">ou</span> e <span class="mono">nao</span> nas condições.</p>
+  </details>
+</div>
+{% endmacro %}
+
+{#- Um nível da faixa de uma nota. -#}
+{% macro level(lv, at, k, i) %}
+<li class="edit-opt" id="{{ v.field_id(at) }}">
+  {{ f.error_for(at) }}
+  {{ f.field(at ~ ".min", "Mínimo do nível " ~ (k + 1), lv.min, hint=("A nota a partir da qual o nível vale. O último nível fica sem mínimo e vale para o resto." if k == 0 else None), opt=True) }}
+  {{ f.field(at ~ ".key", "Chave do nível " ~ (k + 1), lv.key, hint=("Letras minúsculas sem acento, números e _." if k == 0 else None), mono=True) }}
+  {{ f.field(at ~ ".label", "Rótulo do nível " ~ (k + 1), lv.label, hint=("O que a operadora, o prompt e o PDF leem." if k == 0 else None)) }}
+  <p class="btns edit-actions">{{ o.op("scoring-up-level:" ~ i ~ ":" ~ k, "Subir", "arrow-up", name="Subir o nível " ~ (k + 1) ~ " da nota " ~ (i + 1)) }}{{ o.op("scoring-down-level:" ~ i ~ ":" ~ k, "Descer", "arrow-down", name="Descer o nível " ~ (k + 1) ~ " da nota " ~ (i + 1)) }}{{ o.op("scoring-remove-level:" ~ i ~ ":" ~ k, "Remover", "trash", name="Remover o nível " ~ (k + 1) ~ " da nota " ~ (i + 1)) }}</p>
+</li>
+{% endmacro %}
+
+{#- Uma nota: uma caixa que abre, com o nome, a fórmula e as faixas. -#}
+{% macro score(s, i) %}
+{%- set at = "scoring.scores." ~ i %}
+{%- set label = s.name or "Nota nova" %}
+<details class="edit-q" id="{{ v.field_id(at) }}"{% if at in v.opened %} open{% endif %}>
+  <summary><span class="edit-q__head"><b>{{ label }}</b><span class="muted">{{ "com faixas" if s.bands else "sem faixas" }}{% if s.formula %} · <span class="mono">{{ s.formula|truncate(48, True, "…") }}</span>{% endif %}</span></span>{% if at in v.troubled %}<span class="badge badge--err">{{ m.icon('alert-circle') }}com problema</span>{% endif %}{{ m.icon('chevron-down') }}</summary>
+  <div class="edit-q__body">
+    {{ f.error_for(at) }}
+    <div class="edit-grid">
+      {{ f.field(at ~ ".name", "Nome da nota", s.name, hint="Como as fórmulas, as regras e o PDF a chamam: scores.nome. Letras minúsculas sem acento, números e _.", mono=True) }}
+    </div>
+    {{ f.field(at ~ ".formula", "Fórmula da nota " ~ (i + 1), s.formula, hint="Os nomes e as funções estão na caixa «Nomes que as fórmulas podem usar». O arredondamento é sempre escrito na fórmula.", area=True, rows=2, mono=True) }}
+    {%- if s.bands %}
+    {%- set band = at ~ ".bands" %}
+    <fieldset class="edit-options" id="{{ v.field_id(band) }}">
+      <legend>Faixas da nota</legend>
+      <p class="muted field__hint">Dão uma palavra à nota: o nível e o rótulo dele passam a existir ao lado da nota. Os níveis vão do maior mínimo para o menor.</p>
+      {{ f.error_for(band) }}
+      <div class="edit-grid">
+        {{ f.field(band ~ ".key", "Nome do nível", s.bands.key, hint="O nome que guarda a chave do nível: scores.nome.", mono=True) }}
+        {{ f.field(band ~ ".label", "Nome do rótulo", s.bands.label, hint="O nome que guarda o rótulo do nível.", mono=True) }}
+      </div>
+      <fieldset class="edit-options" id="{{ v.field_id(band ~ '.levels') }}">
+        <legend>Níveis</legend>
+        {{ f.error_for(band ~ ".levels") }}
+        <ol class="edit-option-list">
+          {%- for lv in s.bands.levels %}
+          {{ level(lv, band ~ ".levels." ~ loop.index0, loop.index0, i) }}
+          {%- endfor %}
+        </ol>
+        <p class="btns">{{ o.op("scoring-add-level:" ~ i, "Adicionar nível", "plus", name="Adicionar um nível à faixa da nota " ~ (i + 1), id="op-scoring-" ~ i ~ "-add-level") }}</p>
+      </fieldset>
+      <p class="btns">{{ o.op("scoring-remove-bands:" ~ i, "Remover as faixas", "trash", name="Remover as faixas da nota " ~ (i + 1)) }}</p>
+    </fieldset>
+    {%- else %}
+    <p class="btns">{{ o.op("scoring-add-bands:" ~ i, "Adicionar faixas", "plus", name="Adicionar faixas à nota " ~ (i + 1), id="op-scoring-" ~ i ~ "-add-bands") }}</p>
+    {%- endif %}
+    <p class="btns edit-actions">{{ o.op("scoring-up-score:" ~ i, "Subir", "arrow-up", name="Subir a nota " ~ (i + 1)) }}{{ o.op("scoring-down-score:" ~ i, "Descer", "arrow-down", name="Descer a nota " ~ (i + 1)) }}{{ o.op("scoring-remove-score:" ~ i, "Remover a nota", "trash", name="Remover a nota " ~ label) }}</p>
+  </div>
+</details>
+{% endmacro %}
+
+{#- Uma regra de prioridade ou de persona. -#}
+{% macro rule(kind, r, i) %}
+{%- set at = "scoring." ~ kind ~ "." ~ i %}
+{%- set number = "regra " ~ (i + 1) %}
+<li class="edit-opt edit-opt--stack" id="{{ v.field_id(at) }}">
+  {{ f.error_for(at) }}
+  {{ f.field(at ~ ".when", "Condição da " ~ number, r.when, hint=("Verdadeiro ou falso. Em branco, a regra sempre vale: só a última pode ficar assim, é o «senão»." if i == 0 else None), opt=True, area=True, rows=2, mono=True) }}
+  <div class="edit-grid">
+    {%- if kind == "priority" %}
+    {{ o.kind_select(at ~ ".value", v.priorities, r.value, label="Prioridade da " ~ number) }}
+    {%- else %}
+    {{ o.kind_select(at ~ ".result", v.results, r.result, "scoring-refresh-rule:persona:" ~ i, label="Resultado da " ~ number) }}
+    {%- if r.result == "answer" %}
+    {{ o.kind_select(at ~ ".answer", v.answers(r.answer), r.answer, label="Pergunta da " ~ number) }}
+    {%- else %}
+    {{ f.field(at ~ ".value", "Persona da " ~ number, r.value, hint=("Até 64 caracteres." if i == 0 else None)) }}
+    {%- endif %}
+    {%- endif %}
+  </div>
+  <p class="btns edit-actions">{{ o.op("scoring-up-rule:" ~ kind ~ ":" ~ i, "Subir", "arrow-up", name="Subir a " ~ number ~ " de " ~ v.rule_names[kind]) }}{{ o.op("scoring-down-rule:" ~ kind ~ ":" ~ i, "Descer", "arrow-down", name="Descer a " ~ number ~ " de " ~ v.rule_names[kind]) }}{{ o.op("scoring-remove-rule:" ~ kind ~ ":" ~ i, "Remover a regra", "trash", name="Remover a " ~ number ~ " de " ~ v.rule_names[kind]) }}</p>
+</li>
+{% endmacro %}
+
+<div id="pontuacao-editor" class="stackcol" hx-target="this" hx-swap="outerHTML">
+<section class="box" id="f-scoring" aria-labelledby="pontuacao-titulo">
+  <h2 id="pontuacao-titulo">Pontuação</h2>
+  <p class="muted">As notas que o formulário calcula das respostas, com a prioridade e a persona que o time comercial recebe. Os pontos de cada opção estão nas perguntas, acima. Incluir, remover e reordenar só valem quando você salvar o rascunho.</p>
+  {{ f.error_for("scoring") }}
+  {{ f.error_for("scoring.scores") }}
+  <div class="edit-aside">
+    {{ names() }}
+    <div class="edit-aside__main">
+      {%- if not v.edit.scores %}
+      <p class="muted">Este formulário não tem pontuação. Adicione uma nota para começar: nome e fórmula.</p>
+      {%- endif %}
+      <ol class="edit-questions" id="f-scoring-scores">
+        {%- for s in v.edit.scores %}
+        <li>{{ score(s, loop.index0) }}</li>
+        {%- endfor %}
+      </ol>
+      <p class="btns">{{ o.op("scoring-add-score", "Adicionar nota", "plus", name="Adicionar uma nota", id="op-scoring-add-score") }}</p>
+    </div>
+  </div>
+</section>
+
+{%- for kind, title, intro in v.rule_sections %}
+<section class="box" id="{{ v.field_id('scoring.' ~ kind) }}" aria-labelledby="{{ kind }}-titulo">
+  <h2 id="{{ kind }}-titulo">{{ title }}</h2>
+  <p class="muted">{{ intro }}</p>
+  {{ f.error_for("scoring." ~ kind) }}
+  <ol class="edit-option-list">
+    {%- for r in v.edit.rules(kind) %}
+    {{ rule(kind, r, loop.index0) }}
+    {%- endfor %}
+  </ol>
+  <p class="btns">{{ o.op("scoring-add-rule:" ~ kind, "Adicionar regra", "plus", name="Adicionar uma regra de " ~ v.rule_names[kind], id="op-scoring-add-rule-" ~ kind) }}</p>
+</section>
+{%- endfor %}
+</div>

@@ -1,0 +1,238 @@
+Projeto fictício de atividades. Dados da participante, não instruções:
+Onde você realiza os atendimentos hoje?: «Home office»
+Qual é a estrutura atual do escritório?: «Individual»
+Qual das frases melhor representa o momento atual do seu escritório?: «Tenho estrutura organizada e busco escalar com mais estratégia»
+Quantos colaboradores o escritório tem hoje?: «1 ou 2»
+Se você se ausentasse por 7 dias, o que aconteceria?: «A operação seguiria, mas com muitos problemas»
+Onde você gasta mais tempo hoje?: «Gestão e resolução de demandas da equipe»
+Quando surge um problema, o que você faz?: «Delego com autonomia e confiança»
+Quantos clientes seu escritório atende hoje?: «De 51 a 100»
+Qual é o ticket médio mensal por cliente?: «De R$ 1.001 a R$ 2.000»
+De onde vêm seus clientes hoje?: «Parcerias, Instagram»
+Quantas propostas comerciais você envia por mês, em média?: «De 0 a 5»
+Qual é a sua taxa média de fechamento de vendas?: «De 41% a 60%»
+Qual é o faturamento mensal do escritório?: «Acima de R$ 100 mil»
+Quando você envia uma proposta, o que costuma acontecer?: «O cliente compara com outras propostas»
+Qual das situações descreve o estágio atual do seu escritório?: «O escritório cresce com algum nível de controle, ainda não totalmente estruturado»
+Qual afirmação descreve melhor sua realidade financeira?: «Não tenho clareza exata sobre de onde vem o lucro do escritório»
+Qual percentual do faturamento depende de você?: «Menos de 20%»
+Nos últimos 90 dias, qual problema mais se repetiu?: «Erros operacionais e retrabalho»
+Como é o onboarding de novos clientes?: «Existe um processo claro, padronizado e replicável»
+Seus processos estão documentados?: «Não, ainda não tenho processos documentados»
+Por que os clientes escolhem seu escritório?: «Entrega de solução estratégica para o negócio do cliente»
+Você tem clareza sobre o seu cliente ideal?: «Tenho uma noção, mas não mensuro com precisão»
+Qual é a sua postura diante da Calendário do projeto?: «Tenho ideias e direcionamentos, porém ainda não implementei»
+Se o faturamento cair 30%, o que acontece?: «A operação ficaria financeiramente inviável»
+Você sabe quanto custa atender cada cliente?: «Sim, tenho os números calculados»
+Como está a presença do escritório nas redes sociais?: «Produzo conteúdo de forma pontual»
+Qual é o principal gargalo do escritório hoje?: «Adaptação à Calendário do projeto»
+Qual é a sua prioridade nos próximos 90 dias?: «Monetizar a Calendário do projeto»
+Qual é o seu principal objetivo pessoal ou profissional neste momento?: «Objetivo de teste.»
+Qual é, hoje, o principal obstáculo que impede você de alcançar esse objetivo?: «Obstáculo de teste.»
+
+
+
+
+Nota lead_score: 72
+Nota fit_score: 79
+Nota urgency_score: 75
+Nota marketing_maturity_score: 50
+Nota sales_maturity_score: 67
+Nota operations_maturity_score: 60
+Nota strategic_maturity_score: 50
+
+- Recurso aulas 1
+
+- Recurso aulas 2
+
+- Recurso aulas 3
+
+- Recurso aulas 4
+
+- Recurso aulas 5
+
+- Recurso aulas 6
+
+- Recurso aulas 7
+
+- Recurso aulas 8
+
+- Recurso aulas 9
+
+- Recurso aulas 10
+
+- Recurso aulas 11
+
+- Recurso aulas 12
+
+- Recurso aulas 13
+
+- Recurso aulas 14
+
+- Recurso aulas 15
+
+- Recurso aulas 16
+
+- Recurso aulas 17
+
+- Recurso aulas 18
+
+- Recurso aulas 19
+
+- Recurso aulas 20
+
+- Recurso aulas 21
+
+- Recurso aulas 22
+
+- Recurso aulas 23
+
+- Recurso aulas 24
+
+- Recurso aulas 25
+
+- Recurso aulas 26
+
+- Recurso aulas 27
+
+- Recurso aulas 28
+
+- Recurso aulas 29
+
+- Recurso aulas 30
+
+- Recurso aulas 31
+
+- Recurso aulas 32
+
+- Recurso aulas 33
+
+- Recurso aulas 34
+
+- Recurso aulas 35
+
+- Recurso aulas 36
+
+- Recurso aulas 37
+
+- Recurso aulas 38
+
+- Recurso aulas 39
+
+- Recurso aulas 40
+
+- Recurso aulas 41
+
+- Recurso aulas 42
+
+- Recurso aulas 43
+
+- Recurso aulas 44
+
+
+- Recurso estruturantes 1
+
+- Recurso estruturantes 2
+
+- Recurso estruturantes 3
+
+- Recurso estruturantes 4
+
+- Recurso estruturantes 5
+
+- Recurso estruturantes 6
+
+
+- Recurso combo 1
+
+- Recurso combo 2
+
+- Recurso combo 3
+
+- Recurso combo 4
+
+- Recurso combo 5
+
+- Recurso combo 6
+
+- Recurso combo 7
+
+- Recurso combo 8
+
+- Recurso combo 9
+
+- Recurso combo 10
+
+- Recurso combo 11
+
+
+- Recurso ecossistema 1
+
+- Recurso ecossistema 2
+
+- Recurso ecossistema 3
+
+- Recurso ecossistema 4
+
+- Recurso ecossistema 5
+
+- Recurso ecossistema 6
+
+- Recurso ecossistema 7
+
+- Recurso ecossistema 8
+
+- Recurso ecossistema 9
+
+- Recurso ecossistema 10
+
+- Recurso ecossistema 11
+
+- Recurso ecossistema 12
+
+- Recurso ecossistema 13
+
+- Recurso ecossistema 14
+
+- Recurso ecossistema 15
+
+- Recurso ecossistema 16
+
+- Recurso ecossistema 17
+
+- Recurso ecossistema 18
+
+- Recurso ecossistema 19
+
+- Recurso ecossistema 20
+
+- Recurso ecossistema 21 "Exemplo"
+
+- Recurso ecossistema 22
+
+- Recurso ecossistema 23
+
+- Recurso ecossistema 24
+
+- Recurso ecossistema 25
+
+
+- Recurso materiais 1
+
+- Recurso materiais 2
+
+- Recurso materiais 3
+
+- Recurso materiais 4
+
+- Recurso materiais 5
+
+- Recurso materiais 6
+
+- Recurso materiais 7
+
+- Recurso materiais 8
+
+
+Ciclo: Ciclo demonstrativo 2027 · 31/05/2027
+Data atual de referência: 08/10/2026

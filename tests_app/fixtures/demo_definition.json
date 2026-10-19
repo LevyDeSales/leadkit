@@ -1,0 +1,177 @@
+{
+  "format": 1,
+  "slug": "demo-definicao",
+  "title": "Projeto de demonstração",
+  "intro": "Conte como você organiza seu projeto fictício. As respostas ajudam a escolher atividades para experimentar nas próximas semanas.",
+  "minutes": 3,
+  "steps": [
+    {
+      "title": "Vamos começar por você",
+      "help": "Usamos estes dados para identificar o seu plano. Os campos sem “opcional” são necessários.",
+      "questions": [
+        {
+          "name": "nome",
+          "kind": "text",
+          "label": "Nome completo",
+          "contact": true,
+          "autocomplete": "name",
+          "min_length": 2,
+          "max_length": 120
+        },
+        {
+          "name": "email",
+          "kind": "email",
+          "label": "E-mail",
+          "help": "Use um e-mail que você confere com frequência.",
+          "autocomplete": "email",
+          "max_length": 254
+        },
+        {
+          "name": "escritorio",
+          "kind": "text",
+          "label": "Nome do escritório",
+          "required": false,
+          "contact": true,
+          "autocomplete": "organization",
+          "max_length": 160
+        }
+      ]
+    },
+    {
+      "title": "Seu escritório hoje",
+      "help": "Escolha a opção que mais se aproxima da sua realidade.",
+      "questions": [
+        {
+          "name": "tamanho_equipe",
+          "kind": "choice",
+          "label": "Quantas pessoas trabalham no escritório, contando com você?",
+          "options": [
+            {
+              "value": "so_eu",
+              "label": "Só eu"
+            },
+            {
+              "value": "2_a_5",
+              "label": "De 2 a 5 pessoas"
+            },
+            {
+              "value": "6_a_15",
+              "label": "De 6 a 15 pessoas"
+            },
+            {
+              "value": "mais_de_15",
+              "label": "Mais de 15 pessoas"
+            }
+          ]
+        },
+        {
+          "name": "principal_desafio",
+          "kind": "choice",
+          "label": "Qual é o seu principal desafio hoje?",
+          "options": [
+            {
+              "value": "captacao",
+              "label": "Atrair novos clientes"
+            },
+            {
+              "value": "vendas",
+              "label": "Transformar propostas em contratos"
+            },
+            {
+              "value": "operacao",
+              "label": "Organizar a operação e as entregas"
+            },
+            {
+              "value": "gestao",
+              "label": "Cuidar da gestão financeira e da equipe"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Seus próximos 90 dias",
+      "questions": [
+        {
+          "name": "objetivo_90_dias",
+          "kind": "textarea",
+          "label": "O que você quer alcançar nos próximos 90 dias?",
+          "help": "Escreva com suas palavras, em uma ou duas frases.",
+          "min_length": 10,
+          "max_length": 600
+        }
+      ]
+    }
+  ],
+  "identity": {
+    "email": "email",
+    "name": "nome"
+  },
+  "consent": {
+    "version": "demo-definicao-v1",
+    "processing": "Concordo com o uso das minhas respostas para gerar o meu plano de ação.",
+    "notice": "Usamos suas respostas para montar o seu plano. Parte do processamento é feita por fornecedores de nuvem e de inteligência artificial, que podem armazenar dados fora do Brasil. Você pode pedir a exclusão dos seus dados quando quiser.",
+    "marketing": {
+      "email": "Quero receber dicas e novidades da Leadkit por e-mail."
+    }
+  },
+  "instructions": "Você é consultora de gestão de escritórios contábeis da Leadkit.\nEscreva um plano de ação curto, prático e em português do Brasil, falando diretamente com a pessoa (\"você\").\nUse apenas as informações do diagnóstico. Não prometa resultados financeiros nem use termos como \"garantido\".\nResponda somente no formato estruturado solicitado.\n",
+  "prompt": "Diagnóstico do escritório:\n- Nome do escritório: {{ answers.escritorio or \"não informado\" }}\n- Tamanho da equipe: {{ answers.tamanho_equipe }}\n- Principal desafio: {{ answers.principal_desafio }}\n- Objetivo para os próximos 90 dias: {{ answers.objetivo_90_dias }}\n\nMonte um plano de 90 dias com um título, um resumo do momento atual, de 3 a 5 ações e um próximo passo para esta semana.\n",
+  "plan": {
+    "fields": [
+      {
+        "name": "titulo",
+        "kind": "text",
+        "min_length": 3,
+        "max_length": 120
+      },
+      {
+        "name": "resumo",
+        "kind": "text",
+        "min_length": 20,
+        "max_length": 1200
+      },
+      {
+        "name": "acoes",
+        "kind": "list",
+        "min_items": 3,
+        "max_items": 5,
+        "items": {
+          "kind": "text"
+        }
+      },
+      {
+        "name": "proximo_passo",
+        "kind": "text",
+        "min_length": 10,
+        "max_length": 400
+      }
+    ]
+  },
+  "pdf": {
+    "html": "<!doctype html>\n<html lang=\"pt-BR\">\n<head>\n  <meta charset=\"utf-8\">\n  <title>{{ plan.titulo }}</title>\n  <meta name=\"author\" content=\"Leadkit\">\n</head>\n<body>\n  <header class=\"cover\">\n    <p class=\"eyebrow\">Plano de ação personalizado</p>\n    <h1>{{ plan.titulo }}</h1>\n    <p class=\"meta\">\n      {%- if lead.name %}Preparado para <strong>{{ lead.name }}</strong> · {% endif -%}\n      {{ generated_date }}\n    </p>\n  </header>\n\n  <section>\n    <h2>Seu momento</h2>\n    <p>{{ plan.resumo }}</p>\n  </section>\n\n  <section>\n    <h2>Ações para os próximos 90 dias</h2>\n    <ol class=\"actions\">\n      {% for acao in plan.acoes %}\n      <li>{{ acao }}</li>\n      {% endfor %}\n    </ol>\n  </section>\n\n  <aside class=\"next\">\n    <h2>Comece por aqui</h2>\n    <p>{{ plan.proximo_passo }}</p>\n  </aside>\n\n  <p class=\"fineprint\">\n    {{ form.title }}. Plano inicial gerado com apoio de IA a partir das suas respostas: orienta os\n    próximos passos, mas não substitui uma consultoria, e os resultados dependem da execução.\n  </p>\n</body>\n</html>\n",
+    "css": "/* PDF do formulário demo. Tokens de cor de mockups/00-design-system.html; corpo 11/15,5 pt e\n   margens de 18 mm (05-ui-ux.md §4.11). Source Sans Pro ainda não está embutida: títulos em Source Sans. */\n:root {\n  --obsidian-950: #120D0B;\n  --on-dark: #F7F2EA;\n  --ink-900: #1A1613;\n  --ink-700: #3F3832;\n  --ink-600: #5B534A;\n  --line: #D8D0C5;\n  --wine-700: #9B1C28;\n  --gold-50: #FBF3DF;\n  --gold-300: #EBCB8B;\n  --gold-500: #B8863B;\n  --gold-700: #7A5714;\n}\n\n@page {\n  size: A4;\n  margin: 18mm 18mm 22mm;\n  @bottom-left {\n    content: \"Leadkit · Plano de ação personalizado\";\n    width: 70%;\n    padding-top: 6pt;\n    border-top: 0.5pt solid #D8D0C5;\n    vertical-align: top;\n    font: 8.5pt \"Source Sans Pro\";\n    color: #5B534A;\n  }\n  @bottom-right {\n    content: \"Página \" counter(page) \" de \" counter(pages);\n    width: 30%;\n    padding-top: 6pt;\n    border-top: 0.5pt solid #D8D0C5;\n    vertical-align: top;\n    text-align: right;\n    font: 8.5pt \"Source Sans Pro\";\n    color: #5B534A;\n  }\n}\n\nhtml {\n  font-size: 11pt;\n  line-height: 15.5pt;\n  color: var(--ink-900);\n  hyphens: manual; /* hífen automático entra como texto e atrapalha a busca no PDF */\n  overflow-wrap: break-word;\n}\nbody { margin: 0; }\np { margin: 0 0 6pt; orphans: 3; widows: 3; }\nh1, h2 { margin: 0; font-weight: 700; break-after: avoid; }\n\n.cover {\n  padding: 22pt 24pt 20pt;\n  margin-bottom: 8pt;\n  border-radius: 10pt;\n  /* brilho vinho da marca sobre obsidiana; paradas sólidas (sem alfa) imprimem igual em todo leitor */\n  background: radial-gradient(farthest-corner at 100% 0%, #55161F 0%, #2E1015 35%, #120D0B 70%);\n  color: var(--on-dark);\n}\n.cover::before {\n  content: \"\";\n  display: block;\n  width: 30pt;\n  height: 2.5pt;\n  margin-bottom: 10pt;\n  background: var(--gold-500);\n}\n.eyebrow {\n  margin-bottom: 6pt;\n  font-size: 8.5pt;\n  font-weight: 700;\n  letter-spacing: 0.08em;\n  text-transform: uppercase;\n  color: var(--gold-300);\n}\n.cover h1 { font-size: 24pt; line-height: 28pt; margin-bottom: 10pt; color: #FFFFFF; }\n.cover .meta { margin: 0; font-size: 10.5pt; color: rgba(247, 242, 234, 0.86); }\n.cover .meta strong { font-weight: 600; color: #FFFFFF; }\n\nh2 {\n  margin: 18pt 0 8pt;\n  padding-bottom: 4pt;\n  border-bottom: 0.75pt solid var(--line);\n  font-size: 13pt;\n  line-height: 17pt;\n  color: var(--wine-700);\n}\n\n/* Número em bloco inline (e não posicionado): o PDF continua na ordem de leitura do conteúdo. */\nol.actions { margin: 0; padding: 0; list-style: none; counter-reset: acao; }\nol.actions li { margin-bottom: 9pt; padding-left: 26pt; counter-increment: acao; }\nol.actions li::before {\n  content: counter(acao);\n  display: inline-block;\n  width: 16pt;\n  height: 16pt;\n  margin-left: -26pt;\n  margin-right: 10pt;\n  border-radius: 8pt;\n  background: var(--wine-700);\n  color: #FFFFFF;\n  font-size: 9pt;\n  font-weight: 700;\n  line-height: 16pt;\n  text-align: center;\n  vertical-align: 1pt;\n}\n\n.next {\n  margin-top: 16pt;\n  padding: 12pt 16pt 8pt;\n  border-left: 3pt solid var(--gold-500);\n  background: var(--gold-50);\n  break-inside: avoid;\n}\n.next h2 {\n  margin: 0 0 4pt;\n  padding: 0;\n  border: 0;\n  font-size: 9pt;\n  letter-spacing: 0.08em;\n  text-transform: uppercase;\n  color: var(--gold-700);\n}\n\n.fineprint {\n  margin-top: 20pt;\n  font-size: 8.5pt;\n  line-height: 12pt;\n  color: var(--ink-600);\n  break-before: avoid; /* o aviso não fica sozinho numa página */\n}\n"
+  },
+  "preview": "{#- Prévia do plano na página de resultado. Recebe `plan` (documento validado contra `Plan`). -#}\n<section class=\"section\" aria-labelledby=\"previa-titulo\">\n  <h2 id=\"previa-titulo\">{{ plan.titulo }}</h2>\n  <div class=\"summary\">\n    <p>{{ plan.resumo }}</p>\n  </div>\n</section>\n\n<section class=\"section\" aria-labelledby=\"acoes-titulo\">\n  <h2 id=\"acoes-titulo\">Suas ações para os próximos 90 dias</h2>\n  <ol class=\"actions-list\">\n    {%- for acao in plan.acoes %}\n    <li>{{ acao }}</li>\n    {%- endfor %}\n  </ol>\n</section>\n\n<section class=\"section\" aria-labelledby=\"passo-titulo\">\n  <h2 id=\"passo-titulo\">Para começar esta semana</h2>\n  <div class=\"summary\">\n    <p>{{ plan.proximo_passo }}</p>\n  </div>\n</section>\n",
+  "data": {},
+  "examples": {
+    "answers": {
+      "nome": "Contadora Exemplo",
+      "email": "contadora@example.test",
+      "escritorio": "Escritório Exemplo",
+      "tamanho_equipe": "2_a_5",
+      "principal_desafio": "captacao",
+      "objetivo_90_dias": "Organizar a captação de clientes e medir a conversão."
+    },
+    "plan": {
+      "titulo": "Organizar atividades do projeto",
+      "resumo": "A participante combina uma atividade simples com a equipe e registra o próximo passo. A participante combina uma atividade simples com a equipe e registra o próxi.",
+      "acoes": [
+        "A participante combina uma atividade simples com a equipe e registra o próximo.",
+        "A participante combina uma atividade simples com a equipe e.",
+        "A participante combina uma atividade simples com a equipe e registra."
+      ],
+      "proximo_passo": "A participante combina uma atividade simples com a equipe e registra o próx."
+    }
+  }
+}

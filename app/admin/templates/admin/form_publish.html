@@ -1,0 +1,98 @@
+{% extends "admin/layout.html" %}
+{% import "admin/macros.html" as m %}
+{% set section = "forms" %}
+{% block title %}Publicar {{ page.nav.title }}{% endblock %}
+
+{% block content %}
+<nav class="crumbs" aria-label="Você está em"><a href="/admin/forms">Formulários</a><span aria-hidden="true">/</span><a href="{{ page.nav.form_url }}">{{ page.nav.title }}</a><span aria-hidden="true">/</span><a href="{{ page.nav.draft_url }}">Rascunho</a><span aria-hidden="true">/</span><span>Publicar</span></nav>
+
+<header class="detail-head">
+  <div>
+    <h1>{{ "Nada para publicar" if page.nothing else "Publicar a versão " ~ page.number }}</h1>
+    <p class="meta"><span class="mono">{{ page.nav.slug }}</span><span>{{ "publicada agora: versão " ~ page.current_version if page.current_version else "ainda não publicado: a versão 1 põe o formulário no ar" }}</span></p>
+  </div>
+</header>
+
+<div class="cols cols--aside-first">
+  <div class="stackcol">
+    <section class="box" id="publicar" aria-labelledby="pub-titulo">
+      <h2 id="pub-titulo">Publicação</h2>
+      {% if page.nothing %}
+      <p>Nada para publicar: o rascunho está igual à versão {{ page.current_version }}, a publicada.</p>
+      <p class="btns footnote"><a class="btn btn--secondary" href="{{ page.nav.draft_url }}">Editar o rascunho</a></p>
+      {% else %}
+      {% if page.current_version %}
+      <p class="muted">A versão {{ page.number }} passa a receber os envios novos na hora, sem reiniciar. Os pedidos que já existem seguem a versão deles, e a situação do formulário não muda.</p>
+      {% else %}
+      <p class="muted">A versão 1 põe o formulário no ar: a página pública e a API passam a receber envios na hora, sem reiniciar, se o formulário estiver ativo. Depois dela, o endereço não muda mais.</p>
+      {% endif %}
+      <form class="form-stack" id="publicar-form" method="post" action="{{ page.nav.publish_url }}">
+        <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+        <input type="hidden" name="expected" value="{{ page.token }}">
+        <div class="field">
+          <label for="f-note">Nota do que mudou</label>
+          <textarea class="input" id="f-note" name="note" rows="3" maxlength="{{ page.note_max_length }}" required autocomplete="off">
+{{ page.note }}</textarea>
+        </div>
+        {% if page.contact %}
+        <div class="alert alert--warn" role="alert" id="contato">{{ m.icon('alert-triangle', 'icon--lg') }}<div><strong class="alert__title">O prompt manda ao LLM {{ page.contact.labels }} da lead.</strong><p>{{ "Esses dados saem" if page.contact.many else "Esse dado sai" }} para o provedor do LLM em todo pedido. Se o plano não precisa {{ "deles" if page.contact.many else "dele" }}, tire do prompt no rascunho; se precisa, confirme abaixo.</p></div></div>
+        <label class="choice choice--check"><input type="checkbox" name="confirm_contact" value="on" required aria-describedby="contato"><span class="choice__body"><span class="choice__mark">{{ m.icon('check') }}</span><span>Confirmo que o prompt precisa {{ "desses dados" if page.contact.many else "desse dado" }} e que {{ "eles vão" if page.contact.many else "ele vai" }} ao LLM.</span></span></label>
+        {% endif %}
+        <div class="btns"><button class="btn btn--primary" type="submit">Publicar a versão {{ page.number }}</button></div>
+      </form>
+      {% endif %}
+    </section>
+
+    {% if page.gate %}
+    <section class="box" id="teste" aria-labelledby="teste-titulo">
+      <h2 id="teste-titulo">Teste com o LLM</h2>
+      <div class="alert alert--{{ 'ok' if page.gate_ok else 'warn' }}" role="status">{{ m.icon('check' if page.gate_ok else 'alert-triangle', 'icon--lg') }}<div><p>{{ page.gate }}</p></div></div>
+      {% if not page.gate_ok %}<p class="btns footnote"><a class="btn btn--secondary" href="{{ page.nav.tests_url }}">Testar o rascunho</a></p>{% endif %}
+    </section>
+    {% endif %}
+
+    {% if page.consent %}
+    <section class="box" id="consentimento" aria-labelledby="cons-titulo">
+      <h2 id="cons-titulo">Consentimento</h2>
+      <p>{{ page.consent }}</p>
+    </section>
+    {% endif %}
+  </div>
+
+  <div class="stackcol">
+    {% if page.message %}
+    <div class="alert alert--warn" role="alert" id="aviso">{{ m.icon('alert-triangle', 'icon--lg') }}<div><strong class="alert__title">{{ page.message }}</strong></div></div>
+    {% endif %}
+    {% if page.reasons %}
+    <div class="alert alert--error" role="alert" id="falta">{{ m.icon('alert-circle', 'icon--lg') }}<div><strong class="alert__title">A versão não foi publicada. Falta:</strong>
+      <ul class="items">{% for reason in page.reasons %}<li>{{ reason }}</li>{% endfor %}</ul>
+    </div></div>
+    {% endif %}
+    {% if page.problems %}
+    {{ m.problems(page.problems, "Na definição") }}
+    {% endif %}
+    {% if page.dropped %}
+    {{ m.dropped_values(page.dropped) }}
+    {% endif %}
+
+    {% if not page.nothing and page.current_version %}
+    <section class="box" id="mudancas" aria-labelledby="mud-titulo">
+      <h2 id="mud-titulo">O que muda em relação à versão {{ page.current_version }}</h2>
+      {% if page.stale_assets %}
+      <p id="imagens-trocadas">{{ "A imagem" if page.stale_assets|length == 1 else "As imagens" }} <span class="mono">{{ page.stale_assets|join(", ") }}</span> {{ "foi trocada" if page.stale_assets|length == 1 else "foram trocadas" }} desde a versão {{ page.current_version }}. A versão {{ page.number }} fixa {{ "a nova" if page.stale_assets|length == 1 else "as novas" }}, e os envios novos passam a usar {{ "essa" if page.stale_assets|length == 1 else "essas" }}; os pedidos que já existem seguem com {{ "a de antes" if page.stale_assets|length == 1 else "as de antes" }}.</p>
+      {% endif %}
+      {% for change in page.changes %}
+      <details class="acc" open><summary>{{ change.title }} {{ m.icon('chevron-down') }}</summary>
+        {{ m.diff(change) }}
+      </details>
+      {% endfor %}
+    </section>
+    {% elif not page.nothing %}
+    <section class="box" id="mudancas" aria-labelledby="mud-titulo">
+      <h2 id="mud-titulo">Primeira publicação</h2>
+      <p>A versão 1 vai ao ar com tudo o que está no rascunho. Confira a <a href="{{ page.nav.draft_url }}">definição no editor</a> e a página pública na prévia antes de publicar.</p>
+    </section>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

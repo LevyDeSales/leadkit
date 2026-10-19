@@ -1,0 +1,12 @@
+{% extends "public/base.html" %}
+{% import "public/_macros.html" as ui %}
+{#- Só aparece com assinatura válida: quem não tem o link vê "não encontramos". -#}
+{% block title %}Este link expirou{% endblock %}
+{% block main %}
+<main id="conteudo" class="container container--narrow page">
+  <div class="statusicon statusicon--neutral">{{ ui.icon("hourglass") }}</div>
+  <h1>Este link expirou</h1>
+  <p class="lead">Por segurança, os links dos planos valem por {{ days }} dias. Para receber um novo link, fale com a equipe da {{ site_brand() }} e informe o código abaixo.</p>
+  {{ ui.refcode(job.public_id) }}
+</main>
+{% endblock %}

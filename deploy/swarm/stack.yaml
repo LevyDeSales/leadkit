@@ -1,0 +1,205 @@
+# Stack para um Docker Swarm que já tem Traefik na frente (portas 80/443, rede externa
+# `traefik-public` e certresolver `letsencrypt`), como o servidor de exemplo. Diferente de
+# deploy/compose.yaml: não sobe Caddy nem publica portas; o Traefik roteia o DOMAIN para a API.
+#
+# Configuração em app.env (app) e db.env (Postgres), modelos *.env.example nesta pasta. O Docker lê
+# os dois sem passar pelo shell: sem aspas, e o `$` do hash do admin entra como está.
+#
+# No servidor, numa pasta fora do código (~/leadkit/swarm), com uma cópia deste arquivo e
+# do deploy.sh, o app.env e o db.env. Passo a passo, atualização, rollback e backup: README.md ao
+# lado. O deploy.sh roda as migrations e o `docker stack deploy` e falha se o Swarm desfizer a
+# versão nova:
+#   IMAGE=leadkit:<commit> ./deploy.sh   # domínio e nome da stack vêm do app.env
+# À mão, sem essa conferência (STACK é o nome da stack, o mesmo do STACK_NAME do app.env; sem ele,
+# vale leadkit). Outra stack no mesmo servidor sem o STACK próprio repetiria os nomes do
+# Traefik da primeira, e o Traefik descartaria as duas:
+#   IMAGE=leadkit:<commit> DOMAIN=planos.example.test STACK=leadkit \
+#     docker stack deploy --detach=false --resolve-image changed -c stack.yaml leadkit
+#   docker run --rm --network leadkit_internal --env-file app.env \
+#     leadkit:<commit> migrate
+
+x-logging: &logging
+  # Com rodízio: sem limite o Docker guarda os logs para sempre, e o log de acesso tem IPs.
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+x-app: &app
+  image: ${IMAGE:?}
+  env_file: app.env
+  init: true
+  cap_drop: [ALL]
+  networks: [internal]
+  logging: *logging
+
+services:
+  # Nome curto `db`, mas o app usa o nome completo `<stack>_db` (leadkit_db, na stack padrão)
+  # na DATABASE_URL: a API também está na rede compartilhada do Traefik, onde outro serviço `db`
+  # responderia pelo curto.
+  db:
+    image: postgres:16-trixie
+    env_file: db.env
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks: [internal]
+    logging: *logging
+    # Tempo para o Postgres fechar limpo; o padrão de 10 s pode cortar um checkpoint.
+    stop_grace_period: 1m
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+      # Memória: o teto (limits) protege os vizinhos, porque a stack divide o servidor com outras; a
+      # reserva (reservations) é o que o Swarm separa para o serviço ao escolher o nó. Os padrões são
+      # generosos e vêm do app.env (DB_MEMORY_LIMIT, DB_MEMORY_RESERVATION; README.md, "Limites de
+      # memória"). Passou do teto, o contêiner é encerrado (código 137) e o Swarm o sobe de novo.
+      resources:
+        limits:
+          memory: ${DB_MEMORY_LIMIT:-1G}
+        reservations:
+          memory: ${DB_MEMORY_RESERVATION:-256M}
+
+  # Na traefik-public, o Swarm dá a este serviço o apelido curto `api` (hoje nenhum outro serviço do
+  # servidor de exemplo usa esse nome). Uma segunda stack desta aplicação repete o apelido, sem problema: o
+  # Traefik fala com o IP virtual do serviço (`lbswarm`), não com o nome.
+  api:
+    <<: *app
+    command: ["api"]
+    networks: [internal, traefik-public]
+    environment:
+      # De quem a API aceita X-Forwarded-For e X-Forwarded-Proto (deploy/entrypoint.sh). O IP que ela
+      # deduz do cabeçalho é a chave do bloqueio de login do admin, então só o Traefik pode escrevê-lo:
+      # o deploy.sh passa a(s) sub-rede(s) da rede traefik-public (README.md, "Confiar no Traefik").
+      # Sem a variável, num `docker stack deploy` à mão, vale `*`, como antes.
+      FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-*}
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz', timeout=4)"
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 30s
+    deploy:
+      replicas: 1
+      # Réplica nova antes de derrubar a antiga; se ela não ficar saudável, volta para a anterior.
+      update_config:
+        order: start-first
+        failure_action: rollback
+      rollback_config:
+        order: start-first
+      restart_policy:
+        condition: any
+      # Na troca de réplica (start-first) as duas existem juntas: o servidor precisa de folga para o
+      # dobro da reserva. API_MEMORY_LIMIT e API_MEMORY_RESERVATION, no app.env.
+      resources:
+        limits:
+          memory: ${API_MEMORY_LIMIT:-512M}
+        reservations:
+          memory: ${API_MEMORY_RESERVATION:-128M}
+      # Em lista, não em mapa: o compose interpola o valor de um item, não a chave de um mapa, e o nome
+      # da stack tem de entrar na chave (`routers.<stack>.rule`). Os nomes do Traefik saem do nome da
+      # stack para que duas stacks no mesmo Swarm não repitam router, serviço nem middleware: com o
+      # mesmo nome e configurações diferentes, o Traefik descarta as duas. Sem STACK, o padrão é o da
+      # produção.
+      labels:
+        - traefik.enable=true
+        - traefik.docker.network=traefik-public
+        # Pelo IP virtual do serviço: na troca de réplica, o Swarm tira a antiga na hora, e o
+        # Traefik não manda pedido para um contêiner que já saiu.
+        - traefik.docker.lbswarm=true
+        - traefik.http.routers.${STACK:-gerador-planos}.rule=Host(`${DOMAIN:?}`)
+        - traefik.http.routers.${STACK:-gerador-planos}.entrypoints=websecure
+        - traefik.http.routers.${STACK:-gerador-planos}.tls=true
+        - traefik.http.routers.${STACK:-gerador-planos}.tls.certresolver=letsencrypt
+        - traefik.http.routers.${STACK:-gerador-planos}.middlewares=${STACK:-gerador-planos}-hsts,${STACK:-gerador-planos}-compress
+        # O mesmo que o Caddy do deploy/compose.yaml faz: HSTS de 1 ano (só neste domínio) e
+        # compressão.
+        - traefik.http.middlewares.${STACK:-gerador-planos}-hsts.headers.stsSeconds=31536000
+        - traefik.http.middlewares.${STACK:-gerador-planos}-compress.compress=true
+        - traefik.http.services.${STACK:-gerador-planos}.loadbalancer.server.port=8000
+        # Router só dos envios (POST em /p/ e /v1/forms/), com limite por IP. As duas rotas são
+        # anônimas, e cada envio gasta a OpenAI, ocupa o worker e escreve para o e-mail digitado; o
+        # limite fica na frente do app. O resto (GET da página, /d/, /v1/jobs/, /admin) segue no
+        # router de cima, sem limite. O nome leva `_`, que o nome de uma stack não pode ter: outra
+        # stack nunca repete este router, mesmo que se chame `<stack>-submit`.
+        - traefik.http.routers.${STACK:-gerador-planos}_submit.rule=Host(`${DOMAIN:?}`) && Method(`POST`) && (PathPrefix(`/p/`) || PathPrefix(`/v1/forms/`))
+        # Sem prioridade, o Traefik usa o tamanho da regra, e a deste router já é maior; fixa-se um
+        # valor acima do maior caso (Host() de até 253 caracteres) para não depender do domínio.
+        - traefik.http.routers.${STACK:-gerador-planos}_submit.priority=10000
+        - traefik.http.routers.${STACK:-gerador-planos}_submit.entrypoints=websecure
+        - traefik.http.routers.${STACK:-gerador-planos}_submit.tls=true
+        - traefik.http.routers.${STACK:-gerador-planos}_submit.tls.certresolver=letsencrypt
+        # O limite vem primeiro: o pedido barrado não gasta o resto. HSTS e compressão, os mesmos.
+        - traefik.http.routers.${STACK:-gerador-planos}_submit.middlewares=${STACK:-gerador-planos}-ratelimit,${STACK:-gerador-planos}-hsts,${STACK:-gerador-planos}-compress
+        - traefik.http.routers.${STACK:-gerador-planos}_submit.service=${STACK:-gerador-planos}
+        # RATE_LIMIT_AVERAGE pedidos por minuto por IP, com rajada de RATE_LIMIT_BURST (o deploy.sh
+        # lê os dois do app.env). Os padrões, 10 e 20, são generosos para uma pessoa (um envio por
+        # formulário) e baratos para quem automatiza. Um IP só pode ser um escritório ou uma
+        # operadora móvel inteira: se leads legítimas receberem 429, suba os dois, não desligue.
+        - traefik.http.middlewares.${STACK:-gerador-planos}-ratelimit.ratelimit.average=${RATE_LIMIT_AVERAGE:-10}
+        - traefik.http.middlewares.${STACK:-gerador-planos}-ratelimit.ratelimit.period=1m
+        - traefik.http.middlewares.${STACK:-gerador-planos}-ratelimit.ratelimit.burst=${RATE_LIMIT_BURST:-20}
+        # O IP da conexão, não o X-Forwarded-For, que o cliente escreve. Com as portas do Traefik em
+        # modo host, a conexão é a do visitante; em modo ingress, todos chegariam com o mesmo IP.
+        - traefik.http.middlewares.${STACK:-gerador-planos}-ratelimit.ratelimit.sourcecriterion.ipstrategy.depth=0
+
+  worker:
+    <<: *app
+    command: ["worker"]
+    environment:
+      # /health do SDK: 200 só com o worker conectado ao Hatchet (porta interna, não publicada).
+      HATCHET_CLIENT_WORKER_HEALTHCHECK_ENABLED: "true"
+      HATCHET_CLIENT_WORKER_HEALTHCHECK_PORT: "8001"
+    # O SIGTERM espera as tasks em andamento, acima da task de plano mais longa (até 9 min). A
+    # retenção pode passar disso; se for cortada, termina na execução do dia seguinte.
+    stop_grace_period: 10m
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=4)"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    deploy:
+      replicas: 1
+      # Como na API: o worker novo conecta antes de o antigo sair, e uma versão que não sobe volta
+      # sozinha (senão o Swarm pausaria a atualização com o worker parado).
+      update_config:
+        order: start-first
+        failure_action: rollback
+      rollback_config:
+        order: start-first
+      restart_policy:
+        condition: any
+      # O WeasyPrint renderiza um PDF por vez e é o que mais pesa; WORKER_MEMORY_LIMIT e
+      # WORKER_MEMORY_RESERVATION, no app.env. Passou do teto, o Swarm sobe o worker de novo, e o
+      # Hatchet repete a task que estava rodando.
+      resources:
+        limits:
+          memory: ${WORKER_MEMORY_LIMIT:-1536M}
+        reservations:
+          memory: ${WORKER_MEMORY_RESERVATION:-512M}
+
+networks:
+  internal:
+    driver: overlay
+    # Attachable: migrations e scripts de validação rodam com `docker run --network`.
+    attachable: true
+  traefik-public:
+    external: true
+
+volumes:
+  pgdata:

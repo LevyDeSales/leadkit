@@ -1,0 +1,13 @@
+{% extends "admin/base.html" %}
+{% import "admin/macros.html" as m %}
+{% block title %}Algo deu errado{% endblock %}
+{% block body %}
+<main id="conteudo" class="login">
+  <div class="login__card">
+    <p class="login__brand">{{ m.icon('alert-triangle') }}{{ site_brand() }} · Operação</p>
+    <h1>Não foi possível continuar</h1>
+    <div class="alert alert--warn" role="alert">{{ m.icon('alert-triangle') }}<div><p>{{ message }}</p></div></div>
+    <p><a class="btn btn--secondary" href="/admin">Voltar para os pedidos</a></p>
+  </div>
+</main>
+{% endblock %}

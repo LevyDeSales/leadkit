@@ -1,0 +1,398 @@
+{
+  "about": "Casos que o avaliador de condições (app/forms/definition/conditions.py) e o JavaScript da página pública resolvem igual. Cada caso dá as respostas como o envio as traz (texto, ou lista nas escolhas múltiplas) e o resultado: as perguntas visíveis, na ordem da definição, e as opções disponíveis de cada pergunta de escolha visível. Regras de leitura: a resposta vale sem os espaços das pontas; texto em branco ou nenhuma opção é não respondida; numa escolha múltipla, um texto vale como a lista dessa opção; o que está escondido (pergunta ou opção) conta como não respondido para as regras seguintes; contains compara com maiúsculas e minúsculas como estão.",
+  "questions": [
+    {
+      "name": "situacao",
+      "kind": "choice",
+      "options": [
+        {"value": "clt"},
+        {"value": "autonomo"},
+        {"value": "escritorio"},
+        {"value": "estudante"}
+      ]
+    },
+    {
+      "name": "clientes",
+      "kind": "choice",
+      "show_when": {
+        "mode": "all",
+        "rules": [
+          {"field": "situacao", "operator": "in", "value": ["clt", "estudante"]}
+        ]
+      },
+      "options": [
+        {"value": "sim"},
+        {"value": "nao"}
+      ]
+    },
+    {
+      "name": "carteira",
+      "kind": "choice",
+      "show_when": {
+        "mode": "any",
+        "rules": [
+          {"field": "situacao", "operator": "in", "value": ["autonomo", "escritorio"]},
+          {"field": "clientes", "operator": "equals", "value": "sim"}
+        ]
+      },
+      "options": [
+        {
+          "value": "zero",
+          "show_when": {
+            "mode": "all",
+            "rules": [
+              {"field": "situacao", "operator": "in", "value": ["autonomo", "escritorio"]}
+            ]
+          }
+        },
+        {"value": "ate_10"},
+        {"value": "mais_10"}
+      ]
+    },
+    {
+      "name": "zero_motivo",
+      "kind": "text",
+      "show_when": {
+        "mode": "all",
+        "rules": [
+          {"field": "carteira", "operator": "equals", "value": "zero"}
+        ]
+      }
+    },
+    {
+      "name": "equipe",
+      "kind": "choice",
+      "show_when": {
+        "mode": "all",
+        "rules": [
+          {"field": "carteira", "operator": "in", "value": ["ate_10", "mais_10"]}
+        ]
+      },
+      "options": [
+        {"value": "so_eu"},
+        {"value": "time"}
+      ]
+    },
+    {
+      "name": "nome",
+      "kind": "text"
+    },
+    {
+      "name": "dores",
+      "kind": "choices",
+      "options": [
+        {"value": "preco"},
+        {"value": "prazo"},
+        {"value": "outra"}
+      ]
+    },
+    {
+      "name": "outra_dor",
+      "kind": "textarea",
+      "show_when": {
+        "mode": "all",
+        "rules": [
+          {"field": "dores", "operator": "contains", "value": "outra"}
+        ]
+      }
+    },
+    {
+      "name": "cidade",
+      "kind": "text",
+      "show_when": {
+        "mode": "all",
+        "rules": [
+          {"field": "nome", "operator": "contains", "value": "Paulo"}
+        ]
+      }
+    },
+    {
+      "name": "canal",
+      "kind": "choices",
+      "options": [
+        {"value": "email"},
+        {"value": "whatsapp"},
+        {"value": "telefone"}
+      ]
+    },
+    {
+      "name": "canal_extra",
+      "kind": "text",
+      "show_when": {
+        "mode": "all",
+        "rules": [
+          {"field": "canal", "operator": "in", "value": ["whatsapp", "telefone"]}
+        ]
+      }
+    },
+    {
+      "name": "observacao",
+      "kind": "text",
+      "show_when": {
+        "mode": "all",
+        "rules": [
+          {"field": "clientes", "operator": "equals", "value": "sim"}
+        ]
+      }
+    }
+  ],
+  "cases": [
+    {
+      "name": "nothing answered shows only the questions without a condition",
+      "answers": {},
+      "visible": ["situacao", "nome", "dores", "canal"],
+      "options": {
+        "situacao": ["clt", "autonomo", "escritorio", "estudante"],
+        "dores": ["preco", "prazo", "outra"],
+        "canal": ["email", "whatsapp", "telefone"]
+      }
+    },
+    {
+      "name": "blank answers count as not answered",
+      "answers": {
+        "situacao": "   ",
+        "nome": "",
+        "dores": [],
+        "canal": ["  "]
+      },
+      "visible": ["situacao", "nome", "dores", "canal"],
+      "options": {
+        "situacao": ["clt", "autonomo", "escritorio", "estudante"],
+        "dores": ["preco", "prazo", "outra"],
+        "canal": ["email", "whatsapp", "telefone"]
+      }
+    },
+    {
+      "name": "an employee is asked about own clients",
+      "answers": {
+        "situacao": "clt"
+      },
+      "visible": ["situacao", "clientes", "nome", "dores", "canal"],
+      "options": {
+        "situacao": ["clt", "autonomo", "escritorio", "estudante"],
+        "dores": ["preco", "prazo", "outra"],
+        "canal": ["email", "whatsapp", "telefone"],
+        "clientes": ["sim", "nao"]
+      }
+    },
+    {
+      "name": "any: own clients open the portfolio, whose option zero stays hidden for an employee",
+      "answers": {
+        "situacao": "clt",
+        "clientes": "sim"
+      },
+      "visible": ["situacao", "clientes", "carteira", "nome", "dores", "canal", "observacao"],
+      "options": {
+        "situacao": ["clt", "autonomo", "escritorio", "estudante"],
+        "dores": ["preco", "prazo", "outra"],
+        "canal": ["email", "whatsapp", "telefone"],
+        "clientes": ["sim", "nao"],
+        "carteira": ["ate_10", "mais_10"]
+      }
+    },
+    {
+      "name": "chain: the team depends on the portfolio, which depends on the answer before it",
+      "answers": {
+        "situacao": "clt",
+        "clientes": "sim",
+        "carteira": "ate_10"
+      },
+      "visible": ["situacao", "clientes", "carteira", "equipe", "nome", "dores", "canal", "observacao"],
+      "options": {
+        "situacao": ["clt", "autonomo", "escritorio", "estudante"],
+        "dores": ["preco", "prazo", "outra"],
+        "canal": ["email", "whatsapp", "telefone"],
+        "clientes": ["sim", "nao"],
+        "carteira": ["ate_10", "mais_10"],
+        "equipe": ["so_eu", "time"]
+      }
+    },
+    {
+      "name": "an employee without own clients skips the portfolio",
+      "answers": {
+        "situacao": "clt",
+        "clientes": "nao"
+      },
+      "visible": ["situacao", "clientes", "nome", "dores", "canal"],
+      "options": {
+        "situacao": ["clt", "autonomo", "escritorio", "estudante"],
+        "dores": ["preco", "prazo", "outra"],
+        "canal": ["email", "whatsapp", "telefone"],
+        "clientes": ["sim", "nao"]
+      }
+    },
+    {
+      "name": "any: a self-employed person opens the portfolio straight away, with option zero",
+      "answers": {
+        "situacao": "autonomo"
+      },
+      "visible": ["situacao", "carteira", "nome", "dores", "canal"],
+      "options": {
+        "situacao": ["clt", "autonomo", "escritorio", "estudante"],
+        "dores": ["preco", "prazo", "outra"],
+        "canal": ["email", "whatsapp", "telefone"],
+        "carteira": ["zero", "ate_10", "mais_10"]
+      }
+    },
+    {
+      "name": "equals on the option that opens a follow-up question",
+      "answers": {
+        "situacao": "escritorio",
+        "carteira": "zero"
+      },
+      "visible": ["situacao", "carteira", "zero_motivo", "nome", "dores", "canal"],
+      "options": {
+        "situacao": ["clt", "autonomo", "escritorio", "estudante"],
+        "dores": ["preco", "prazo", "outra"],
+        "canal": ["email", "whatsapp", "telefone"],
+        "carteira": ["zero", "ate_10", "mais_10"]
+      }
+    },
+    {
+      "name": "the answer of a hidden question is ignored by the rules after it",
+      "answers": {
+        "situacao": "autonomo",
+        "clientes": "sim",
+        "carteira": "ate_10"
+      },
+      "visible": ["situacao", "carteira", "equipe", "nome", "dores", "canal"],
+      "options": {
+        "situacao": ["clt", "autonomo", "escritorio", "estudante"],
+        "dores": ["preco", "prazo", "outra"],
+        "canal": ["email", "whatsapp", "telefone"],
+        "carteira": ["zero", "ate_10", "mais_10"],
+        "equipe": ["so_eu", "time"]
+      }
+    },
+    {
+      "name": "a hidden question A hides the question C that depends on it",
+      "answers": {
+        "situacao": "estudante",
+        "clientes": "nao",
+        "carteira": "ate_10",
+        "equipe": "time"
+      },
+      "visible": ["situacao", "clientes", "nome", "dores", "canal"],
+      "options": {
+        "situacao": ["clt", "autonomo", "escritorio", "estudante"],
+        "dores": ["preco", "prazo", "outra"],
+        "canal": ["email", "whatsapp", "telefone"],
+        "clientes": ["sim", "nao"]
+      }
+    },
+    {
+      "name": "a hidden option that was chosen counts as not answered",
+      "answers": {
+        "situacao": "clt",
+        "clientes": "sim",
+        "carteira": "zero"
+      },
+      "visible": ["situacao", "clientes", "carteira", "nome", "dores", "canal", "observacao"],
+      "options": {
+        "situacao": ["clt", "autonomo", "escritorio", "estudante"],
+        "dores": ["preco", "prazo", "outra"],
+        "canal": ["email", "whatsapp", "telefone"],
+        "clientes": ["sim", "nao"],
+        "carteira": ["ate_10", "mais_10"]
+      }
+    },
+    {
+      "name": "contains finds an option among the marked ones",
+      "answers": {
+        "dores": ["preco", "outra"]
+      },
+      "visible": ["situacao", "nome", "dores", "outra_dor", "canal"],
+      "options": {
+        "situacao": ["clt", "autonomo", "escritorio", "estudante"],
+        "dores": ["preco", "prazo", "outra"],
+        "canal": ["email", "whatsapp", "telefone"]
+      }
+    },
+    {
+      "name": "contains does not find an option that is not marked",
+      "answers": {
+        "dores": ["preco", "prazo"]
+      },
+      "visible": ["situacao", "nome", "dores", "canal"],
+      "options": {
+        "situacao": ["clt", "autonomo", "escritorio", "estudante"],
+        "dores": ["preco", "prazo", "outra"],
+        "canal": ["email", "whatsapp", "telefone"]
+      }
+    },
+    {
+      "name": "a text in a multiple choice counts as that single option",
+      "answers": {
+        "dores": "outra"
+      },
+      "visible": ["situacao", "nome", "dores", "outra_dor", "canal"],
+      "options": {
+        "situacao": ["clt", "autonomo", "escritorio", "estudante"],
+        "dores": ["preco", "prazo", "outra"],
+        "canal": ["email", "whatsapp", "telefone"]
+      }
+    },
+    {
+      "name": "contains finds a piece of a text",
+      "answers": {
+        "nome": "Ana Paulo Souza"
+      },
+      "visible": ["situacao", "nome", "dores", "cidade", "canal"],
+      "options": {
+        "situacao": ["clt", "autonomo", "escritorio", "estudante"],
+        "dores": ["preco", "prazo", "outra"],
+        "canal": ["email", "whatsapp", "telefone"]
+      }
+    },
+    {
+      "name": "contains respects capital letters",
+      "answers": {
+        "nome": "ana paulo"
+      },
+      "visible": ["situacao", "nome", "dores", "canal"],
+      "options": {
+        "situacao": ["clt", "autonomo", "escritorio", "estudante"],
+        "dores": ["preco", "prazo", "outra"],
+        "canal": ["email", "whatsapp", "telefone"]
+      }
+    },
+    {
+      "name": "answers are read without the spaces around them",
+      "answers": {
+        "situacao": "  clt  ",
+        "nome": "  Ana Paulo  "
+      },
+      "visible": ["situacao", "clientes", "nome", "dores", "cidade", "canal"],
+      "options": {
+        "situacao": ["clt", "autonomo", "escritorio", "estudante"],
+        "dores": ["preco", "prazo", "outra"],
+        "canal": ["email", "whatsapp", "telefone"],
+        "clientes": ["sim", "nao"]
+      }
+    },
+    {
+      "name": "in on a multiple choice needs one marked option in the list",
+      "answers": {
+        "canal": ["email", "whatsapp"]
+      },
+      "visible": ["situacao", "nome", "dores", "canal", "canal_extra"],
+      "options": {
+        "situacao": ["clt", "autonomo", "escritorio", "estudante"],
+        "dores": ["preco", "prazo", "outra"],
+        "canal": ["email", "whatsapp", "telefone"]
+      }
+    },
+    {
+      "name": "in on a multiple choice does not match other marked options",
+      "answers": {
+        "canal": ["email"]
+      },
+      "visible": ["situacao", "nome", "dores", "canal"],
+      "options": {
+        "situacao": ["clt", "autonomo", "escritorio", "estudante"],
+        "dores": ["preco", "prazo", "outra"],
+        "canal": ["email", "whatsapp", "telefone"]
+      }
+    }
+  ]
+}

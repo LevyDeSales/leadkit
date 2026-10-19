@@ -1,0 +1,100 @@
+{% extends "admin/layout.html" %}
+{% import "admin/macros.html" as m %}
+{% set section = "api-keys" %}
+{% block title %}Chaves de API{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Chaves de API</h1>
+    <p>Uma chave deixa um script ou um agente chamar a API do admin no lugar de uma pessoa logada. Cada chave tem um nome e um papel: <strong>leitura</strong> só consulta, e <strong>total</strong> faz tudo o que o admin logado faz. Tudo o que uma chave faz fica na auditoria com o nome dela, <span class="mono">chave:nome</span>.</p>
+    <p class="muted">A API fica em <span class="mono">/admin/api/v1</span>. Para testar uma chave nova, chame <span class="mono">GET /admin/api/v1/me</span> com ela no cabeçalho <span class="mono">Authorization</span>. A <a href="{{ page.reference_url }}">referência da API</a> descreve cada operação e deixa testá-la com a chave. Para usar uma chave no Claude, siga o passo a passo de <a href="/admin/mcp">Configurar o MCP</a>.</p>
+  </div>
+</div>
+
+<div class="stackcol">
+{% if page.new_key %}
+{#- A única vez em que a chave aparece: a página não fica em cache (no-store), a criação não redireciona e recarregar não a mostra de novo. -#}
+<section class="box form-stack" id="nova-chave" aria-labelledby="nc-titulo">
+  <div class="alert alert--ok" role="status">{{ m.icon('check', 'icon--lg') }}<div><strong class="alert__title" id="nc-titulo">Chave «{{ page.new_key.name }}» criada: copie agora</strong><p>Ela não aparece de novo, e não há como recuperá-la. Guarde num cofre de senhas ou no ambiente de quem vai usá-la, nunca no repositório. Se perder, revogue esta chave e crie outra.</p></div></div>
+  <div class="field">
+    <strong id="chave-nova-rotulo">Chave ({{ page.new_key.role_label|lower }}){% if page.new_key.expires %}, vale até {{ m.when(page.new_key.expires) }}{% else %}, sem validade{% endif %}</strong>
+    <span class="copy">
+      <code class="mono" id="chave-nova" tabindex="0" aria-labelledby="chave-nova-rotulo">{{ page.new_key.key }}</code>
+      <button class="btn btn--secondary btn--sm" type="button" data-copy="chave-nova" aria-label="Copiar a chave" hidden>{{ m.icon('copy') }}Copiar</button>
+      <span class="copy__status" role="status" data-copy-status="chave-nova"></span>
+    </span>
+  </div>
+  <p class="muted">Quem chama manda a chave no cabeçalho <span class="mono">Authorization: Bearer &lt;chave&gt;</span>. Na URL ela não funciona, de propósito: o log de acesso a gravaria.</p>
+</section>
+{% endif %}
+
+<section class="box" id="criar" aria-labelledby="criar-titulo">
+  <h2 id="criar-titulo">Criar uma chave</h2>
+  {#- Com HTMX, o botão trava enquanto o pedido vai e um segundo clique é descartado: a chave só aparece na resposta, e um segundo POST a perderia. Sem JavaScript, é um POST comum. -#}
+  <form class="form-stack" method="post" action="{{ page.action }}" hx-post="{{ page.action }}" hx-target="#conteudo" hx-select="#conteudo" hx-swap="outerHTML show:window:top" hx-sync="this:drop" hx-disabled-elt="find button">
+    <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+    <div class="field">
+      <label for="k-name">Nome</label>
+      <input class="input mono" id="k-name" name="name" type="text" value="{{ page.name }}" maxlength="{{ page.name_max_length }}" minlength="3" pattern="(?=.*[a-z0-9])[a-z0-9\-]{3,60}" required autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="painel-de-vendas" aria-describedby="k-name-ajuda{% if page.errors.get('name') %} k-name-erro{% endif %}"{% if page.errors.get("name") %} aria-invalid="true"{% endif %}>
+      <p class="muted" id="k-name-ajuda">Use {{ page.name_hint }}. O nome não muda e não se reaproveita, nem o de uma chave revogada: a auditoria cita a chave por ele.</p>
+      {% if page.errors.get("name") %}<p class="error" id="k-name-erro">{{ m.icon('alert-circle') }}{{ page.errors["name"] }}</p>{% endif %}
+    </div>
+    <div class="field">
+      <label for="k-role">Papel</label>
+      <select class="input" id="k-role" name="role" aria-describedby="k-role-ajuda{% if page.errors.get('role') %} k-role-erro{% endif %}"{% if page.errors.get("role") %} aria-invalid="true"{% endif %}>
+        {%- for option in page.roles %}
+        <option value="{{ option.value }}"{% if option.value == page.role %} selected{% endif %}>{{ option.label }}</option>
+        {%- endfor %}
+      </select>
+      <p class="muted" id="k-role-ajuda">{% for option in page.roles %}<strong>{{ option.label }}</strong>: {{ option.help }}.{% if not loop.last %} {% endif %}{% endfor %} Para explorar, prefira uma chave de leitura; use uma chave por cliente.</p>
+      {% if page.errors.get("role") %}<p class="error" id="k-role-erro">{{ m.icon('alert-circle') }}{{ page.errors["role"] }}</p>{% endif %}
+    </div>
+    <div class="field">
+      <label for="k-validity">Validade em dias <span class="opt">(opcional)</span></label>
+      <input class="input" id="k-validity" name="validity_days" type="number" inputmode="numeric" min="1" max="{{ page.max_validity_days }}" step="1" value="{{ page.validity_days }}" aria-describedby="k-validity-ajuda{% if page.errors.get('validity_days') %} k-validity-erro{% endif %}"{% if page.errors.get("validity_days") %} aria-invalid="true"{% endif %}>
+      <p class="muted" id="k-validity-ajuda">Sugerimos {{ page.default_validity_days }} dias: uma chave esquecida num arquivo deixa de valer sozinha. Apague o número para uma chave que não vence.</p>
+      {% if page.errors.get("validity_days") %}<p class="error" id="k-validity-erro">{{ m.icon('alert-circle') }}{{ page.errors["validity_days"] }}</p>{% endif %}
+    </div>
+    <div class="btns"><button class="btn btn--primary" type="submit">{{ m.icon('plus') }}Criar a chave</button></div>
+  </form>
+</section>
+
+{% if page.rows %}
+<div class="tablewrap" role="region" aria-label="Tabela de chaves" tabindex="0">
+  <table class="table table--cards">
+    <caption class="sr-only">Chaves de API</caption>
+    <thead>
+      <tr><th scope="col">Chave</th><th scope="col">Papel</th><th scope="col">Situação</th><th scope="col">Último uso</th><th scope="col">Ação</th></tr>
+    </thead>
+    <tbody>
+    {% for row in page.rows %}
+      <tr>
+        <td class="who" data-label="Chave">{{ row.name }}<span class="mono">id {{ row.key_id }}</span><span>Criada por {{ row.created_by }}, {{ m.when(row.created) }}</span></td>
+        <td data-label="Papel">{{ row.role_label }}</td>
+        <td data-label="Situação">{{ m.badge(row.state) }}<span class="sub">{% if row.revoked %}Revogada por {{ row.revoked_by }}, {{ m.when(row.revoked) }}{% elif row.expires %}{% if row.revocable %}Vence em {% else %}Venceu em {% endif %}{{ m.when(row.expires) }}{% else %}Sem validade{% endif %}</span></td>
+        <td data-label="Último uso">{% if row.last_used %}{{ m.when(row.last_used) }}{% else %}<span class="muted">Nunca usada</span>{% endif %}</td>
+        <td data-label="Ação">
+          {% if row.revocable %}
+          <details class="reprocess"{% if page.revoke_errors.get(row.key_id) %} open{% endif %}>
+            <summary class="btn btn--secondary btn--sm">{{ m.icon('x') }}Revogar…<span class="sr-only"> a chave {{ row.name }}</span></summary>
+            <form method="post" action="{{ row.revoke_action }}" aria-labelledby="rev-{{ row.key_id }}-titulo">
+              <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+              <h3 id="rev-{{ row.key_id }}-titulo">Revogar a chave {{ row.name }}</h3>
+              <div class="note">{{ m.icon('alert-triangle') }}<p>A chave deixa de valer na hora: quem a usa passa a receber 401, e não há como desfazer. O nome continua dela, e a auditoria segue citando o que ela fez. Se ela criou outras chaves, revogar esta não revoga as outras.</p></div>
+              <label class="choice choice--check"><input type="checkbox" name="confirm" value="on" required{% if page.revoke_errors.get(row.key_id) %} aria-invalid="true" aria-describedby="rev-{{ row.key_id }}-erro"{% endif %}><span class="choice__body"><span class="choice__mark">{{ m.icon('check') }}</span><span>Entendo que a chave deixa de valer agora.</span></span></label>
+              {% if page.revoke_errors.get(row.key_id) %}<p class="error" id="rev-{{ row.key_id }}-erro">{{ m.icon('alert-circle') }}{{ page.revoke_errors[row.key_id] }}</p>{% endif %}
+              <div class="btns"><button class="btn btn--primary" type="submit">Revogar a chave</button></div>
+            </form>
+          </details>
+          {% else %}<span class="muted">—</span>{% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<p class="muted">Nenhuma chave criada ainda.</p>
+{% endif %}
+</div>
+{% endblock %}

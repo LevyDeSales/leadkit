@@ -1,0 +1,81 @@
+{#- O editor dos dados do formulário (app/admin/data_editor.py), dentro do formulário do rascunho: os
+    blocos com tipo (lista, janelas, edição e valor livre). Cada campo tem por nome a posição do
+    bloco. Os botões de incluir, remover e reordenar as janelas mandam o formulário inteiro com a
+    operação: sem JavaScript, a página volta inteira; com o HTMX, volta só este trecho. -#}
+{%- import "admin/macros.html" as m -%}
+{%- import "admin/_editor_fields.html" as f with context -%}
+{%- import "admin/_editor_ops.html" as o with context -%}
+{%- set d = page.structure.data -%}
+
+{#- Uma data: o seletor de datas do navegador manda AAAA-MM-DD, o formato da definição. -#}
+{% macro date_field(name, label, value, opt=False, hint=None) -%}
+{%- set id = page.structure.field_id(name) -%}
+{%- set error = page.structure.errors.get(name) -%}
+<div class="field">
+  <label for="{{ id }}">{{ label }}{% if opt %} <span class="opt">(opcional)</span>{% endif %}</label>
+  {%- if hint %}
+  <p class="muted field__hint" id="{{ id }}-dica">{{ hint }}</p>
+  {%- endif %}
+  <input class="input" id="{{ id }}" name="{{ name }}" type="date" value="{{ value }}"{% if hint or error %} aria-describedby="{{ f.described(name, hint) }}"{% endif %}{% if error %} aria-invalid="true"{% endif %}{% if page.structure.focus == id %} autofocus{% endif %}>
+  {{ f.error_for(name) }}
+</div>
+{%- endmacro %}
+
+<div id="dados-editor" class="stackcol" hx-target="this" hx-swap="outerHTML">
+<section class="box" id="f-data" aria-labelledby="dados-titulo">
+  <h2 id="dados-titulo">Dados do formulário</h2>
+  <p class="muted">O contexto que muda com o tempo: calendário, catálogo e edição. As instruções e o prompt leem cada bloco pelo nome (<span class="mono">data.nome</span>), e um campo de opções fixas do plano pode tirar os valores de uma lista. Os blocos aparecem em ordem de nome.</p>
+  {{ f.error_for("data") }}
+  {%- for block in d.edit.blocks %}
+  {%- set b = "data." ~ loop.index0 %}
+  {%- set label = block.name or "Bloco novo" %}
+  <fieldset class="edit-step" id="{{ d.field_id(b) }}">
+    <legend>{{ label }}</legend>
+    {{ f.error_for(b) }}
+    <div class="edit-grid">
+      {{ f.field(b ~ ".name", "Nome do bloco", block.name, hint="Como o template o chama: data.nome. Letras minúsculas sem acento, números e _.", mono=True) }}
+      {{ o.kind_select(b ~ ".kind", d.kinds, block.kind, "data-refresh:" ~ loop.index0) }}
+    </div>
+    {%- if block.kind == "list" %}
+    {{ f.field(b ~ ".items", "Itens", block.items, hint="Um nome por linha, sem repetir. O template lê a lista; um campo de opções do plano pode usá-la.", area=True, rows=8) }}
+    {%- elif block.kind == "windows" %}
+    <fieldset class="edit-options" id="{{ d.field_id(b ~ '.windows') }}">
+      <legend>Janelas</legend>
+      <p class="muted field__hint">Cada janela tem um nome único, que o template usa (data.{{ block.name or "nome" }}.<span class="mono">nome</span>.start), e termina no dia em que começa ou depois.</p>
+      {{ f.error_for(b ~ ".windows") }}
+      <ol class="edit-option-list">
+        {%- for window in block.windows %}
+        {%- set k = loop.index0 %}
+        {%- set w = b ~ ".windows." ~ k %}
+        <li class="edit-opt" id="{{ d.field_id(w) }}">
+          {{ f.error_for(w) }}
+          <div class="edit-grid">
+            {{ f.field(w ~ ".name", "Nome da janela " ~ (k + 1), window.name, mono=True) }}
+            {{ f.field(w ~ ".label", "Rótulo da janela " ~ (k + 1), window.label, hint="Em branco, o template mostra o nome.", opt=True) }}
+            {{ date_field(w ~ ".start", "Início da janela " ~ (k + 1), window.start) }}
+            {{ date_field(w ~ ".end", "Fim da janela " ~ (k + 1), window.end) }}
+          </div>
+          <p class="btns edit-actions">{{ o.op("data-up-window:" ~ loop.index0 ~ ":" ~ k, "Subir", "arrow-up", name="Subir a janela " ~ (k + 1)) }}{{ o.op("data-down-window:" ~ loop.index0 ~ ":" ~ k, "Descer", "arrow-down", name="Descer a janela " ~ (k + 1)) }}{{ o.op("data-remove-window:" ~ loop.index0 ~ ":" ~ k, "Remover", "trash", name="Remover a janela " ~ (k + 1)) }}</p>
+        </li>
+        {%- endfor %}
+      </ol>
+      <p class="btns">{{ o.op("data-add-window:" ~ loop.index0, "Adicionar janela", "plus", name="Adicionar uma janela a " ~ label, id="op-data-" ~ loop.index0 ~ "-add-window") }}</p>
+    </fieldset>
+    {{ o.kind_select(b ~ ".sequential", d.orders, "yes" if block.sequential else "no", label="Ordem das janelas") }}
+    {%- elif block.kind == "edition" %}
+    <div class="edit-grid">
+      {{ f.field(b ~ ".edition.name", "Nome da edição", block.edition_name) }}
+      {{ date_field(b ~ ".edition.starts", "Início", block.starts, opt=True) }}
+      {{ date_field(b ~ ".edition.ends", "Fim", block.ends, opt=True) }}
+    </div>
+    {%- else %}
+    {{ f.field(b ~ ".value", "Valor (JSON)", block.value, hint="Qualquer valor JSON, que o template lê como está.", area=True, rows=6, mono=True) }}
+    {%- endif %}
+    <p class="btns edit-actions">{{ o.op("data-remove:" ~ loop.index0, "Remover o bloco", "trash", name="Remover o bloco " ~ label) }}</p>
+  </fieldset>
+  {%- else %}
+  <p class="muted">Nenhum bloco. Este formulário não tem contexto que mude com o tempo.</p>
+  {%- endfor %}
+  <p class="btns">{{ o.op("data-add", "Adicionar bloco", "plus", name="Adicionar um bloco de dados", id="op-data-add") }}</p>
+</section>
+</div>

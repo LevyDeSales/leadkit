@@ -1,0 +1,53 @@
+{% extends "admin/layout.html" %}
+{% import "admin/macros.html" as m %}
+{% set section = "forms" %}
+{% block title %}Criar um formulário{% endblock %}
+
+{#- Um campo da página, com a dica e o problema que a criação apontou nele. -#}
+{% macro field_error(name) -%}
+{%- if page.errors.get(name) %}<p class="error" id="f-{{ name }}-erro">{{ m.icon('alert-circle') }}{{ page.errors[name] }}</p>{% endif -%}
+{%- endmacro %}
+
+{% block content %}
+<nav class="crumbs" aria-label="Você está em"><a href="/admin/forms">Formulários</a><span aria-hidden="true">/</span><span>Criar</span></nav>
+
+<div class="page-head">
+  <div>
+    <h1>Criar um formulário</h1>
+    <p>O formulário novo nasce como um rascunho, a partir do modelo inicial: perguntas, prompt, modelo do plano e PDF na marca, prontos para gerar um plano. Ele só vai ao ar quando você publicar a versão 1.</p>
+  </div>
+</div>
+
+<div class="stackcol">
+<section class="box" id="criar" aria-labelledby="criar-titulo">
+  <h2 id="criar-titulo">Formulário novo</h2>
+  <form class="form-stack" method="post" action="/admin/forms/new">
+    <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+    <div class="field">
+      <label for="f-title">Título</label>
+      <p class="muted field__hint" id="f-title-dica">O que a lead lê no topo da página e no PDF. Dá para mudar depois, no rascunho.</p>
+      <input class="input" id="f-title" name="title" type="text" value="{{ page.title }}" maxlength="300" autocomplete="off" aria-describedby="f-title-dica{% if page.errors.get('title') %} f-title-erro{% endif %}"{% if page.errors.get('title') %} aria-invalid="true"{% endif %}>
+      {{ field_error("title") }}
+    </div>
+    <div class="field">
+      <label for="f-slug">Endereço público <span class="opt">(em branco, sai do título)</span></label>
+      <p class="muted field__hint" id="f-slug-dica">O formulário fica em <span class="mono">{{ page.address_prefix }}<b>endereço</b></span>. Use letras minúsculas sem acento, números e hífens. Ele muda até a primeira publicação e depois fica fixo, para os links divulgados nunca quebrarem.</p>
+      <input class="input mono" id="f-slug" name="slug" type="text" value="{{ page.slug }}" maxlength="{{ page.slug_max_length }}" autocomplete="off" autocapitalize="none" spellcheck="false" aria-describedby="f-slug-dica{% if page.errors.get('slug') %} f-slug-erro{% endif %}"{% if page.errors.get('slug') %} aria-invalid="true"{% endif %}>
+      {{ field_error("slug") }}
+    </div>
+    <div class="field">
+      <label for="f-source">Começar de</label>
+      <p class="muted field__hint" id="f-source-dica">A cópia de um formulário leva a versão publicada dele (ou o rascunho, se ele ainda não foi publicado), com a pontuação, o modelo do plano, os dados e o PDF.</p>
+      <select class="select" id="f-source" name="source" aria-describedby="f-source-dica{% if page.errors.get('source') %} f-source-erro{% endif %}"{% if page.errors.get('source') %} aria-invalid="true"{% endif %}>
+        <option value=""{% if not page.source %} selected{% endif %}>O modelo inicial, pronto para gerar um plano</option>
+        {%- for item in page.sources %}
+        <option value="{{ item.slug }}"{% if item.slug == page.source %} selected{% endif %}>Uma cópia de {{ item.title }} ({{ item.slug }})</option>
+        {%- endfor %}
+      </select>
+      {{ field_error("source") }}
+    </div>
+    <div class="btns"><button class="btn btn--primary" type="submit">Criar o rascunho</button></div>
+  </form>
+</section>
+</div>
+{% endblock %}

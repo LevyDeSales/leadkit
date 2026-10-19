@@ -1,0 +1,75 @@
+name: Novo formulário
+description: Pedir um diagnóstico novo, com plano em PDF, para um produto, uma campanha ou um tema.
+title: "[formulário] "
+labels: ["tipo/melhoria", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Um formulário é configuração: perguntas, pontuação, prompt, modelo do plano, PDF e textos do consentimento. Este pedido junta o que é preciso para montá-lo. Como ele é construído: [CONTRIBUTING, "Formulários"](https://github.com/LevyDeSales/leadkit/blob/main/CONTRIBUTING.md#formulários).
+  - type: input
+    id: nome
+    attributes:
+      label: Nome e slug sugeridos
+      placeholder: Prontidão para a Reforma / reforma-2027
+    validations:
+      required: true
+  - type: textarea
+    id: objetivo
+    attributes:
+      label: Objetivo e público
+      description: Para quem é, de qual produto ou campanha, e o que a lead deve saber ou fazer depois de ler o plano.
+    validations:
+      required: true
+  - type: textarea
+    id: perguntas
+    attributes:
+      label: Perguntas
+      description: Uma por linha, com o tipo (texto curto, texto longo, e-mail, telefone, uma opção, várias opções), as opções e se é obrigatória.
+    validations:
+      required: true
+  - type: textarea
+    id: dados_pessoais
+    attributes:
+      label: Dados de contato
+      description: Quais o formulário pede e por quê; peça só o necessário. Telefone para WhatsApp precisa de um consentimento próprio.
+    validations:
+      required: true
+  - type: textarea
+    id: pontuacao
+    attributes:
+      label: Pontuação comercial
+      description: Como as respostas definem a prioridade (P1, P2, P3) e a persona, se o formulário pontuar.
+  - type: textarea
+    id: plano
+    attributes:
+      label: O plano
+      description: As seções, as quantidades (por exemplo, 3 fases com 2 a 4 ações cada), o tom e o que o plano não pode dizer. Promessas financeiras nunca entram.
+    validations:
+      required: true
+  - type: textarea
+    id: contexto
+    attributes:
+      label: Contexto que muda com o tempo
+      description: Datas, prazos, catálogos de aulas ou materiais, edição do programa, com a fonte de cada um.
+  - type: textarea
+    id: pdf
+    attributes:
+      label: PDF e marca
+      description: Referências visuais, o que aparece na capa e o que não pode aparecer.
+  - type: textarea
+    id: consentimento
+    attributes:
+      label: Textos do consentimento
+      description: O texto do processamento e dos canais de marketing (e-mail, WhatsApp), ou "usar o padrão dos formulários atuais".
+  - type: input
+    id: prazo
+    attributes:
+      label: Quando precisa estar no ar
+  - type: checkboxes
+    id: confirmacao
+    attributes:
+      label: Confirmação
+      options:
+        - label: Este pedido não tem dados reais de leads (exemplos de respostas são fictícios).
+          required: true

@@ -1,0 +1,52 @@
+{% extends "admin/layout.html" %}
+{% import "admin/macros.html" as m %}
+{% set section = "forms" %}
+{% block title %}Comparar versões de {{ page.nav.title }}{% endblock %}
+
+{% macro choice(name, label, chosen) -%}
+<div class="field">
+  <label for="f-{{ name }}">{{ label }}</label>
+  <select class="select" id="f-{{ name }}" name="{{ name }}">
+    {%- for option in page.options %}
+    <option value="{{ option.value }}"{% if option.value == chosen %} selected{% endif %}>{{ option.label }}</option>
+    {%- endfor %}
+  </select>
+</div>
+{%- endmacro %}
+
+{% block content %}
+<nav class="crumbs" aria-label="Você está em"><a href="/admin/forms">Formulários</a><span aria-hidden="true">/</span><a href="{{ page.nav.form_url }}">{{ page.nav.title }}</a><span aria-hidden="true">/</span><span>Comparar versões</span></nav>
+
+<div class="page-head">
+  <div>
+    <h1>Comparar versões de {{ page.nav.title }}</h1>
+    <p>De {{ page.old_label }} para {{ page.new_label }}: {{ "nenhuma seção mudou" if page.changed == 0 else (page.changed ~ (" seção mudou" if page.changed == 1 else " seções mudaram")) }}.</p>
+  </div>
+</div>
+
+<div class="stackcol">
+  <form class="filters" method="get" action="{{ page.nav.compare_base_url }}" aria-label="Escolher as versões">
+    {{ choice("from", "De", page.old) }}
+    {{ choice("to", "Para", page.new) }}
+    <div class="btns"><button class="btn btn--secondary" type="submit">Comparar</button></div>
+  </form>
+
+  {% for change in page.sections if change.changed %}
+  <section class="box" id="{{ change.key }}" aria-labelledby="{{ change.key }}-titulo">
+    <h2 id="{{ change.key }}-titulo">{{ change.title }}</h2>
+    {{ m.diff(change) }}
+  </section>
+  {% endfor %}
+
+  {% if page.changed < page.sections|length %}
+  <section class="box" id="sem-mudanca" aria-labelledby="sm-titulo">
+    <h2 id="sm-titulo">Sem mudança</h2>
+    <ul class="items">
+      {%- for change in page.sections if not change.changed %}
+      <li id="{{ change.key }}">{{ change.title }}</li>
+      {%- endfor %}
+    </ul>
+  </section>
+  {% endif %}
+</div>
+{% endblock %}

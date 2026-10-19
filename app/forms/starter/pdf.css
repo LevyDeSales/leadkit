@@ -1,0 +1,187 @@
+/* PDF do modelo inicial sobre a base de impressão da marca (print.css), com a capa em vinho, o
+   ponto de partida, as fases com as ações e o fecho. Cores literais só nas regras @page: variáveis
+   CSS não valem fora dos elementos. */
+@import url("brands/leadkit/print.css");
+
+@page {
+  size: A4;
+  margin: 24mm 18mm 20mm;
+  @top-left {
+    content: element(header);
+    vertical-align: bottom;
+    padding-bottom: 4mm;
+  }
+  @bottom-left {
+    content: "Leadkit · Plano de ação";
+    width: 70%;
+    padding-top: 5pt;
+    border-top: 0.5pt solid #D9D9D9;
+    vertical-align: top;
+    font: 500 7.5pt "Source Sans Pro";
+    color: #595959;
+  }
+  @bottom-right {
+    content: "Página " counter(page) " de " counter(pages);
+    width: 30%;
+    padding-top: 5pt;
+    border-top: 0.5pt solid #D9D9D9;
+    vertical-align: top;
+    text-align: right;
+    font: 500 7.5pt "Source Sans Pro";
+    color: #595959;
+  }
+}
+
+@page cover {
+  margin: 0;
+  background: #17324d;
+  @top-left { content: none; }
+  @bottom-left { content: none; border: 0; }
+  @bottom-right { content: none; border: 0; }
+}
+
+.running-header { position: running(header); }
+.running-header img { height: 7mm; width: auto; }
+
+/* ---- capa ---- */
+.cover {
+  page: cover;
+  position: relative;
+  height: 297mm;
+  break-after: page;
+}
+.cover__logo {
+  position: absolute;
+  top: 22mm;
+  left: 20mm;
+  height: 15mm;
+  width: auto;
+}
+.cover__body {
+  position: absolute;
+  top: 78mm;
+  left: 20mm;
+  right: 24mm;
+}
+.cover h1 {
+  margin-top: 5mm;
+  font-size: 34pt;
+  font-weight: 700;
+  line-height: 1.12;
+}
+.cover .ac-rule { margin: 8mm 0 6mm; width: 24mm; }
+.cover__for { font-size: 13pt; color: #dceefa; }
+.cover__for strong { font-weight: 700; color: #FFFFFF; }
+.cover__date { margin-top: 1.5mm; font-size: 10pt; color: #F3F3F3; }
+.cover__phases {
+  position: absolute;
+  left: 20mm;
+  right: 20mm;
+  bottom: 38mm;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6mm;
+  list-style: none;
+}
+.cover__phases li {
+  padding-top: 3mm;
+  border-top: 0.8pt solid #286b92;
+  font-family: var(--font-display);
+  font-size: 12pt;
+  font-weight: 700;
+  line-height: 1.25;
+  color: #FFFFFF;
+}
+.cover__days {
+  display: block;
+  margin-bottom: 1.5mm;
+  font-family: var(--font-body);
+  font-size: 7pt;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #dceefa;
+}
+.cover__note {
+  position: absolute;
+  left: 20mm;
+  right: 20mm;
+  bottom: 18mm;
+  font-size: 7.5pt;
+  color: #F3F3F3;
+}
+
+/* ---- ponto de partida ---- */
+.start h2, .phases h2 { margin-top: 2mm; }
+.start .ac-lead { max-width: 160mm; }
+
+/* ---- fases ---- */
+.phases { margin-top: 12mm; }
+/* Fases longas podem continuar na página seguinte; o cabeçalho, as ações e a entrega não se
+   partem. */
+.phase {
+  margin-top: 7mm;
+  padding-left: 6mm;
+  border-left: 1.2pt solid #286b92;
+}
+/* O chip é inline-block no kit da marca, e `break-after` só age em caixa de bloco: sem isto o
+   chip podia ficar sozinho no pé de uma página, longe do título da fase. */
+.phase .ac-chip { display: table; }
+.phase .ac-chip, .phase h3, .phase__goal { break-after: avoid; }
+.checklist li, .phase__deliverable { break-inside: avoid; }
+.phase h3 { margin-top: 2.5mm; font-size: 14pt; }
+.phase__goal { margin-top: 1mm; color: #595959; }
+.checklist { margin-top: 3.5mm; list-style: none; }
+.checklist li {
+  margin-top: 2.5mm;
+  padding-left: 7mm;
+}
+/* Caixa em bloco inline, e não posicionada: o PDF continua na ordem de leitura do conteúdo. */
+.checklist__box {
+  display: inline-block;
+  width: 3.4mm;
+  height: 3.4mm;
+  margin-left: -7mm;
+  margin-right: 3.6mm;
+  border: 0.9pt solid #17324d;
+  border-radius: 2px;
+  vertical-align: -0.5mm;
+}
+.checklist__title { font-weight: 600; color: #0D0D0D; }
+.checklist__how { margin-top: 0.5mm; font-size: 9pt; color: #333333; }
+.phase__deliverable {
+  margin-top: 3.5mm;
+  padding: 2.5mm 4mm;
+  background: #F3F3F3;
+  border-radius: 8px;
+  font-size: 9pt;
+}
+.phase__deliverable span {
+  display: block;
+  font-size: 7pt;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #17324d;
+}
+
+/* ---- fecho ---- */
+.closing { margin-top: 10mm; break-inside: avoid; }
+.next {
+  padding: 6mm 7mm;
+  border-radius: 12px;
+}
+.next__text { margin-top: 2mm; font-size: 12.5pt; font-weight: 600; line-height: 1.45; }
+.final {
+  margin-top: 8mm;
+  font-family: var(--font-display);
+  font-size: 13pt;
+  line-height: 1.45;
+  color: #17324d;
+}
+.fineprint {
+  margin-top: 8mm;
+  font-size: 7.5pt;
+  line-height: 1.45;
+  color: #595959;
+}

@@ -1,0 +1,43 @@
+{% extends "admin/layout.html" %}
+{% import "admin/macros.html" as m %}
+{% set section = "forms" %}
+{% block title %}Importar um formulário{% endblock %}
+{% block content %}
+<nav class="crumbs" aria-label="Você está em"><a href="/admin/forms">Formulários</a><span aria-hidden="true">/</span><span>Importar</span></nav>
+
+<div class="page-head">
+  <div>
+    <h1>Importar um formulário</h1>
+    <p>Cole ou envie a definição do formulário em JSON. O app confere a definição inteira, gera o PDF de exemplo e publica a versão 1, que já recebe envios no endereço público.</p>
+  </div>
+</div>
+
+<div class="stackcol">
+{% if problems %}{{ m.problems(problems, "A definição não foi publicada") }}{% endif %}
+
+<section class="box" id="importar" aria-labelledby="imp-titulo">
+  <h2 id="imp-titulo">Definição</h2>
+  <form class="form-stack" method="post" action="/admin/forms/import" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+    <div class="field">
+      <label for="definicao">Definição em JSON <span class="opt">(colada aqui)</span></label>
+      <textarea class="input mono" id="definicao" name="definition" rows="16" spellcheck="false" autocomplete="off"{% if problems %} aria-invalid="true" aria-describedby="problemas"{% endif %}>{{ definition }}</textarea>
+    </div>
+    <div class="field">
+      <label for="arquivo">Ou o arquivo da definição <span class="opt">(.json; vale mais que o texto colado)</span></label>
+      <input class="input" id="arquivo" name="file" type="file" accept=".json,application/json">
+    </div>
+    <div class="field">
+      <label for="nota">Nota da versão <span class="opt">(opcional)</span></label>
+      <input class="input" id="nota" name="note" type="text" value="{{ note }}" maxlength="{{ note_max_length }}" autocomplete="off">
+    </div>
+    <p class="muted">O endereço público é o <span class="mono">slug</span> da definição e não muda depois. Sem destino próprio, os planos vão para o destino padrão do webhook.</p>
+    {% if contact %}
+    <div class="alert alert--warn" role="alert" id="contato">{{ m.icon('alert-triangle', 'icon--lg') }}<div><strong class="alert__title">O prompt manda ao LLM {{ contact.labels }} da lead.</strong><p>{{ "Esses dados saem" if contact.many else "Esse dado sai" }} para o provedor do LLM em todo pedido. Se o plano não precisa {{ "deles" if contact.many else "dele" }}, tire do prompt; se precisa, confirme abaixo e publique de novo.</p></div></div>
+    <label class="choice choice--check"><input type="checkbox" name="confirm_contact" value="on" required aria-describedby="contato"><span class="choice__body"><span class="choice__mark">{{ m.icon('check') }}</span><span>Confirmo que o prompt precisa {{ "desses dados" if contact.many else "desse dado" }} e que {{ "eles vão" if contact.many else "ele vai" }} ao LLM.</span></span></label>
+    {% endif %}
+    <div class="btns"><button class="btn btn--primary" type="submit">Conferir e publicar a versão 1</button></div>
+  </form>
+</section>
+</div>
+{% endblock %}

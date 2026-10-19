@@ -1,0 +1,241 @@
+{% extends "admin/layout.html" %}
+{% import "admin/macros.html" as m %}
+{% set section = "mcp" %}
+{% block title %}Configurar o MCP{% endblock %}
+{% block head %}<script src="{{ static_url('js/mcp.js') }}" defer></script>{% endblock %}
+
+{#- Um texto para copiar. O lugar da chave é um <span data-key-slot> à parte: o mcp.js troca o marcador pela chave que a pessoa colou. O botão de copiar é o do admin.js e aparece com ele; sem ele, o texto é selecionável. -#}
+{% macro codeblock(block) -%}
+<div class="code-block">
+  <div class="code-block__bar">
+    <span class="code-block__title" id="{{ block.id }}-titulo">{{ block.title }}</span>
+    <span class="copy">
+      <button class="btn btn--secondary btn--sm" type="button" data-copy="{{ block.id }}" aria-label="Copiar: {{ block.title }}" hidden>{{ m.icon('copy') }}Copiar</button>
+      <span class="copy__status" role="status" data-copy-status="{{ block.id }}"></span>
+    </span>
+  </div>
+  <pre class="code-block__pre" id="{{ block.id }}" tabindex="0" aria-labelledby="{{ block.id }}-titulo">{% for text, is_key in block.parts %}{% if is_key %}<span class="slot" data-key-slot>{{ text }}</span>{% else %}{{ text }}{% endif %}{% endfor %}</pre>
+</div>
+{%- endmacro %}
+
+{% block content %}
+<div class="page-head">
+  <h1>Configurar o MCP</h1>
+  <p>O MCP deixa o Claude, no seu computador, consultar e cuidar do Leadkit por conversa: ver os pedidos que falharam, revisar um rascunho, conferir os destinos. Em quatro passos você deixa tudo pronto, e o que precisa fazer fora daqui é copiar e colar.</p>
+  <p class="muted">O que cada ferramenta faz, quais pedem a sua confirmação e como o dado das leads é protegido estão na seção MCP da <a href="{{ page.reference_url }}">referência da API</a>.</p>
+</div>
+
+<div class="guide">
+
+<section class="box step" id="passo-1" aria-labelledby="p1-titulo">
+  <h2 id="p1-titulo"><span class="step__n" aria-hidden="true">1</span><span class="sr-only">Passo 1: </span>Escolha a chave</h2>
+  <p>A chave é o que o Claude usa para falar com o admin, e o papel dela decide o que ele pode fazer. Escolha uma que você já tem ou crie uma nova.</p>
+
+  {% if page.new_key %}
+  {#- A única vez em que a chave aparece: a página não fica em cache (no-store), a criação não redireciona e recarregar não a mostra de novo. -#}
+  <div class="alert alert--ok" role="status" id="nova-chave" aria-labelledby="nc-titulo">{{ m.icon('check', 'icon--lg') }}<div>
+    <strong class="alert__title" id="nc-titulo">Chave «{{ page.new_key.name }}» criada: ela já está nos comandos do passo 3</strong>
+    <p>Copie-a agora e guarde num cofre de senhas: ela não aparece de novo, e não há como recuperá-la. Se perder, revogue esta chave e crie outra.</p>
+    <span class="copy">
+      <span id="chave-nova-rotulo" class="sr-only">Chave {{ page.new_key.role_label|lower }}</span>
+      <code class="mono" id="chave-nova" tabindex="0" aria-labelledby="chave-nova-rotulo">{{ page.new_key.key }}</code>
+      <button class="btn btn--secondary btn--sm" type="button" data-copy="chave-nova" aria-label="Copiar a chave" hidden>{{ m.icon('copy') }}Copiar</button>
+      <span class="copy__status" role="status" data-copy-status="chave-nova"></span>
+    </span>
+  </div></div>
+  {% endif %}
+
+  {% if page.options %}
+  <div class="field">
+    <label for="m-chave">Chave que o Claude vai usar</label>
+    {#- O select pertence ao formulário do passo 3 (atributo form): mudar a chave refaz o passo 3, que depende do papel dela. -#}
+    <select class="input" id="m-chave" name="key" form="mcp-form" aria-describedby="m-chave-ajuda" hx-get="{{ page.action }}" hx-include="#mcp-form" hx-trigger="change" hx-target="#passo-3" hx-select="#passo-3" hx-swap="outerHTML" hx-sync="#mcp-form:replace">
+      <option value="">Escolha uma chave…</option>
+      {%- for option in page.options %}
+      <option value="{{ option.key_id }}" data-name="{{ option.name }}"{% if option.selected %} selected{% endif %}>{{ option.label }}</option>
+      {%- endfor %}
+    </select>
+    <p class="muted" id="m-chave-ajuda"><strong>Leitura</strong> só consulta; <strong>Total</strong> faz tudo o que o admin faz. Para começar, prefira uma de leitura. Aparecem só as chaves que valem hoje, com o nome e o papel: o segredo de uma chave que já existe não pode ser mostrado de novo.</p>
+    <noscript><div class="btns"><button class="btn btn--secondary btn--sm" type="submit" form="mcp-form">Usar esta chave</button></div></noscript>
+  </div>
+
+  {#- A chave guardada, colada aqui, enche os comandos do passo 3 e vale para o «Conferir». Só existe com JavaScript e nunca vai a um formulário: fica fora de qualquer <form>, para o navegador nem oferecer guardá-la como senha. -#}
+  <div class="field" data-needs-js hidden>
+    <label for="m-segredo">Cole a chave aqui <span class="opt">(opcional)</span></label>
+    <input class="input mono" id="m-segredo" type="password" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="gp_…" aria-describedby="m-segredo-ajuda m-segredo-estado">
+    <p class="muted" id="m-segredo-ajuda">Se você guardou a chave, cole-a aqui e os comandos do passo 3 já saem com ela. Ela fica só nesta página e some quando você recarrega; só vai ao admin se você usar «Conferir», no passo 4.</p>
+    <p class="field__state" id="m-segredo-estado" role="status" aria-live="polite"></p>
+  </div>
+  {% else %}
+  <div class="alert alert--warn" role="status">{{ m.icon('key', 'icon--lg') }}<div><strong class="alert__title">Você ainda não tem nenhuma chave que vale</strong><p>Crie a primeira logo abaixo. Para começar, prefira uma chave de leitura.</p></div></div>
+  {% endif %}
+
+  <details class="acc" id="criar"{% if page.errors or not page.options %} open{% endif %}>
+    <summary>{% if page.options %}Prefiro criar uma chave nova{% else %}Criar a primeira chave{% endif %} {{ m.icon('chevron-down') }}</summary>
+    {#- Com HTMX, o botão trava enquanto o pedido vai e um segundo clique é descartado: a chave só aparece na resposta, e um segundo POST a perderia. Sem JavaScript, é um POST comum. O hx-include leva junto a escolha do passo 3, para a resposta não a perder. -#}
+    <form class="form-stack create" method="post" action="{{ page.create_action }}" hx-post="{{ page.create_action }}" hx-include="#mcp-form" hx-target="#conteudo" hx-select="#conteudo" hx-swap="outerHTML show:window:top" hx-sync="this:drop" hx-disabled-elt="find button">
+      <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+      <div class="field">
+        <label for="k-name">Nome da chave</label>
+        <input class="input mono" id="k-name" name="name" type="text" value="{{ page.name }}" maxlength="{{ page.name_max_length }}" minlength="3" pattern="(?=.*[a-z0-9])[a-z0-9\-]{3,60}" required autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="claude-desktop" aria-describedby="k-name-ajuda{% if page.errors.get('name') %} k-name-erro{% endif %}"{% if page.errors.get("name") %} aria-invalid="true"{% endif %}>
+        <p class="muted" id="k-name-ajuda">Use {{ page.name_hint }}. O nome não muda e não se reaproveita: a auditoria cita a chave por ele.</p>
+        {% if page.errors.get("name") %}<p class="error" id="k-name-erro">{{ m.icon('alert-circle') }}{{ page.errors["name"] }}</p>{% endif %}
+      </div>
+      <fieldset class="field">
+        <legend>Papel</legend>
+        <div class="choices">
+          {%- for option in page.roles %}
+          <label class="choice choice--radio"><input type="radio" name="role" value="{{ option.value }}"{% if option.value == page.role %} checked{% endif %}{% if page.errors.get("role") %} aria-invalid="true" aria-describedby="k-role-erro"{% endif %}><span class="choice__body"><span class="choice__mark">{{ m.icon('check') }}</span><span class="choice__text"><strong>{{ option.label }}</strong><span class="muted">{{ option.help }}</span></span></span></label>
+          {%- endfor %}
+        </div>
+        {% if page.errors.get("role") %}<p class="error" id="k-role-erro">{{ m.icon('alert-circle') }}{{ page.errors["role"] }}</p>{% endif %}
+      </fieldset>
+      <div class="field">
+        <label for="k-validity">Validade em dias <span class="opt">(opcional)</span></label>
+        <input class="input" id="k-validity" name="validity_days" type="number" inputmode="numeric" min="1" max="{{ page.max_validity_days }}" step="1" value="{{ page.validity_days }}" aria-describedby="k-validity-ajuda{% if page.errors.get('validity_days') %} k-validity-erro{% endif %}"{% if page.errors.get("validity_days") %} aria-invalid="true"{% endif %}>
+        <p class="muted" id="k-validity-ajuda">Sugerimos {{ page.default_validity_days }} dias: uma chave esquecida num arquivo deixa de valer sozinha. Apague o número para uma chave que não vence.</p>
+        {% if page.errors.get("validity_days") %}<p class="error" id="k-validity-erro">{{ m.icon('alert-circle') }}{{ page.errors["validity_days"] }}</p>{% endif %}
+      </div>
+      <div class="btns"><button class="btn btn--primary" type="submit">{{ m.icon('plus') }}Criar a chave</button></div>
+    </form>
+  </details>
+  <p class="muted step__aside">Para ver, revogar ou criar chaves com mais opções, use <a href="{{ page.keys_url }}">Chaves de API</a>.</p>
+</section>
+
+<section class="box step" id="passo-2" aria-labelledby="p2-titulo">
+  <h2 id="p2-titulo"><span class="step__n" aria-hidden="true">2</span><span class="sr-only">Passo 2: </span>Instale o programa no seu computador</h2>
+  <p><strong>Só na primeira vez.</strong> Se o MCP já está instalado, vá direto para o passo 3.</p>
+  <p>Você precisa do <a href="https://git-scm.com/downloads">Git</a> e do <a href="https://docs.astral.sh/uv/getting-started/installation/">uv</a> instalados. Abra o Terminal e rode:</p>
+  {{ codeblock(page.install[0]) }}
+  <p>O programa fica ligado à pasta <span class="mono">leadkit</span> que o comando acima criou: <strong>deixe essa pasta onde está e no branch <span class="mono">main</span></strong>. Se você a apagar, mover ou trocar o branch dela, o MCP quebra. Para saber o caminho do Python dele, rode a linha abaixo e <strong>guarde o que ela mostrar</strong>: você vai colá-lo no passo 3.</p>
+  {{ codeblock(page.install[1]) }}
+  <p class="muted">Para atualizar mais tarde, rode <span class="mono">git pull</span> na pasta <span class="mono">leadkit</span> e repita a linha com <span class="mono">uv sync</span>. No Windows, o caminho do Python fica em <span class="mono">%USERPROFILE%\.venvs\gerador-mcp\Scripts\python.exe</span>.</p>
+</section>
+
+<section class="box step" id="passo-3" aria-labelledby="p3-titulo">
+  <h2 id="p3-titulo"><span class="step__n" aria-hidden="true">3</span><span class="sr-only">Passo 3: </span>Cole a configuração no Claude</h2>
+  {#- Mudar um campo daqui pede a tela de novo ao servidor, que refaz só os comandos (#configuracao): os campos não são trocados, então o que a pessoa está digitando não se perde. Mudar a chave do passo 1 refaz o passo inteiro (as opções dependem do papel dela); o hx-sync deixa só o último pedido valer. Sem JavaScript, o botão «Atualizar» faz o mesmo com um GET comum. A query string nunca leva o segredo da chave. -#}
+  <form id="mcp-form" class="form-stack" method="get" action="{{ page.action }}" hx-get="{{ page.action }}" hx-trigger="change" hx-target="#configuracao" hx-select="#configuracao" hx-swap="outerHTML" hx-sync="this:replace">
+    <fieldset class="field">
+      <legend>Qual Claude você usa?</legend>
+      <div class="choices">
+        {%- for client in page.clients %}
+        <label class="choice choice--radio"><input type="radio" name="client" value="{{ client.value }}"{% if client.value == page.setup.client %} checked{% endif %}><span class="choice__body"><span class="choice__mark">{{ m.icon('check') }}</span><span class="choice__text"><strong>{{ client.label }}</strong><span class="muted">{{ client.help }}</span></span></span></label>
+        {%- endfor %}
+      </div>
+    </fieldset>
+
+    <div class="field">
+      <label for="m-python">Caminho do Python do MCP</label>
+      <input class="input mono" id="m-python" name="python" type="text" value="{{ page.setup.python }}" autocomplete="off" autocapitalize="none" spellcheck="false" aria-describedby="m-python-ajuda"{% if page.problems.get("python") %} aria-invalid="true"{% endif %}>
+      <p class="muted" id="m-python-ajuda">Cole o que o passo 2 mostrou: qualquer caminho serve (um venv em outro disco, por exemplo). No Claude Desktop precisa ser completo, começando por <span class="mono">/</span> (ou pela letra do disco, no Windows).</p>
+    </div>
+
+    <details class="acc"{% if page.setup.lead_data or page.setup.upload_dir or page.setup.download_dir or page.problems.get("upload_dir") or page.problems.get("download_dir") %} open{% endif %}>
+      <summary><span>Opções avançadas <span class="opt">(quase ninguém precisa)</span></span> {{ m.icon('chevron-down') }}</summary>
+      <div class="form-stack advanced">
+        <div class="field">
+          <label class="choice choice--check"><input type="checkbox" id="m-lead" name="lead_data" value="1"{% if page.setup.lead_data %} checked{% endif %}{% if not page.lead_data_available %} disabled{% endif %} aria-describedby="m-lead-ajuda"><span class="choice__body"><span class="choice__mark">{{ m.icon('check') }}</span><span class="choice__text"><strong>Liberar os dados das leads para o Claude</strong><span class="muted"><span class="mono">GERADOR_MCP_LEAD_DATA</span>, desligado por padrão</span></span></span></label>
+          <div class="alert alert--warn" id="m-lead-ajuda">{{ m.icon('alert-triangle') }}<div><p>{{ page.lead_data_help }}</p>{% if not page.lead_data_available %}<p><strong>{{ page.lead_data_needs_total }}</strong></p>{% endif %}</div></div>
+        </div>
+        <div class="field">
+          <label for="m-upload">Pasta para enviar imagens <span class="opt">(opcional)</span></label>
+          <input class="input mono" id="m-upload" name="upload_dir" type="text" value="{{ page.setup.upload_dir }}" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="/Users/voce/imagens-para-o-gerador" aria-describedby="m-upload-ajuda"{% if page.problems.get("upload_dir") %} aria-invalid="true"{% endif %}>
+          <div class="alert alert--warn" id="m-upload-ajuda">{{ m.icon('alert-triangle') }}<div><p>{{ page.upload_help }}</p></div></div>
+        </div>
+        <div class="field">
+          <label for="m-download">Pasta para os arquivos baixados <span class="opt">(opcional)</span></label>
+          <input class="input mono" id="m-download" name="download_dir" type="text" value="{{ page.setup.download_dir }}" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="/Users/voce/Downloads/gerador" aria-describedby="m-download-ajuda"{% if page.problems.get("download_dir") %} aria-invalid="true"{% endif %}>
+          <p class="muted" id="m-download-ajuda">{{ page.download_help }}</p>
+        </div>
+      </div>
+    </details>
+    <noscript><div class="btns"><button class="btn btn--secondary" type="submit">Atualizar os comandos</button></div></noscript>
+  </form>
+
+  <div class="config" id="configuracao" data-problems="{{ page.problems.keys()|join(' ') }}">
+    {% if page.problems %}
+    <div class="alert alert--error" role="alert">{{ m.icon('alert-circle', 'icon--lg') }}<div><strong class="alert__title">Confira {{ "o campo" if page.problems|length == 1 else "os campos" }} acima</strong>
+      <ul class="items">
+        {%- for name, problem in page.problems.items() %}
+        <li id="problema-{{ name }}"><strong>{{ page.problem_labels[name] }}:</strong> {{ problem }}</li>
+        {%- endfor %}
+      </ul>
+      <p>O que está com problema fica de fora do comando.</p>
+    </div></div>
+    {% endif %}
+    {% if page.config_problem %}
+    <div class="alert alert--error" role="alert">{{ m.icon('alert-circle', 'icon--lg') }}<div><strong class="alert__title">O endereço deste admin não serve ao MCP</strong><p>{{ page.config_problem }} O endereço vem da configuração <span class="mono">PUBLIC_BASE_URL</span> do servidor.</p></div></div>
+    {% endif %}
+    {% if page.python_is_placeholder %}
+    <div class="alert alert--warn" role="status">{{ m.icon('alert-triangle', 'icon--lg') }}<div><strong class="alert__title">Falta trocar «voce» pelo seu usuário</strong><p>O caminho do Python ainda é o de exemplo. Cole o que o passo 2 mostrou no campo acima, e o texto abaixo se refaz.</p></div></div>
+    {% endif %}
+
+    <p class="slot-legend">O trecho <span class="slot">{{ page.placeholder }}</span> é o lugar da chave.
+      {%- if page.key_slot_filled %} Aqui ele já está preenchido com a chave que você acabou de criar.
+      {%- else %} Troque-o pela chave que você guardou<span data-needs-js hidden>, ou cole a chave no passo 1 e ele se preenche sozinho</span>.
+      {%- endif %}</p>
+
+    {% if page.setup.client == "desktop" %}
+    <ol class="howto">
+      <li>No Claude Desktop, abra <strong>Configurações</strong>, <strong>Desenvolvedor</strong> e <strong>Editar configuração</strong>: isso mostra o arquivo <span class="mono">claude_desktop_config.json</span>. No macOS ele fica em <span class="mono">~/Library/Application Support/Claude/</span>; no Windows, em <span class="mono">%APPDATA%\Claude\</span>.</li>
+      <li>Cole o conteúdo abaixo nesse arquivo e salve.</li>
+      <li>Feche o Claude Desktop por completo e abra de novo.</li>
+    </ol>
+    {% for block in page.blocks %}{{ codeblock(block) }}{% endfor %}
+    {% if page.entry_block %}
+    <details class="acc">
+      <summary>O arquivo já tem outros servidores? {{ m.icon('chevron-down') }}</summary>
+      <div class="form-stack">
+        <p>Não troque o arquivo todo. Acrescente só este trecho dentro de <span class="mono">"mcpServers": {…}</span>, com uma vírgula separando um servidor do outro.</p>
+        {{ codeblock(page.entry_block) }}
+      </div>
+    </details>
+    {% endif %}
+    <div class="alert alert--warn">{{ m.icon('lock') }}<div><p>O arquivo guarda a chave em texto simples. Deixe-o só para o seu usuário (no macOS e no Linux, <span class="mono">chmod 600</span>) e fora de pastas sincronizadas, como iCloud e Dropbox. Para explorar, prefira uma chave de leitura.</p></div></div>
+    {% else %}
+    <ol class="howto">
+      <li>Abra o Terminal e cole o comando abaixo.</li>
+      <li>Abra o Claude Code e digite <span class="mono">/mcp</span>: o servidor <span class="mono">leadkit</span> deve aparecer como conectado.</li>
+    </ol>
+    {% for block in page.blocks %}{{ codeblock(block) }}{% endfor %}
+    <p class="muted">O comando vale em qualquer pasta (<span class="mono">--scope user</span>). Ele deixa a chave no histórico do Terminal; se isso importa para você, use a versão abaixo.</p>
+    {% if page.safe_block %}
+    <details class="acc">
+      <summary>Pedir a chave no Terminal, sem deixá-la no histórico {{ m.icon('chevron-down') }}</summary>
+      <div class="form-stack">
+        <p>O Terminal pergunta a chave sem mostrá-la: cole e tecle Enter. Funciona no macOS, no Linux e no WSL; no PowerShell, use o comando de cima.</p>
+        {{ codeblock(page.safe_block) }}
+      </div>
+    </details>
+    {% endif %}
+    {% endif %}
+  </div>
+</section>
+
+<section class="box step" id="passo-4" aria-labelledby="p4-titulo">
+  <h2 id="p4-titulo"><span class="step__n" aria-hidden="true">4</span><span class="sr-only">Passo 4: </span>Confira se deu certo</h2>
+  {#- O «Conferir» chama GET /admin/api/v1/me do próprio navegador, com a chave do passo 1 no cabeçalho Authorization. A chave não é guardada nem sai deste admin. -#}
+  <div class="form-stack" id="conferir" data-needs-js hidden data-me-url="{{ page.me_url }}"{% if page.counts %} data-tools-leitura="{{ page.counts.leitura }}" data-tools-total="{{ page.counts.total }}" data-tools-total-lead="{{ page.counts.total_with_lead_data }}"{% endif %}>
+    <p>Confere a chave do passo 1 (a que você colou ou acabou de criar) neste admin: mostra o papel dela e quantas ferramentas o Claude vai ter. Nada é guardado. Várias tentativas com chave errada bloqueiam o seu acesso à API por alguns minutos.</p>
+    <div class="btns"><button class="btn btn--primary" type="button" id="conferir-botao">{{ m.icon('check') }}Conferir a chave</button></div>
+    <div id="conferir-resultado" role="status" aria-live="polite"></div>
+  </div>
+  <noscript><p class="muted">O botão de conferir precisa de JavaScript. Confira pelo próprio Claude, logo abaixo.</p></noscript>
+
+  <h3>Conferir no próprio Claude</h3>
+  <ul class="items">
+    <li><strong>Claude Desktop:</strong> depois de fechar e abrir o aplicativo, o servidor <span class="mono">leadkit</span> aparece na lista de ferramentas da caixa de mensagem. Peça: «Quem está chamando a API do Leadkit?». Se não aparecer, o registro do que aconteceu fica em <span class="mono">{{ page.desktop_log }}</span> (no macOS).</li>
+    <li><strong>Claude Code:</strong> digite <span class="mono">/mcp</span>; o servidor deve aparecer como conectado.</li>
+  </ul>
+  <details class="acc">
+    <summary>Testar o programa pelo Terminal, sem o Claude {{ m.icon('chevron-down') }}</summary>
+    <div class="form-stack">
+      <p>O Terminal pede a chave sem mostrá-la. O programa diz, no fim, quantas ferramentas a chave dá, e espera o Claude: tecle Ctrl-D para sair.</p>
+      {{ codeblock(page.test_block) }}
+    </div>
+  </details>
+</section>
+
+</div>
+{% endblock %}

@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow, noarchive">
+  <title>Referência da API de admin</title>
+</head>
+<body>
+  {#- Sem script embutido: este elemento só leva atributos, que o Scalar lê (o endereço do openapi.json e a configuração que desliga proxy, telemetria e fontes de fora). O bundle vem de static/vendor, da própria origem. -#}
+  <script id="api-reference" data-url="{{ url }}" data-configuration='{{ configuration|tojson }}'></script>
+  <script src="{{ static_url(bundle) }}"></script>
+  <noscript>
+    <p>A referência da API precisa de JavaScript. O contrato em si, em JSON, está em <a href="{{ url }}">{{ url }}</a>.</p>
+    <p><a href="/admin/api-keys">Voltar às chaves de API</a></p>
+  </noscript>
+</body>
+</html>

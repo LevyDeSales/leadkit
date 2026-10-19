@@ -1,0 +1,228 @@
+name: Tests
+
+# Todo PR/push produz app-tests e ci-ready conclusivos, inclusive mudanças só de documentação.
+# O workflow reutilizável é local: imagem, Swarm e testes recebem o mesmo SHA, sem duplicar pytest.
+on:
+  pull_request:
+  push:
+    branches: [main, develop]
+  workflow_dispatch:
+    inputs:
+      bootstrap_release:
+        description: Permitir somente o planejamento da primeira versão sem tags
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  app-tests:
+    runs-on: ubuntu-latest
+    # A suíte leva ~20 min (2 vCPU). Sem limite, um teste travado prende o runner (cobrado) por até 6 h.
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: leadkit
+          POSTGRES_PASSWORD: ci-only
+          POSTGRES_DB: leadkit_app_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U leadkit -d leadkit_app_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql+psycopg://leadkit:ci-only@localhost:5432/leadkit_app_test
+      # O uv usa o Python 3.11 do setup-python e nunca baixa outro.
+      UV_PYTHON: "3.11"
+      UV_PYTHON_DOWNLOADS: never
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install WeasyPrint system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libpango-1.0-0 libpangoft2-1.0-0 libharfbuzz-subset0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # Só os testes usam o node: ele roda o avaliador de condições do navegador
+      # (tests_app/test_conditions_js.py). O app e a imagem não têm node.
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # A versão do uv é a mesma do Dockerfile. Como atualizar: CONTRIBUTING.md, "Dependências".
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.3.0
+        with:
+          version: "0.13.0"
+          enable-cache: true
+
+      # As versões vêm do uv.lock, com os hashes conferidos. `--locked` falha se o uv.lock não
+      # acompanha o pyproject.toml. O extra `mcp` (o SDK do MCP de admin) só entra aqui, para os
+      # testes dele rodarem: a imagem do deploy (Dockerfile) não instala extra nenhum.
+      - name: Install package
+        run: uv sync --locked --extra dev --extra mcp
+
+      - name: Lint
+        run: uv run --no-sync ruff check app tests_app
+
+      - name: Check formatting
+        run: uv run --no-sync ruff format --check app tests_app
+
+      # Em paralelo (pytest-xdist), um worker por CPU. Cada um usa o seu banco (leadkit_app_gw0_test...),
+      # que o conftest cria: o usuário `leadkit` do serviço é superusuário. CONTRIBUTING.md, "Testes e lint".
+      - name: Run app tests
+        run: uv run --no-sync python -m pytest -q -n auto --dist loadgroup
+
+      # Instala o wheel em ambiente próprio e executa fora do checkout, com imports isolados.
+      - name: Build and verify the installed wheel
+        run: |
+          uv build --wheel --out-dir "$RUNNER_TEMP/wheels"
+          uv export --locked --extra mcp --no-dev --no-emit-project --output-file "$RUNNER_TEMP/wheel-requirements.txt"
+          uv venv --python 3.11 "$RUNNER_TEMP/wheel-env"
+          uv pip sync --python "$RUNNER_TEMP/wheel-env/bin/python" "$RUNNER_TEMP/wheel-requirements.txt"
+          uv pip install --python "$RUNNER_TEMP/wheel-env/bin/python" --no-deps --no-editable "$RUNNER_TEMP"/wheels/leadkit-*.whl
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/wheel-env/bin/python" -I "$GITHUB_WORKSPACE/tests_app/test_packaging.py" --installed
+
+  packaging:
+    permissions:
+      contents: read
+      pull-requests: read
+    uses: ./.github/workflows/deploy-image.yml
+
+  ci-ready:
+    if: always()
+    needs: [app-tests, packaging]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every validation of this commit
+        run: |
+          test "${{ needs.app-tests.result }}" = success
+          test "${{ needs.packaging.result }}" = success
+
+  # O planejamento manual nunca publica; o job publish separado exige opções explícitas do repo.
+  release-plan:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    needs: ci-ready
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Pick the version
+        env:
+          BOOTSTRAP_RELEASE: ${{ inputs.bootstrap_release }}
+          READ_TOKEN: ${{ github.token }}
+        run: |
+          # Autenticação só em memória, com token de leitura e sem persistir credencial no checkout.
+          auth=$(printf 'x-access-token:%s' "$READ_TOKEN" | base64 -w0)
+          refs=$(GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="http.$GITHUB_SERVER_URL/.extraheader" GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth" git ls-remote --tags origin)
+          unset auth READ_TOKEN
+          options=()
+          if [ "$BOOTSTRAP_RELEASE" = true ]; then options+=(--allow-bootstrap); fi
+          python3 -m app.version --sha "$GITHUB_SHA" "${options[@]}" <<< "$refs"
+
+  publish:
+    # Desabilitado por padrão: somente a opção explícita do repositório permite publicar.
+    # Nunca roda em PR/fork, e todos os gates locais pertencem ao mesmo SHA deste push.
+    if: >-
+      github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+      github.repository == 'LevyDeSales/leadkit' && github.event.repository.fork == false &&
+      vars.LEADKIT_PUBLISH_ENABLED == 'true' &&
+      needs.app-tests.result == 'success' && needs.packaging.result == 'success' &&
+      needs.ci-ready.result == 'success'
+    needs: [app-tests, packaging, ci-ready]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write  # a tag e o Release da versão
+      packages: write
+    concurrency:
+      group: publish-leadkit
+      cancel-in-progress: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Pick the version
+        env:
+          READ_TOKEN: ${{ github.token }}
+          BOOTSTRAP_RELEASE: ${{ vars.LEADKIT_RELEASE_BOOTSTRAP }}
+        run: |
+          auth=$(printf 'x-access-token:%s' "$READ_TOKEN" | base64 -w0)
+          refs=$(GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="http.$GITHUB_SERVER_URL/.extraheader" GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth" git ls-remote --tags origin)
+          unset auth READ_TOKEN
+          options=()
+          if [ "$BOOTSTRAP_RELEASE" = true ]; then options+=(--allow-bootstrap); fi
+          release=$(python3 -m app.version --sha "$GITHUB_SHA" "${options[@]}" <<< "$refs")
+          printf '%s\n' "$release" >> "$GITHUB_ENV"
+
+      # Sem o cache de camadas dos outros jobs, de propósito: a imagem de produção sai sempre de uma
+      # construção limpa (o runner é novo a cada execução), para o apt buscar os patches de
+      # segurança do Debian em vez de reaproveitar uma camada velha.
+      - name: Build the image
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          echo "IMAGE=$image" >> "$GITHUB_ENV"
+          docker build --pull --no-cache \
+            --build-arg "APP_VERSION=$APP_VERSION" --build-arg "APP_BUILD_DATE=$APP_BUILD_DATE" \
+            --label "org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+            --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+            --label "org.opencontainers.image.version=$APP_VERSION" \
+            --tag "$image:$GITHUB_SHA" --tag "$image:main" --tag "$image:$APP_VERSION" .
+
+      # A tag nasce aqui, no commit publicado (`--target`), antes de o primeiro push ao GHCR, e as
+      # notas listam os PRs desde a versão anterior. Um Release que já existe (a rodada anterior
+      # deste commit) não se cria de novo.
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="v$APP_VERSION"
+          gh release view "$tag" > /dev/null 2>&1 \
+            || gh release create "$tag" --target "$GITHUB_SHA" --title "$tag" --generate-notes
+          echo "versão: $tag" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Push to GHCR
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+        run: |
+          echo "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          docker push "$IMAGE:$GITHUB_SHA"
+          docker push "$IMAGE:$APP_VERSION"
+          # Um push mais antigo que termina depois de um mais novo não faz `main` voltar.
+          auth=$(printf 'x-access-token:%s' "$GHCR_TOKEN" | base64 -w0)
+          remote_main=$(GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="http.$GITHUB_SERVER_URL/.extraheader" GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth" git ls-remote origin refs/heads/main)
+          unset auth
+          main_sha=${remote_main%%$'\t'*}
+          if [ "$main_sha" = "$GITHUB_SHA" ]; then
+            docker push "$IMAGE:main"
+            echo "publicada: $IMAGE:$APP_VERSION ($GITHUB_SHA) e :main" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "publicada: $IMAGE:$APP_VERSION ($GITHUB_SHA); main já está num commit mais novo" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          docker logout ghcr.io

@@ -1,0 +1,67 @@
+{% extends "admin/layout.html" %}
+{% import "admin/macros.html" as m %}
+{% set section = "forms" %}
+{% set test = page.test %}
+{% block title %}Teste do rascunho de {{ page.nav.title }}{% endblock %}
+{% block head %}
+{%- if not test.finished %}
+{#- Sem JavaScript, a página recarrega até o teste terminar; com ele, o HTMX troca só o estado. #}
+<noscript><meta http-equiv="refresh" content="{{ page.refresh_seconds }}"></noscript>
+{%- endif %}
+{% endblock %}
+
+{% block content %}
+<nav class="crumbs" aria-label="Você está em"><a href="/admin/forms">Formulários</a><span aria-hidden="true">/</span><a href="{{ page.nav.form_url }}">{{ page.nav.title }}</a><span aria-hidden="true">/</span><a href="{{ page.nav.draft_url }}">Rascunho</a><span aria-hidden="true">/</span><a href="{{ page.nav.tests_url }}">Teste</a><span aria-hidden="true">/</span><span>Resultado</span></nav>
+
+<header class="detail-head">
+  <div>
+    <h1>Teste do rascunho de {{ page.nav.title }}</h1>
+    <p class="meta"><span>{{ test.started_by }} · {{ m.when(test.started) }}</span><span>{{ "data simulada: " ~ test.simulated if test.simulated else "na data de hoje" }}</span></p>
+  </div>
+  <div class="badges">{{ m.badge(test.status) }}</div>
+</header>
+
+<div class="stackcol">
+  <section class="box" id="resultado" aria-labelledby="res-titulo">
+    <h2 id="res-titulo">{{ test.headline }}</h2>
+    {% if not test.finished %}
+    {% include "admin/_draft_test_status.html" %}
+    {% else %}
+    {% if test.detail %}<p>{{ test.detail }}</p>{% endif %}
+    {% if test.facts %}
+    <dl class="kv">{% for label, value in test.facts %}<dt>{{ label }}</dt><dd>{{ value }}</dd>{% endfor %}</dl>
+    {% endif %}
+    {% if test.repair_reasons %}
+    <p class="muted footnote">Motivos do reparo (caminho e regra): {% for reason in test.repair_reasons %}<span class="mono">{{ reason }}</span>{{ ", " if not loop.last }}{% endfor %}</p>
+    {% endif %}
+    {% if test.gate %}<p class="footnote">{{ test.gate }}</p>{% endif %}
+    {% if test.pdf_url %}
+    <p class="btns footnote"><a class="btn btn--secondary" href="{{ test.pdf_url }}" download>{{ m.icon('download') }}Baixar o PDF do teste</a></p>
+    {% endif %}
+    {% endif %}
+  </section>
+
+  {% if test.plan %}
+  <section class="box" id="plano" aria-labelledby="plano-titulo">
+    <h2 id="plano-titulo">Plano</h2>
+    <p class="muted">Como o LLM escreveu e o servidor validou, com os campos internos.</p>
+    <pre class="json" tabindex="0" aria-label="Plano do teste (somente leitura)">{{ test.plan }}</pre>
+  </section>
+  {% endif %}
+
+  <section class="box" id="enviado" aria-labelledby="env-titulo">
+    <h2 id="env-titulo">O que foi ao LLM</h2>
+    <details class="acc"><summary>Instruções {{ m.icon('chevron-down') }}</summary>
+      <pre class="source" tabindex="0" aria-label="Instruções do teste (somente leitura)">{{ test.instructions }}</pre>
+    </details>
+    <details class="acc"><summary>Prompt {{ m.icon('chevron-down') }}</summary>
+      <pre class="source" tabindex="0" aria-label="Prompt do teste (somente leitura)">{{ test.prompt }}</pre>
+    </details>
+    <details class="acc"><summary>Respostas {{ m.icon('chevron-down') }}</summary>
+      <pre class="source" tabindex="0" aria-label="Respostas do teste (somente leitura)">{{ test.answers }}</pre>
+    </details>
+  </section>
+
+  <p class="btns"><a class="btn btn--secondary" href="{{ page.nav.tests_url }}">Testar de novo</a><a class="btn btn--ghost" href="{{ page.nav.draft_url }}">Voltar ao rascunho</a></p>
+</div>
+{% endblock %}

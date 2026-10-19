@@ -1,0 +1,72 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "leadkit"
+version = "0.1.0"
+description = "Gera planos de ação personalizados em PDF a partir de formulários de diagnóstico (FastAPI, Hatchet e Postgres)."
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
+authors = [{name = "LevyDeSales"}]
+dependencies = [
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.30",
+  "pydantic>=2.8",
+  "pydantic-settings>=2.4",
+  "sqlalchemy>=2.0",
+  "alembic>=1.13",
+  "psycopg[binary]>=3.2",
+  "httpx>=0.27",
+  "python-multipart>=0.0.9",
+  "boto3>=1.34",
+  "openai>=3.26,<4",
+  "hatchet-sdk==1.41.1",
+  "jinja2>=3.1",
+  "weasyprint>=70,<71",
+  "pillow>=12",
+  "itsdangerous>=2.2",
+  "argon2-cffi>=23.1",
+  "cryptography>=42",
+  "regex>=2025.9",
+  "jsonpatch>=1.33,<2",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "pytest-xdist>=3.6",
+  "ruff>=0.5",
+  "pypdf>=5",
+  "moto[s3]>=5",
+]
+# O SDK do MCP de admin (`python -m app.admin_mcp`). Fica fora das dependências do app de propósito: o
+# `uv sync` da imagem não instala extras, então o servidor da API não carrega o SDK; quem roda o MCP
+# (a máquina da operadora) o instala com `uv sync --extra mcp`. Versão exata: o SDK muda a API entre
+# versões menores, e subir é uma decisão (CONTRIBUTING.md, "Dependências").
+mcp = [
+  "mcp==1.30.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["app", "app.*"]
+
+[tool.setuptools.package-data]
+app = ["alembic.ini", "migrations/script.py.mako", "migrations/**/*.json", "forms/**/*.json", "forms/**/*.html", "forms/**/*.css", "forms/**/*.md", "assets/**/*", "web/static/**/*", "web/templates/**/*", "admin/templates/**/*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.pytest.ini_options]
+testpaths = ["tests_app"]
+pythonpath = ["."]
+markers = [
+  "e2e: exige Hatchet de verdade (HATCHET_E2E=1 e HATCHET_CLIENT_TOKEN)",
+  "xdist_group(name): com `pytest -n N --dist loadgroup`, os testes do mesmo grupo rodam em série no mesmo worker",
+]
+# Um teste parado há 2 min (um lock que nunca solta, por exemplo) imprime a pilha de cada thread:
+# o log do CI mostra onde travou, em vez de só o tempo do job acabar. Os testes levam segundos.
+faulthandler_timeout = 120
+

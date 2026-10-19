@@ -1,0 +1,108 @@
+{% extends "admin/layout.html" %}
+{% import "admin/macros.html" as m %}
+{% set section = "forms" %}
+{% block title %}Teste do rascunho de {{ page.nav.title }}{% endblock %}
+
+{% block content %}
+<nav class="crumbs" aria-label="Você está em"><a href="/admin/forms">Formulários</a><span aria-hidden="true">/</span><a href="{{ page.nav.form_url }}">{{ page.nav.title }}</a><span aria-hidden="true">/</span><a href="{{ page.nav.draft_url }}">Rascunho</a><span aria-hidden="true">/</span><span>Teste</span></nav>
+
+<header class="detail-head">
+  <div>
+    <h1>Teste do rascunho de {{ page.nav.title }}</h1>
+    <p class="meta"><span class="mono">{{ page.nav.slug }}</span><span>{{ "rascunho pendente" if page.summary.badge else "igual à versão " ~ page.summary.current_version }}</span></p>
+  </div>
+  <p class="btns"><a class="btn btn--ghost" href="{{ page.nav.draft_url }}">Editar o rascunho</a>{% if page.summary.badge %}<a class="btn btn--secondary" href="{{ page.nav.publish_url }}">Publicar…</a>{% endif %}</p>
+</header>
+
+<div class="cols cols--aside-first">
+  <div class="stackcol">
+    <section class="box" id="respostas" aria-labelledby="resp-titulo">
+      <h2 id="resp-titulo">Respostas e data</h2>
+      <p class="muted">O teste usa o rascunho salvo. Use respostas fictícias: elas ficam guardadas com o resultado do teste por poucos dias.</p>
+      <form class="form-stack" method="post" action="{{ page.nav.tests_url }}">
+        <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+        <div class="field">
+          <label for="f-answers">Respostas (JSON) <span class="opt">(as de exemplo, se ficar vazio)</span></label>
+          <textarea class="input mono" id="f-answers" name="answers" rows="14" spellcheck="false" autocomplete="off"{% if page.problems %} aria-describedby="problemas"{% endif %}>
+{{ page.answers }}</textarea>
+        </div>
+        <div class="field">
+          <label for="f-date">Data simulada <span class="opt">(opcional; sem ela, hoje)</span></label>
+          <input class="input" id="f-date" name="date" type="date" value="{{ page.day }}" autocomplete="off">
+        </div>
+        <div class="btns">
+          <button class="btn btn--secondary" type="submit" formaction="{{ page.nav.prompt_url }}">Montar o prompt</button>
+          <button class="btn btn--secondary" type="submit" formaction="{{ page.nav.score_url }}">Calcular a pontuação</button>
+          <button class="btn btn--primary" type="submit">Testar com o LLM</button>
+        </div>
+        <p class="muted">O teste chama o LLM de verdade uma vez, com as rodadas de reparo, e gera o PDF, sem criar pedido nem mandar nada ao webhook. Um teste por vez, com uma pausa entre eles.</p>
+      </form>
+    </section>
+
+    <section class="box" id="recentes" aria-labelledby="rec-titulo">
+      <h2 id="rec-titulo">Testes recentes</h2>
+      <p class="muted">Ficam os {{ page.keep }} mais recentes, por {{ page.days }} dias.</p>
+      {% if page.recent %}
+      <ul class="files">
+        {% for row in page.recent %}
+        <li>{{ m.badge(row.status) }}<a href="{{ row.url }}">{{ row.headline }}</a><span class="muted">{{ row.started_by }} · {{ m.when(row.started) }}{% if row.simulated %} · data simulada: {{ row.simulated }}{% endif %}</span></li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p>Nenhum teste guardado.</p>
+      {% endif %}
+    </section>
+  </div>
+
+  <div class="stackcol">
+    {% if page.message %}
+    <div class="alert alert--warn" role="alert" id="aviso">{{ m.icon('alert-triangle', 'icon--lg') }}<div><strong class="alert__title">{{ page.message }}</strong></div></div>
+    {% endif %}
+    {% if page.problems %}
+    {{ m.problems(page.problems, "Não deu para montar o prompt") }}
+    {% endif %}
+
+    {% if page.scored %}
+    <section class="box" id="pontuacao-calculada" aria-labelledby="pc-titulo">
+      <h2 id="pc-titulo">Pontuação</h2>
+      <p class="muted">{{ "Com as respostas de exemplo" if page.scored.examples else "Com as suas respostas" }} · cada nota, a prioridade e a persona que o envio gravaria.</p>
+      {{ m.scoring_result(page.scored) }}
+    </section>
+    {% endif %}
+
+    {% if page.assembled %}
+    {% set prompt = page.assembled %}
+    {% if prompt.calendar %}
+    <section class="box" id="calendario" aria-labelledby="cal-titulo">
+      <h2 id="cal-titulo">Calendário das fases</h2>
+      <p class="muted">O que o prompt recebe em <span class="mono">phases</span>, {{ "na data simulada" if prompt.simulated else "hoje" }}: {{ prompt.today }}. A primeira fase começa nesse dia, em São Paulo. Os valores permitidos de cada campo ligado a janelas são os que a conferência do plano aceita em cada fase.</p>
+      <div class="tablewrap" role="region" aria-label="Tabela das fases" tabindex="0">
+        <table class="table table--cards">
+          <caption class="sr-only">Fases do plano nesta data</caption>
+          <thead><tr><th scope="col">Fase</th><th scope="col">Período</th><th scope="col">Janelas</th><th scope="col">Valores permitidos</th></tr></thead>
+          <tbody>
+          {% for row in prompt.calendar %}
+            <tr>
+              <td data-label="Fase"><b>Fase {{ row.number }}</b></td>
+              <td data-label="Período">{{ row.period }}</td>
+              <td data-label="Janelas">{% for label, state in row.windows %}<span class="sub">{{ label }}: {{ state }}</span>{% else %}<span class="muted">—</span>{% endfor %}</td>
+              <td data-label="Valores permitidos">{% for field, values in row.allowed %}<span class="sub"><span class="mono">{{ field }}</span>: {{ values }}</span>{% else %}<span class="muted">—</span>{% endfor %}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+    {% endif %}
+    <section class="box" id="prompt-montado" aria-labelledby="pm-titulo">
+      <h2 id="pm-titulo">O que vai ao LLM</h2>
+      <p class="muted">{{ "Com as respostas de exemplo" if prompt.examples else "Com as suas respostas" }} · {{ "data simulada" if prompt.simulated else "hoje" }}: {{ prompt.today }} · versão do prompt <span class="mono">{{ prompt.prompt_version }}</span></p>
+      <h3>Instruções</h3>
+      <pre class="source" tabindex="0" aria-label="Instruções que vão ao LLM (somente leitura)">{{ prompt.instructions }}</pre>
+      <h3>Prompt</h3>
+      <pre class="source" tabindex="0" aria-label="Prompt montado (somente leitura)">{{ prompt.prompt }}</pre>
+    </section>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

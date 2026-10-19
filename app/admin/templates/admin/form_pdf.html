@@ -1,0 +1,139 @@
+{% extends "admin/layout.html" %}
+{% import "admin/macros.html" as m %}
+{% set section = "forms" %}
+{% block title %}PDF e prévia de {{ page.nav.title }}{% endblock %}
+
+{#- Um template em texto, com fonte monoespaçada e sem quebra de linha, para a linha do problema ser
+    a linha do campo. A numeração das linhas vem do admin.js; sem ele, o problema traz a linha e o
+    texto dela. A quebra logo depois da abertura da tag é descartada pelo navegador: sem ela, um
+    texto que começa com uma linha em branco a perderia. -#}
+{% macro code_field(name, label, hint, rows, value) -%}
+{%- set id = page.field_id(name) -%}
+<div class="field">
+  <label for="{{ id }}">{{ label }}</label>
+  <p class="muted field__hint" id="{{ id }}-dica">{{ hint }}</p>
+  <div class="code">
+    <textarea class="input mono code__text" id="{{ id }}" name="{{ name }}" rows="{{ rows }}" wrap="off" spellcheck="false" autocomplete="off" autocapitalize="none" data-code aria-describedby="{{ id }}-dica{% if name in page.invalid %} problemas{% endif %}"{% if name in page.invalid %} aria-invalid="true"{% endif %}>
+{{ value }}</textarea>
+  </div>
+</div>
+{%- endmacro %}
+
+{% block content %}
+<nav class="crumbs" aria-label="Você está em"><a href="/admin/forms">Formulários</a><span aria-hidden="true">/</span><a href="{{ page.nav.form_url }}">{{ page.nav.title }}</a><span aria-hidden="true">/</span><a href="{{ page.nav.draft_url }}">Rascunho</a><span aria-hidden="true">/</span><span>PDF e prévia</span></nav>
+
+<header class="detail-head">
+  <div>
+    <h1>PDF e prévia de {{ page.nav.title }}</h1>
+    <p class="meta"><span class="mono">{{ page.nav.slug }}</span>{% if not page.summary.published %}<span>ainda não publicado</span>{% elif page.summary.badge %}<span>a partir da versão {{ page.summary.base_version }}</span>{% if page.summary.saved_by %}<span>salvo por {{ page.summary.saved_by }} em {{ m.when(page.summary.saved) }}</span>{% endif %}{% if page.summary.stale_assets %}<span>imagem trocada: {{ page.summary.stale_assets|join(", ") }}</span>{% endif %}{% else %}<span>igual à versão {{ page.summary.current_version }}, a publicada</span>{% endif %}</p>
+  </div>
+  <div class="badges">{% if page.summary.badge %}{{ m.badge(page.summary.badge) }}{% endif %}</div>
+  <p class="btns"><a class="btn btn--secondary" href="{{ page.nav.draft_url }}">Editar o rascunho</a><a class="btn btn--secondary" href="{{ page.nav.tests_url }}">Testar o rascunho</a>{% if page.summary.badge %}<a class="btn btn--primary" href="{{ page.nav.publish_url }}">Publicar…</a>{% endif %}</p>
+</header>
+
+<div class="cols">
+  <div class="stackcol">
+    {% if page.message %}
+    <div class="alert alert--warn" role="alert" id="aviso">{{ m.icon('alert-triangle', 'icon--lg') }}<div><strong class="alert__title">{{ page.message }}</strong></div></div>
+    {% endif %}
+    {% if page.problems %}
+    <div class="alert alert--error" role="alert" id="problemas">{{ m.icon('alert-circle', 'icon--lg') }}<div><strong class="alert__title">O rascunho não foi salvo: {{ page.problems|length }} {{ "problema" if page.problems|length == 1 else "problemas" }}</strong>
+      <ul class="items">
+        {%- for problem in page.problems %}
+        <li><a href="#{{ problem.target }}"{% if problem.line %} data-line="{{ problem.line }}"{% endif %}>{{ problem.where }}:</a> {{ problem.message }}{% if problem.excerpt %}<br><code class="mono problem__line">{{ problem.excerpt }}</code>{% endif %}</li>
+        {%- endfor %}
+      </ul>
+    </div></div>
+    {% endif %}
+
+    <form class="stackcol" id="pdf-form" method="post" action="{{ page.nav.pdf_url }}">
+      <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+      <input type="hidden" name="expected" value="{{ page.token }}">
+
+      <section class="box" id="previas" aria-labelledby="previas-titulo">
+        <h2 id="previas-titulo">Prévias</h2>
+        <p class="muted">Mostram o que está nos campos abaixo, salvo ou não, sem gravar nada. O PDF é o do WeasyPrint de verdade, com a paginação que a lead recebe.</p>
+        <div class="edit-checks" role="radiogroup" aria-label="Plano das prévias">
+          <label class="choice choice--check edit-check"><input type="radio" id="f-plan-example" name="plan" value="example"{% if page.source == "example" %} checked{% endif %}><span class="choice__body"><span class="choice__mark">{{ m.icon('check') }}</span><span>Plano de exemplo</span></span></label>
+          <label class="choice choice--check edit-check"><input type="radio" id="f-plan-test" name="plan" value="test"{% if page.source == "test" %} checked{% endif %}{% if not page.last_test %} disabled{% endif %}><span class="choice__body"><span class="choice__mark">{{ m.icon('check') }}</span><span>Plano do último teste{% if page.last_test %} ({{ page.last_test.text }}){% endif %}</span></span></label>
+        </div>
+        {%- if not page.last_test %}
+        <p class="muted field__hint">Nenhum teste com sucesso guardado. <a href="{{ page.nav.tests_url }}">Teste o rascunho</a> para ver o plano que o LLM escreve.</p>
+        {%- endif %}
+        <p class="btns">
+          <button class="btn btn--secondary" type="submit" formaction="{{ page.preview_url }}" formtarget="pdf-preview" formnovalidate>Ver o PDF</button>
+          <button class="btn btn--secondary" type="submit" formaction="{{ page.result_url }}" formtarget="result-preview" formnovalidate>Ver a página de resultado</button>
+        </p>
+      </section>
+
+      <section class="box" id="notas" aria-labelledby="notas-titulo">
+        <h2 id="notas-titulo">Notas que o PDF e a prévia podem mostrar</h2>
+        <p class="muted">Só as notas marcadas chegam aos templates, em <span class="mono">scores</span>, com o nível e o rótulo da faixa de cada uma. A prioridade e a persona nunca aparecem, nem no PDF nem na prévia.</p>
+        {%- if page.notes %}
+        <div class="edit-checks">
+          {%- for note in page.notes %}
+          <label class="choice choice--check edit-check"><input type="checkbox" id="f-pdf_scores-{{ note.name }}" name="pdf_scores" value="{{ note.name }}"{% if note.checked %} checked{% endif %}><span class="choice__body"><span class="choice__mark">{{ m.icon('check') }}</span><span><span class="mono">{{ note.name }}</span>{% if note.levels %} <span class="muted">e a faixa ({{ note.levels }})</span>{% endif %}</span></span></label>
+          {%- endfor %}
+        </div>
+        {%- else %}
+        <p>Este formulário não tem pontuação, então não há nota para liberar. A pontuação se declara no JSON do rascunho.</p>
+        {%- endif %}
+      </section>
+
+      <section class="box" id="templates" aria-labelledby="templates-titulo">
+        <h2 id="templates-titulo">Templates</h2>
+        <p class="muted">Jinja, no ambiente isolado: variável inexistente é erro, e só há os filtros e os componentes da lista. Salvar confere tudo e mostra cada problema com a linha. O PDF carrega só arquivos de <span class="mono">app/assets</span>, as <a href="#imagens">imagens do formulário</a> (<span class="mono">asset:nome</span>) e <span class="mono">data:</span>.</p>
+        <div class="form-stack">
+          {{ code_field("pdf_html", "PDF (HTML)", "O documento do PDF. Recebe plan, lead, form, scores, generated_date e brand.", 22, page.texts.pdf_html) }}
+          {{ code_field("pdf_css", "PDF (CSS)", "A folha de estilo do PDF, sem Jinja. As URLs relativas apontam para app/assets; o kit da marca fica em brands/leadkit. Uma imagem do formulário entra por url(asset:nome).", 14, page.texts.pdf_css) }}
+          {{ code_field("preview", "Prévia da página de resultado", "O resumo que a lead lê no celular antes de baixar o PDF. Recebe o mesmo que o PDF; os arquivos de app/assets não chegam ao navegador dela, mas uma imagem do formulário (asset:nome) sim.", 14, page.texts.preview) }}
+        </div>
+      </section>
+
+      <div class="btns savebar"><button class="btn btn--primary" type="submit">Salvar o PDF e a prévia</button></div>
+    </form>
+  </div>
+
+  <div class="stackcol">
+    <section class="box" id="quadro-pdf" aria-labelledby="quadro-pdf-titulo">
+      <h2 id="quadro-pdf-titulo">PDF</h2>
+      <iframe class="pdf-frame" name="pdf-preview" title="Prévia do PDF" src="about:blank"></iframe>
+      <p class="muted field__hint">Use “Ver o PDF” para atualizar. Sem o visualizador de PDF do navegador, baixe o arquivo do <a href="{{ page.nav.tests_url }}">teste do rascunho</a>.</p>
+    </section>
+    <section class="box" id="quadro-resultado" aria-labelledby="quadro-resultado-titulo">
+      <h2 id="quadro-resultado-titulo">Página de resultado</h2>
+      <div class="phone">
+        <iframe class="phone__screen" name="result-preview" title="Prévia da página de resultado na largura de um celular (375 px)" src="about:blank" width="375" height="740"></iframe>
+      </div>
+    </section>
+    <section class="box" id="componentes" aria-labelledby="componentes-titulo">
+      <h2 id="componentes-titulo">Componentes da marca</h2>
+      <p class="muted">A biblioteca <span class="mono">brand</span>: auxiliares de texto e os blocos do kit da marca. O texto que entra num componente sai escapado, sem o filtro <span class="mono">safe</span>.</p>
+      {%- for component in page.components %}
+      <details class="acc"><summary><span class="mono">{{ component.signature }}</span>{{ m.icon('chevron-down') }}</summary>
+        <p>{{ component.summary }}{% if component.pdf_only %} <strong>Só no PDF</strong>: usa arquivos do app.{% endif %}</p>
+        <pre class="source"><code>{{ component.example }}</code></pre>
+      </details>
+      {%- endfor %}
+    </section>
+    <section class="box" id="imagens" aria-labelledby="imagens-titulo">
+      <h2 id="imagens-titulo">Imagens</h2>
+      <p class="muted">As imagens que este formulário enxerga: as da biblioteca geral e as dele. Peça uma pelo nome, no PDF (<span class="mono">&lt;img src="asset:nome"&gt;</span>), no CSS (<span class="mono">url(asset:nome)</span>) ou na prévia. As prévias mostram a imagem como está agora; a versão publicada fixa o conteúdo na publicação.</p>
+      {%- if page.images %}
+      <ul class="images">
+        {%- for image in page.images %}
+        <li><img class="thumb" src="{{ image.thumbnail }}" alt="" width="64" height="48" loading="lazy"><div><a class="mono" href="{{ image.url }}">{{ image.reference }}</a>{% if image.used %} <span class="badge badge--ok">{{ m.icon('check') }}em uso aqui</span>{% endif %}<span class="sub">{{ image.scope }} · {{ image.detail }}</span></div></li>
+        {%- endfor %}
+      </ul>
+      {%- else %}
+      <p>Nenhuma imagem disponível para este formulário.</p>
+      {%- endif %}
+      <p class="btns footnote"><a class="btn btn--secondary" href="/admin/assets">{{ m.icon('image') }}Gerenciar as imagens</a></p>
+    </section>
+    <section class="box" id="variaveis" aria-labelledby="variaveis-titulo">
+      <h2 id="variaveis-titulo">Variáveis</h2>
+      <dl class="kv kv--stack">{% for var in page.variables %}<dt class="mono">{{ var.name }}</dt><dd>{{ var.note }}</dd>{% endfor %}</dl>
+    </section>
+  </div>
+</div>
+{% endblock %}

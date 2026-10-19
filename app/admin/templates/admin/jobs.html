@@ -1,0 +1,118 @@
+{% extends "admin/layout.html" %}
+{% import "admin/macros.html" as m %}
+{% set section = "jobs" %}
+{% block title %}Pedidos{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Pedidos de plano</h1>
+    <p>Cada linha é um formulário recebido, com o plano, as entregas e a planilha. Mais recentes primeiro.</p>
+  </div>
+</div>
+
+{% include "admin/_destination_warnings.html" %}
+
+{#- Sem JavaScript é um GET comum; com HTMX troca só #resultados e atualiza a URL. Além dele, o HTMX
+    refaz o "Limpar filtros" e o conteúdo de #campo-versao (as versões do formulário escolhido). A
+    versão escolhida dispara a busca pelo #campo-versao, que não é trocado (só o que há dentro dele). -#}
+<form class="filters" method="get" action="/admin" role="search" aria-label="Buscar e filtrar pedidos"
+      hx-get="/admin" hx-target="#resultados" hx-select="#resultados" hx-select-oob="#limpar-filtros,#campo-versao:innerHTML"
+      hx-swap="outerHTML" hx-push-url="true" hx-trigger="submit, change from:#campo-versao, change from:#f-period, change from:#f-status, change from:#f-delivery, change from:#f-sync">
+  <div class="field field--grow">
+    <label for="busca">Buscar</label>
+    <input class="input" id="busca" name="q" type="search" value="{{ filters.q }}" placeholder="Nome, e-mail ou código" maxlength="200" autocomplete="off" spellcheck="false">
+  </div>
+  <div class="field field--wide">
+    <label for="f-form">Formulário</label>
+    {#- Trocar o formulário manda a busca sem a versão (hx-params): as versões são as do formulário antigo, e a nova lista de opções volta em "Todas". -#}
+    <select class="select" id="f-form" name="form" hx-get="/admin" hx-include="closest form" hx-params="not form_version" hx-trigger="change">
+      <option value="">Todos</option>
+      {% for option in found.form_options %}<option value="{{ option.value }}"{% if option.value == filters.form %} selected{% endif %}>{{ option.label }}</option>{% endfor %}
+    </select>
+  </div>
+  {#- Só com um formulário escolhido. Sempre no lugar, vazio sem formulário: o HTMX troca o que há dentro quando o formulário muda. -#}
+  <div id="campo-versao" class="filters__version">{% if filters.form %}
+    <div class="field field--version">
+      <label for="f-versao">Versão</label>
+      <select class="select" id="f-versao" name="form_version">
+        <option value="">Todas</option>
+        {% for option in found.version_options %}<option value="{{ option.value }}"{% if option.value == filters.form_version %} selected{% endif %}>{{ option.label }}</option>{% endfor %}
+      </select>
+    </div>
+  {% endif %}</div>
+  <div class="field field--short">
+    <label for="f-period">Recebido</label>
+    <select class="select" id="f-period" name="period">
+      <option value="">Tudo</option>
+      {% for value, label in period_options %}<option value="{{ value }}"{% if value == filters.period %} selected{% endif %}>{{ label }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="field field--tiny">
+    <label for="f-status">Status</label>
+    <select class="select" id="f-status" name="status">
+      <option value="">Todos</option>
+      {% for value, label in status_options %}<option value="{{ value }}"{% if value == filters.status %} selected{% endif %}>{{ label }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="field field--tiny">
+    <label for="f-delivery">Entrega</label>
+    <select class="select" id="f-delivery" name="delivery">
+      <option value="">Todas</option>
+      {% for value, label in delivery_options %}<option value="{{ value }}"{% if value == filters.delivery %} selected{% endif %}>{{ label }}</option>{% endfor %}
+    </select>
+  </div>
+  <div class="field field--tiny">
+    <label for="f-sync">Planilha</label>
+    <select class="select" id="f-sync" name="sync">
+      <option value="">Todas</option>
+      {% for value, label in sync_options %}<option value="{{ value }}"{% if value == filters.sync %} selected{% endif %}>{{ label }}</option>{% endfor %}
+    </select>
+  </div>
+  <button class="btn btn--secondary" type="submit">{{ m.icon('search') }}Buscar</button>
+  {#- Sempre no lugar, vazio sem filtro: o HTMX troca só ele quando os filtros mudam. -#}
+  <span id="limpar-filtros" class="filters__clear">{% if filters.active %}<a class="btn btn--ghost" href="/admin">Limpar filtros</a>{% endif %}</span>
+</form>
+
+<div id="resultados">
+  <p class="resultline" role="status">{{ found.total }} {{ "pedido" if found.total == 1 else "pedidos" }}{% if filters.active %} com estes filtros{% endif %}</p>
+  {% if found.rows %}
+  <div class="tablewrap" role="region" aria-label="Tabela de pedidos" tabindex="0">
+    <table class="table table--cards">
+      <caption class="sr-only">Pedidos recebidos</caption>
+      <thead>
+        <tr><th scope="col">Lead</th><th scope="col">Código</th><th scope="col">Formulário</th><th scope="col">Status</th><th scope="col">Prioridade</th><th scope="col">Recebido</th><th scope="col">Entregas e planilha</th></tr>
+      </thead>
+      <tbody>
+      {% for row in found.rows %}
+        <tr>
+          <td class="who" data-label="Lead"><a href="/admin/jobs/{{ row.public_id }}">{{ row.name or "Sem nome" }}<span class="sr-only"> — abrir pedido</span></a><span>{{ row.email or "Contato indisponível" }}</span></td>
+          <td class="code" data-label="Código"><span class="mono">{{ row.public_id }}</span></td>
+          <td data-label="Formulário"><span class="cell-title">{{ row.form_title }}</span><span class="sub">versão {{ row.form_version }}</span></td>
+          <td data-label="Status">{{ m.badge(row.status) }}{% if row.stage %}<span class="sub">{{ row.stage }}</span>{% endif %}</td>
+          <td data-label="Prioridade">{{ m.badge(row.priority) }}</td>
+          <td class="num" data-label="Recebido">{{ m.when(row.received) }}</td>
+          <td data-label="Entregas e planilha"><span class="badges badges--stack">{% for delivery in row.deliveries %}{{ m.badge(delivery) }}{% endfor %}{% for sync in row.syncs %}{{ m.badge(sync) }}{% endfor %}{% if not row.deliveries and not row.syncs %}<span class="muted">—</span>{% endif %}</span></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="empty">
+    {{ m.icon('search', 'icon--lg') }}
+    {#- Sem entrega ou sincronização que falhou é boa notícia: a frase (views.nothing_found) diz isso. -#}
+    <p>{{ nothing_found }}{% if filters.active %} com estes filtros{% endif %}.</p>
+    {% if filters.active %}<a class="btn btn--secondary" href="/admin">Limpar filtros</a>{% endif %}
+  </div>
+  {% endif %}
+  {% if found.pages > 1 %}
+  <nav class="pager" aria-label="Paginação">
+    <span>Página {{ found.page }} de {{ found.pages }}</span>
+    <span class="pager__links">
+      {% if previous_url %}<a class="btn btn--secondary btn--sm" href="{{ previous_url }}" hx-get="{{ previous_url }}" hx-target="#resultados" hx-select="#resultados" hx-swap="outerHTML" hx-push-url="true">Página anterior</a>{% endif %}
+      {% if next_url %}<a class="btn btn--secondary btn--sm" href="{{ next_url }}" hx-get="{{ next_url }}" hx-target="#resultados" hx-select="#resultados" hx-swap="outerHTML" hx-push-url="true">Próxima página</a>{% endif %}
+    </span>
+  </nav>
+  {% endif %}
+</div>
+{% endblock %}

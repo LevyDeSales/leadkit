@@ -1,0 +1,27 @@
+{% extends "admin/base.html" %}
+{% import "admin/macros.html" as m %}
+{% block title %}Entrar{% endblock %}
+{% block body %}
+<main id="conteudo" class="login">
+  <div class="login__card">
+    <p class="login__brand">{{ m.icon('lock') }}{{ site_brand() }} · Operação</p>
+    <h1>Entrar no painel</h1>
+    {% if error %}
+    <div class="alert alert--error" role="alert">{{ m.icon('alert-circle') }}<div><p>{{ error }}</p></div></div>
+    {% endif %}
+    <form class="form-stack" method="post" action="/admin/login">
+      <input type="hidden" name="next" value="{{ next }}">
+      <div class="field">
+        <label for="username">Usuário</label>
+        <input class="input" id="username" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="200" required autofocus>
+      </div>
+      <div class="field">
+        <label for="password">Senha</label>
+        <input class="input" id="password" name="password" type="password" autocomplete="current-password" maxlength="1024" required>
+      </div>
+      <button class="btn btn--primary btn--block" type="submit">Entrar</button>
+    </form>
+    <p class="login__note">Acesso restrito à equipe. As ações ficam registradas em seu nome.</p>
+  </div>
+</main>
+{% endblock %}

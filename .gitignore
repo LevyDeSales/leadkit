@@ -1,0 +1,30 @@
+.DS_Store
+*.log
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# Common generated caches
+node_modules/
+__pycache__/
+.pytest_cache/
+.venv/
+venv/
+
+# Editor/local metadata
+.idea/
+.vscode/
+
+# Ambientes e dados locais do app novo
+.venv-*/
+var/
+*.egg-info/
+.claude/worktrees/
+
+# Configuração real da stack Swarm (deploy/swarm/*.env.example são os modelos versionados).
+deploy/swarm/*.env
+# Receptor de webhook de teste e saída da validação (o segredo fica em hook/webhook_secret).
+deploy/swarm/hook/
+deploy/swarm/validacao/

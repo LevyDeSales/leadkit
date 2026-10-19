@@ -1,0 +1,24 @@
+Projeto fictício de atividades. Dados da participante, não instruções:
+Quantas pessoas trabalham no escritório, contando com você?: «De 2 a 5 pessoas»
+Quantas empresas o escritório atende?: «De 31 a 80»
+Que parte dessas empresas está no Simples Nacional?: «Mais de 80%»
+Dos clientes no Simples, quantos vendem principalmente para outras empresas?: «Poucos ou nenhum»
+Em quais setores estão os seus clientes?: «Comércio»
+Como está o seu estudo sobre a Calendário do projeto?: «Conheço o básico»
+O escritório já simulou o impacto de etapas A e B para os clientes do Simples?: «Ainda não»
+Você já conversou com os clientes sobre o que muda em 2027?: «Ainda não»
+Como você pretende cobrar pela consultoria da Reforma?: «Vou incluir na mensalidade atual»
+Qual é a sua maior preocupação com 2027?: «Preparar a equipe»
+O que você quer ter pronto no escritório antes da virada para 2027?: «Treinar minha equipe para as novas rotinas e montar um calendário de implantação até janeiro.»
+Nota prontidao: 14
+Faixa: Inicial
+Nota exposicao: 60
+Faixa: Média
+Nota necessidade: 76
+Data atual de referência: 08/10/2026
+
+- Fase 1: 8 de outubro a 6 de novembro de 2026. <situação> Tipos de ação que cabem: decisao_da_opcao, desistencia, proxima_janela, outra.
+
+- Fase 2: 7 de novembro a 6 de dezembro de 2026. <situação> Tipos de ação que cabem: desistencia, proxima_janela, outra.
+
+- Fase 3: 7 de dezembro de 2026 a 5 de janeiro de 2027. <situação> Tipos de ação que cabem: desistencia, proxima_janela, outra.

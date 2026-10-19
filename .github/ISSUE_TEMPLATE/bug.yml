@@ -1,0 +1,86 @@
+name: Problema
+description: Algo não funciona como deveria (formulário, página do pedido, PDF, webhook, admin ou deploy).
+title: "[problema] "
+labels: ["tipo/bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use só dados fictícios. Não cole o link da lead com `?t=` (ele dá acesso ao pedido), segredos, nem nome, e-mail, telefone ou respostas de leads reais: o código do pedido basta para achá-lo no admin.
+
+        Falha de segurança não vira issue: siga o [SECURITY.md](https://github.com/LevyDeSales/leadkit/blob/main/SECURITY.md).
+  - type: dropdown
+    id: onde
+    attributes:
+      label: Onde
+      options:
+        - Formulário público (/p)
+        - Página do pedido (/d)
+        - Plano gerado (conteúdo)
+        - PDF
+        - Webhook
+        - Painel admin
+        - API (/v1)
+        - Worker ou Hatchet
+        - Deploy ou CI
+        - Outro
+    validations:
+      required: true
+  - type: input
+    id: formulario
+    attributes:
+      label: Formulário
+      description: O slug, se o problema for de um formulário.
+      placeholder: demo, mcc, reforma-2027
+  - type: input
+    id: pedido
+    attributes:
+      label: Código do pedido
+      description: Só o código (aparece no admin e no endereço /d/<código>), nunca o link com ?t=.
+  - type: textarea
+    id: aconteceu
+    attributes:
+      label: O que aconteceu
+    validations:
+      required: true
+  - type: textarea
+    id: esperado
+    attributes:
+      label: O que era esperado
+    validations:
+      required: true
+  - type: textarea
+    id: reproduzir
+    attributes:
+      label: Como reproduzir
+      placeholder: |
+        1. Abrir /p/demo
+        2. Responder...
+        3. Ver...
+  - type: dropdown
+    id: ambiente
+    attributes:
+      label: Ambiente
+      options:
+        - Produção
+        - Desenvolvimento local
+        - CI
+    validations:
+      required: true
+  - type: input
+    id: versao
+    attributes:
+      label: Commit ou data do deploy
+  - type: textarea
+    id: evidencias
+    attributes:
+      label: Logs ou mensagens de erro
+      description: Sem dados de leads reais e sem tokens.
+      render: text
+  - type: checkboxes
+    id: confirmacao
+    attributes:
+      label: Confirmação
+      options:
+        - label: Esta issue não tem segredos, tokens nem dados reais de leads.
+          required: true

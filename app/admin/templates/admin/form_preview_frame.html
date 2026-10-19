@@ -1,0 +1,25 @@
+{% extends "public/base.html" %}
+{% import "public/_macros.html" as ui %}
+{#- A página pública do rascunho no quadro da prévia do admin (form_preview.html): as mesmas etapas e
+    os mesmos scripts da página de verdade (public/_steps.html, public.js, conditions.js), num <div>
+    em vez do <form> (nada é enviado) e com `data-preview` (o public.js não guarda nada no aparelho
+    e deixa andar pelas etapas sem conferir as respostas). `data-start-step` é a etapa em que abre. -#}
+{% block title %}Prévia: {{ spec.title }}{% endblock %}
+{% block header_class %}container--wide{% endblock %}
+{% block main %}
+<main id="conteudo" class="layout-split">
+  {% include "public/_hero.html" %}
+
+  <div class="layout-split__main">
+    <div class="container form-wrap">
+      <div class="alert alert--info stack-gap" role="note">
+        {{ ui.icon("info", "icon--lg") }}<div><strong class="alert__title">Prévia do rascunho</strong><p>Marque as respostas para ver as perguntas e as opções que mudam. Nada do que você marcar aqui é enviado ou fica guardado.</p></div>
+      </div>
+      <div class="stepform" data-steps data-preview data-start-step="{{ frame.number - 1 }}" data-minutes="{{ screen.minutes }}">
+        {% include "public/_steps.html" %}
+        <p class="hint mt">Na página de verdade, o último botão envia as respostas e abre a espera do plano.</p>
+      </div>
+    </div>
+  </div>
+</main>
+{% endblock %}

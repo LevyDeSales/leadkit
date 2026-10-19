@@ -1,0 +1,154 @@
+{% extends "admin/layout.html" %}
+{% import "admin/macros.html" as m %}
+{% import "admin/_editor_fields.html" as f with context %}
+{% set section = "forms" %}
+{% block title %}Rascunho de {{ page.nav.title }}{% endblock %}
+
+{#- Um campo de texto do editor. A quebra de linha logo depois da abertura da tag é descartada pelo
+    navegador: sem ela, um texto que começa com uma linha em branco a perderia. -#}
+{% macro editor_field(name, label, hint, rows) -%}
+{%- set id = page.structure.field_id(name) -%}
+<div class="field">
+  <label for="{{ id }}">{{ label }}</label>
+  <p class="muted field__hint" id="{{ id }}-dica">{{ hint }}</p>
+  <textarea class="input mono" id="{{ id }}" name="{{ name }}" rows="{{ rows }}" spellcheck="false" autocomplete="off" aria-describedby="{{ id }}-dica{% if name in page.invalid %} problemas{% endif %}"{% if name in page.invalid %} aria-invalid="true"{% endif %}>
+{{ page.texts[name] }}</textarea>
+</div>
+{%- endmacro %}
+
+{% block content %}
+{%- set s = page.structure %}
+<nav class="crumbs" aria-label="Você está em"><a href="/admin/forms">Formulários</a><span aria-hidden="true">/</span><a href="{{ page.nav.form_url }}">{{ page.nav.title }}</a><span aria-hidden="true">/</span><span>Rascunho</span></nav>
+
+<header class="detail-head">
+  <div>
+    <h1>Rascunho de {{ page.nav.title }}</h1>
+    <p class="meta"><span class="mono">{{ page.nav.slug }}</span>{% if not page.summary.published %}<span>ainda não publicado: a primeira publicação cria a versão 1</span><span>salvo por {{ page.summary.saved_by }} em {{ m.when(page.summary.saved) }}</span>{% elif page.summary.badge %}<span>a partir da versão {{ page.summary.base_version }}</span>{% if page.summary.saved_by %}<span>salvo por {{ page.summary.saved_by }} em {{ m.when(page.summary.saved) }}</span>{% endif %}{% if page.summary.stale_assets %}<span>imagem trocada: {{ page.summary.stale_assets|join(", ") }}</span>{% endif %}{% else %}<span>igual à versão {{ page.summary.current_version }}, a publicada</span>{% endif %}</p>
+  </div>
+  <div class="badges">{% if page.summary.badge %}{{ m.badge(page.summary.badge) }}{% endif %}</div>
+  <p class="btns" id="acoes"><a class="btn btn--secondary" href="{{ page.nav.preview_url }}">{{ m.icon('smartphone') }}Ver a página no celular</a><a class="btn btn--secondary" href="{{ page.nav.pdf_url }}">Editar o PDF e a prévia</a><a class="btn btn--secondary" href="{{ page.nav.tests_url }}">Testar o rascunho</a>{% if page.summary.badge %}<a class="btn btn--primary" href="{{ page.nav.publish_url }}">Publicar…</a>{% if page.nav.compare_url %}<a class="btn btn--ghost" href="{{ page.nav.compare_url }}">O que muda em relação à versão {{ page.summary.current_version }}</a>{% endif %}{% endif %}</p>
+</header>
+
+{#- O editor vem primeiro: na tela estreita, as variáveis ficam embaixo, como consulta. -#}
+<div class="cols">
+  <div class="stackcol">
+    {% if page.message %}
+    <div class="alert alert--warn" role="alert" id="aviso">{{ m.icon('alert-triangle', 'icon--lg') }}<div><strong class="alert__title">{{ page.message }}</strong></div></div>
+    {% endif %}
+    {% if page.problems %}
+    <div class="alert alert--error" role="alert" id="problemas">{{ m.icon('alert-circle', 'icon--lg') }}<div><strong class="alert__title">O rascunho não foi salvo: {{ page.problems|length }} {{ "problema" if page.problems|length == 1 else "problemas" }}</strong>
+      <ul class="items">
+        {%- for problem in page.problems %}
+        <li><a href="{{ problem.href or ('#' ~ problem.target) }}">{{ problem.where }}:</a> {{ problem.message }}</li>
+        {%- endfor %}
+      </ul>
+    </div></div>
+    {% endif %}
+
+    <form class="stackcol" id="editor-form" method="post" action="{{ page.nav.draft_url }}">
+      <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+      <input type="hidden" name="expected" value="{{ page.token }}">
+
+      <section class="box" id="pagina" aria-labelledby="pagina-titulo">
+        <h2 id="pagina-titulo">Página pública</h2>
+        <p class="muted">O que está no ar só muda quando você publicar. Salvar confere a definição inteira; o que não compila não é salvo, e cada problema aparece no campo dele.</p>
+        <div class="form-stack">
+          {{ f.field("title", "Título", s.edit.title, hint="O que a lead lê no topo da página e no PDF.") }}
+          {%- if s.slug is not none %}
+          {{ f.field("slug", "Endereço público", s.slug, hint="Muda até a primeira publicação e depois fica fixo, para os links divulgados nunca quebrarem. Letras minúsculas sem acento, números e hífens.", mono=True) }}
+          {%- else %}
+          <p class="muted">Endereço público: <span class="mono">/p/{{ page.nav.slug }}</span>, fixo desde a primeira publicação.</p>
+          {%- endif %}
+          {{ f.field("intro", "Introdução", s.edit.intro, hint="O texto de entrada da página, ao lado do título.", area=True, rows=3) }}
+          {{ f.field("minutes", "Tempo para responder, em minutos", s.edit.minutes, hint="De 1 a 60.") }}
+          {#- O aviso extra das páginas que a lead vê depois do envio: título, texto e um link opcional. -#}
+          {%- for page_key, legend, when in s.notices %}
+          {%- set n = "notices." ~ page_key %}
+          {%- set notice = s.edit.notices.pages[page_key] %}
+          <fieldset class="edit-step" id="{{ s.field_id(n) }}" aria-describedby="{{ s.field_id(n) }}-dica">
+            <legend>{{ legend }} <span class="opt">(opcional)</span></legend>
+            <p class="muted field__hint" id="{{ s.field_id(n) }}-dica">{{ when }} É texto puro, sem HTML.</p>
+            {{ f.error_for(n) }}
+            <div class="form-stack">
+              {{ f.field(n ~ ".title", "Título do aviso", notice.title) }}
+              {{ f.field(n ~ ".text", "Texto do aviso", notice.text, hint="Uma linha em branco separa os parágrafos.", area=True, rows=4) }}
+              {{ f.field(n ~ ".link.label", "Rótulo do link", notice.link_label, hint="O texto que a lead clica. Sem rótulo e sem endereço, o aviso fica sem link.", opt=True) }}
+              {{ f.field(n ~ ".link.url", "Endereço do link", notice.link_url, hint="Precisa começar por https://. O link abre em outra aba.", opt=True, mono=True) }}
+            </div>
+          </fieldset>
+          {%- endfor %}
+        </div>
+      </section>
+
+      {% include "admin/_form_structure.html" %}
+
+      <section class="box" id="consentimento" aria-labelledby="consentimento-titulo">
+        <h2 id="consentimento-titulo">Consentimento</h2>
+        <p class="muted">O que a lead lê e autoriza antes de enviar. A versão do texto sobe sozinha na publicação quando o texto muda, e cada envio guarda a versão que a lead leu.</p>
+        <div class="form-stack">
+          {{ f.field("consent.processing", "Autorização do processamento", s.edit.consent.processing, hint="Obrigatória para gerar o plano.", area=True, rows=2) }}
+          {{ f.field("consent.notice", "Aviso sobre o uso dos dados", s.edit.consent.notice, area=True, rows=3) }}
+          {%- for channel, offer, label in s.channels %}
+          {%- set name = "consent.marketing." ~ channel %}
+          <div class="edit-channel">
+            <label class="choice choice--check edit-check"><input type="checkbox" id="{{ s.field_id(name ~ '.offered') }}" name="{{ name }}.offered" value="on"{% if s.edit.consent.offered[channel] %} checked{% endif %}><span class="choice__body"><span class="choice__mark">{{ m.icon('check') }}</span><span>{{ offer }}</span></span></label>
+            {{ f.field(name, label, s.edit.consent.texts[channel], hint="Opcional para a lead, separado do processamento." ~ (" Precisa do telefone da lead, na identidade." if channel == "whatsapp" else ""), area=True, rows=2) }}
+          </div>
+          {%- endfor %}
+          {{ f.error_for("consent.marketing") }}
+        </div>
+      </section>
+
+      {% include "admin/_plan_editor.html" %}
+
+      {% include "admin/_data_editor.html" %}
+
+      {% include "admin/_scoring_editor.html" %}
+
+      <section class="box" id="textos" aria-labelledby="textos-titulo">
+        <h2 id="textos-titulo">Instruções, prompt e o resto</h2>
+        <div class="form-stack">
+          {{ editor_field("instructions", "Instruções", "O papel e as regras fixas que o LLM recebe, iguais para toda lead. Template Jinja: lê os dados do formulário em data.", 12) }}
+          {{ editor_field("prompt", "Prompt", "Montado a cada pedido com as respostas da lead. Template Jinja: answers, labels, today e data. Só as respostas que ele cita saem para o LLM.", 14) }}
+          {{ editor_field("definition", "O resto da definição (JSON)", "A versão do formato (format) e o plano de exemplo. O modelo do plano, os dados, a pontuação, as etapas, as perguntas, os pontos de cada opção, a identidade e o consentimento ficam nos campos acima; o PDF, a prévia da página de resultado e as notas do PDF, no editor do PDF.", 18) }}
+        </div>
+      </section>
+
+      <div class="btns savebar"><button class="btn btn--primary" type="submit">Salvar o rascunho</button>{% if page.unsaved %}<span class="muted">Há mudanças nesta página que ainda não foram salvas.</span>{% endif %}</div>
+    </form>
+  </div>
+
+  <div class="stackcol">
+    {% if page.scoring %}
+    <section class="box" id="pontuacao" aria-labelledby="pont-titulo">
+      <h2 id="pont-titulo">Pontuação</h2>
+      <p class="muted">Calculada com as respostas de exemplo do rascunho salvo. Para outras respostas, use <a href="{{ page.nav.tests_url }}">o teste do rascunho</a>.</p>
+      {{ m.scoring_result(page.scoring) }}
+    </section>
+    {% endif %}
+    {% if page.variables %}
+    {% set vars = page.variables %}
+    <section class="box" id="variaveis" aria-labelledby="var-titulo">
+      <h2 id="var-titulo">Variáveis</h2>
+      {% if vars.cited is none %}
+      <p>O prompt usa <span class="mono">answers</span> ou <span class="mono">labels</span> inteiros: todas as respostas podem ir ao LLM.</p>
+      {% elif vars.cited %}
+      <p>O prompt cita: <span class="mono">{{ vars.cited|join(", ") }}</span>. Só essas respostas saem para o LLM.</p>
+      {% else %}
+      <p>O prompt não cita nenhuma resposta.</p>
+      {% endif %}
+      <details class="acc"><summary>No prompt {{ m.icon('chevron-down') }}</summary>
+        <dl class="kv kv--stack">{% for var in vars.prompt %}<dt class="mono">{{ var.name }}</dt><dd>{{ var.note }}</dd>{% endfor %}</dl>
+      </details>
+      <details class="acc"><summary>Nas instruções {{ m.icon('chevron-down') }}</summary>
+        {% if vars.instructions %}
+        <dl class="kv kv--stack">{% for var in vars.instructions %}<dt class="mono">{{ var.name }}</dt><dd>{{ var.note }}</dd>{% endfor %}</dl>
+        {% else %}
+        <p class="muted">Só os dados do formulário (<span class="mono">data</span>), e este rascunho não tem nenhum.</p>
+        {% endif %}
+      </details>
+    </section>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

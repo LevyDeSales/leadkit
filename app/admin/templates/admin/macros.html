@@ -1,0 +1,97 @@
+{#- Macros do admin. Os rótulos dos estados vêm prontos de app/admin/views.py. -#}
+
+{% macro icon(name, cls='') -%}
+<svg class="icon {{ cls }}" aria-hidden="true"><use href="#i-{{ name }}"/></svg>
+{%- endmacro %}
+
+{% macro badge(b) -%}
+{%- if b -%}
+<span class="badge badge--{{ b.variant }}">{{ icon(b.icon) }}{{ b.label }}</span>
+{%- else -%}
+<span class="muted">—</span>
+{%- endif -%}
+{%- endmacro %}
+
+{% macro when(m) -%}
+{%- if m %}<time datetime="{{ m.iso }}">{{ m.text }}</time>{% else %}—{% endif -%}
+{%- endmacro %}
+
+{#- Valor de uma resposta ou do plano, de qualquer formulário: texto, lista ou objeto. `labels` são os
+    rótulos dos campos do plano pelo caminho dos nomes (`fases.foco`) e `at`, o caminho até aqui, com
+    ponto no fim: os itens de uma lista seguem o caminho da lista. -#}
+{% macro value(v, labels=none, at="") -%}
+{%- if v is none -%}<span class="muted">—</span>
+{%- elif v is sameas true -%}Sim
+{%- elif v is sameas false -%}Não
+{%- elif v is mapping -%}
+<dl class="kv kv--nested">{% for key, item in v.items() %}<dt>{{ label(key, labels, at) }}</dt><dd>{{ value(item, labels, at ~ key ~ ".") }}</dd>{% endfor %}</dl>
+{%- elif v is iterable and v is not string -%}
+<ul class="items">{% for item in v %}<li>{{ value(item, labels, at) }}</li>{% endfor %}</ul>
+{%- else -%}{{ v }}
+{%- endif -%}
+{%- endmacro %}
+
+{#- O nome de um campo: o rótulo que o formulário dá a ele, ou o nome com espaços no lugar do _. -#}
+{% macro label(key, labels=none, at="") -%}{{ (labels or {}).get(at ~ key) or key|replace("_", " ")|capitalize }}{%- endmacro %}
+
+{#- Os problemas de uma definição ou das respostas, cada um com o caminho ou a linha onde corrigir.
+    O id é o que os campos com problema citam no aria-describedby. -#}
+{% macro problems(found, title) -%}
+<div class="alert alert--error" role="alert" id="problemas">{{ icon('alert-circle', 'icon--lg') }}<div><strong class="alert__title">{{ title }}: {{ found|length }} {{ "problema" if found|length == 1 else "problemas" }}</strong>
+  <ul class="items">
+    {% for problem in found %}
+    <li><span class="mono">{{ problem.path or "definição" }}{% if problem.line %}, linha {{ problem.line }}{% endif %}:</span> {{ problem.message }}</li>
+    {% endfor %}
+  </ul>
+</div></div>
+{%- endmacro %}
+
+{#- As linhas que mudaram numa seção da definição, no formato do diff unificado: o + e o - no começo
+    de cada linha dizem o que entrou e o que saiu, além da cor. -#}
+{% macro diff(change) -%}
+<pre class="diff" tabindex="0" aria-label="O que mudou em {{ change.title }}">
+{%- for line in change.lines %}<span class="diff__{{ line.kind }}">{{ line.text }}</span>
+{% endfor -%}
+</pre>
+{%- endmacro %}
+
+{#- Um endereço para copiar, como o público de um formulário. Sem JavaScript, o link mostra o
+    endereço inteiro, que dá para selecionar ou copiar pelo menu do link; o botão aparece com o
+    admin.js, quando o navegador deixa copiar. -#}
+{% macro copy_link(id, url, label) -%}
+<span class="copy">
+  <a class="mono" id="{{ id }}" href="{{ url }}">{{ url }}</a>
+  <button class="btn btn--secondary btn--sm" type="button" data-copy="{{ id }}" aria-label="Copiar {{ label }}" hidden>{{ icon('copy') }}Copiar</button>
+  <span class="copy__status" role="status" data-copy-status="{{ id }}"></span>
+</span>
+{%- endmacro %}
+
+{#- Os valores de opção que a versão publicada grava e o rascunho não grava mais: o receptor do
+    webhook pode depender deles (app.forms.definition.changes.dropped_option_values). -#}
+{% macro dropped_values(dropped) -%}
+<div class="alert alert--warn" role="status" id="valores-removidos">{{ icon('alert-triangle', 'icon--lg') }}<div><strong class="alert__title">O receptor do webhook pode depender destes valores, que a versão publicada grava e este rascunho não grava mais:</strong>
+  <ul class="items">
+    {%- for item in dropped %}
+    <li>{{ item.label }} (<span class="mono">{{ item.question }}</span>): o valor <span class="mono">{{ item.value }}</span>, de “{{ item.option }}”</li>
+    {%- endfor %}
+  </ul>
+  <p>Os envios novos não vão mais trazer esses valores. Confira a automação que recebe os planos antes de publicar.</p>
+</div></div>
+{%- endmacro %}
+
+{#- A pontuação com certas respostas (app.admin.draft_pages.ScoredView): cada nota, a prioridade e a
+    persona, com a regra que decidiu cada uma. -#}
+{% macro scoring_result(scored) -%}
+{%- if not scored.declared %}
+<p>Este rascunho não tem pontuação. Adicione uma nota no editor do rascunho, na caixa «Pontuação».</p>
+{%- else %}
+<p class="internal">{{ icon('lock') }}A prioridade e a persona ficam só no admin e no webhook: nunca chegam à lead nem ao PDF.</p>
+<dl class="kv">
+  {%- for name, value in scored.rows %}
+  <dt class="mono">{{ name }}</dt><dd>{{ value }}</dd>
+  {%- endfor %}
+  <dt>Prioridade</dt><dd>{% if scored.priority %}{{ scored.priority }}{% if scored.priority_rule %} <span class="muted">· regra {{ scored.priority_rule }}</span>{% endif %}{% elif scored.has_priority_rules %}nenhuma regra bateu{% else %}sem regras de prioridade{% endif %}</dd>
+  <dt>Persona</dt><dd>{% if scored.persona %}{{ scored.persona }}{% if scored.persona_rule %} <span class="muted">· regra {{ scored.persona_rule }}</span>{% endif %}{% elif scored.has_persona_rules %}nenhuma regra bateu{% else %}sem regras de persona{% endif %}</dd>
+</dl>
+{%- endif %}
+{%- endmacro %}

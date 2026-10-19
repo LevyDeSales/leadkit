@@ -1,0 +1,19 @@
+{% extends "public/base.html" %}
+{% import "public/_macros.html" as ui %}
+{#- Nunca mostra o erro técnico: só o que a pessoa pode fazer e o código para o atendimento. -#}
+{% block title %}Não conseguimos montar seu plano agora{% endblock %}
+{% block body_attrs %} data-clear-draft="{{ details.slug }}"{% endblock %}
+{% block main %}
+<main id="conteudo" class="container container--narrow page">
+  <div class="statusicon statusicon--err">{{ ui.icon("alert-circle") }}</div>
+  <h1>Não conseguimos montar seu plano agora</h1>
+  <p class="lead">Suas respostas estão salvas e você não precisa preencher tudo de novo. A equipe da {{ site_brand() }} consegue gerar o plano de novo para você: é só informar o código abaixo.</p>
+  {{ ui.refcode(job.public_id) }}
+  {%- if notice %}
+  {% include "public/_notice.html" %}
+  {%- endif %}
+</main>
+{% endblock %}
+{% block footer %}
+<p>Esta página é pessoal. Não compartilhe o endereço com outras pessoas.</p>
+{% endblock %}

@@ -1,0 +1,8 @@
+{#- Avisos dos destinos do webhook, na lista de pedidos e na tela de destinos. Recebe `unreadable` (destinos cujo segredo não abre) e `unserved` (formulários sem destino). -#}
+{% import "admin/macros.html" as m %}
+{% if unreadable %}
+<section class="alert alert--error" id="segredo-ilegivel" role="alert" aria-label="Segredos que não abrem">{{ m.icon('alert-circle', 'icon--lg') }}<div><strong class="alert__title">O segredo destes destinos não abre com a WEBHOOK_ENCRYPTION_KEY atual: {% for label in unreadable %}<span class="mono">{{ label }}</span>{{ ", " if not loop.last }}{% endfor %}</strong><p>As entregas para eles falham. Confira a chave no ambiente do app, ou gere um segredo novo em <a href="/admin/destinations">Destinos</a> e ponha no receptor.</p></div></section>
+{% endif %}
+{% if unserved %}
+<section class="alert alert--warn" id="sem-destino" role="status" aria-label="Formulários sem destino">{{ m.icon('alert-triangle', 'icon--lg') }}<div><strong class="alert__title">Sem destino do webhook: {% for slug in unserved %}<span class="mono">{{ slug }}</span>{{ ", " if not loop.last }}{% endfor %}</strong><p>Os planos desses formulários ficam prontos, mas não são entregues, nem depois que um destino for configurado: para entregar um plano assim, reprocesse o pedido. <a href="/admin/destinations">Configurar os destinos</a></p></div></section>
+{% endif %}

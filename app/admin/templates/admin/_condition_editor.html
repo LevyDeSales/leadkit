@@ -1,0 +1,141 @@
+{#- O editor da condição de uma pergunta ou de uma opção (app/admin/condition_editor.py), dentro do
+    formulário do rascunho: "Mostrar esta pergunta quando…" e "Mostrar esta opção quando…". Cada campo
+    tem por nome o caminho dele na definição, e o problema da conferência aparece ao lado da regra e
+    do campo certos. Os botões de incluir e remover uma condição ou uma regra mandam o formulário
+    inteiro com a operação: sem JavaScript, a página volta inteira; com o HTMX, volta só o trecho das
+    etapas. Trocar a pergunta ou o operador de uma regra desenha a regra de novo, com os valores que
+    a pergunta aceita. Importado com o contexto: lê `page.structure`. -#}
+{%- import "admin/macros.html" as m -%}
+{%- import "admin/_editor_fields.html" as f with context -%}
+{%- import "admin/_editor_ops.html" as o with context -%}
+
+{#- Os valores de uma regra: a lista de opções da pergunta, as caixas das opções (no `in`), um
+    texto, ou um valor por linha. -#}
+{% macro value(r) %}
+{%- set s = page.structure %}
+{%- set name = r.name ~ ".value" %}
+{%- set id = s.field_id(name) %}
+{%- set error = s.errors.get(name) %}
+{%- if r.widget == "checks" %}
+<fieldset class="edit-values" id="{{ id }}"{% if error %} aria-describedby="{{ id }}-erro"{% endif %}>
+  <legend>Valores da regra {{ r.index + 1 }}</legend>
+  <div class="edit-checks">
+    {%- for choice in r.choices %}
+    <label class="choice choice--check edit-check"><input type="checkbox" name="{{ name }}" value="{{ choice.value }}"{% if choice.checked %} checked{% endif %}><span class="choice__body"><span class="choice__mark">{{ m.icon('check') }}</span><span>{{ choice.label }}</span></span></label>
+    {%- endfor %}
+  </div>
+  {{ f.error_for(name) }}
+</fieldset>
+{%- elif r.widget == "select" %}
+<div class="field">
+  <label for="{{ id }}">Valor da regra {{ r.index + 1 }}</label>
+  <select class="select" id="{{ id }}" name="{{ name }}"{% if error %} aria-invalid="true" aria-describedby="{{ id }}-erro"{% endif %}>
+    <option value=""{% if not r.choices|selectattr("checked")|list %} selected{% endif %}>Escolha a opção</option>
+    {%- for choice in r.choices %}
+    <option value="{{ choice.value }}"{% if choice.checked %} selected{% endif %}>{{ choice.label }}</option>
+    {%- endfor %}
+  </select>
+  {{ f.error_for(name) }}
+</div>
+{%- elif r.widget == "lines" %}
+{{ f.field(name, "Valores da regra " ~ (r.index + 1), r.text, hint="Um valor por linha. A resposta da lead é comparada sem os espaços das pontas.", area=True, rows=3) }}
+{%- else %}
+{{ f.field(name, "Valor da regra " ~ (r.index + 1), r.text) }}
+{%- endif %}
+{% endmacro %}
+
+{#- Uma regra: a pergunta, o operador e o valor. -#}
+{% macro rule(c, r) %}
+{%- set s = page.structure %}
+{%- set field_name = r.name ~ ".field" %}
+{%- set field_id = s.field_id(field_name) %}
+{%- set operator_name = r.name ~ ".operator" %}
+{%- set operator_id = s.field_id(operator_name) %}
+<li class="edit-rule" id="{{ s.field_id(r.name) }}">
+  {{ f.error_for(r.name) }}
+  <div class="edit-grid">
+    <div class="field">
+      <label for="{{ field_id }}">Pergunta da regra {{ r.index + 1 }}</label>
+      <select class="select" id="{{ field_id }}" name="{{ field_name }}" hx-post="{{ s.edit_url }}" hx-trigger="change" hx-vals='{"op": "refresh-rule:{{ r.at }}"}'{% if s.focus == field_id %} autofocus{% endif %}{% if s.errors.get(field_name) %} aria-invalid="true" aria-describedby="{{ field_id }}-erro"{% endif %}>
+        <option value=""{% if not r.question %} selected{% endif %}>Escolha a pergunta</option>
+        {%- for value, shown in r.questions %}
+        <option value="{{ value }}"{% if value == r.question %} selected{% endif %}>{{ shown }}</option>
+        {%- endfor %}
+      </select>
+      {{ f.error_for(field_name) }}
+    </div>
+    <div class="field">
+      <label for="{{ operator_id }}">Operador da regra {{ r.index + 1 }}</label>
+      <select class="select" id="{{ operator_id }}" name="{{ operator_name }}" hx-post="{{ s.edit_url }}" hx-trigger="change" hx-vals='{"op": "refresh-operator:{{ r.at }}"}'{% if s.focus == operator_id %} autofocus{% endif %}{% if s.errors.get(operator_name) %} aria-invalid="true" aria-describedby="{{ operator_id }}-erro"{% endif %}>
+        {%- for value, shown in r.operators %}
+        <option value="{{ value }}"{% if value == r.operator %} selected{% endif %}>{{ shown }}</option>
+        {%- endfor %}
+      </select>
+      {{ f.error_for(operator_name) }}
+    </div>
+    {{ value(r) }}
+  </div>
+  {%- for note in r.notes %}
+  <p class="error edit-note">{{ m.icon('alert-triangle') }}{{ note }}</p>
+  {%- endfor %}
+  <p class="btns edit-actions">
+    <noscript><button class="btn btn--ghost btn--sm" type="submit" name="op" value="refresh-rule:{{ r.at }}" formaction="{{ s.edit_url }}" formnovalidate>Mostrar os valores da regra {{ r.index + 1 }}</button></noscript>
+    {%- if c.rules|length > 1 %}
+    {{ o.op("remove-rule:" ~ r.at, "Remover a regra", "trash", name="Remover a regra " ~ (r.index + 1) ~ " de: " ~ c.title) }}
+    {%- endif %}
+  </p>
+</li>
+{% endmacro %}
+
+{#- A condição inteira: o modo, as regras e os botões; ou, sem condição, o botão de adicionar. -#}
+{% macro block(c) %}
+{%- set s = page.structure %}
+{%- if not c.exists and c.compact %}
+<p class="btns edit-actions edit-condition-add">{{ o.op("add-condition:" ~ c.at, c.title, "plus", name=c.adding, id=c.add_condition_id) }}</p>
+{%- else %}
+<fieldset class="edit-condition" id="{{ s.field_id(c.name) }}">
+  <legend>{{ c.title }}</legend>
+  {{ f.error_for(c.name) }}
+  {%- if not c.exists %}
+  <p class="muted field__hint">{{ c.empty }}</p>
+  <p class="btns">{{ o.op("add-condition:" ~ c.at, "Adicionar condição", "plus", name=c.adding, id=c.add_condition_id) }}</p>
+  {%- else %}
+  {%- set mode_name = c.name ~ ".mode" %}
+  {%- set mode_id = s.field_id(mode_name) %}
+  <div class="field edit-mode">
+    <label for="{{ mode_id }}">Vale quando</label>
+    <select class="select" id="{{ mode_id }}" name="{{ mode_name }}"{% if s.errors.get(mode_name) %} aria-invalid="true" aria-describedby="{{ mode_id }}-erro"{% endif %}>
+      {%- for value, shown in s.conditions.modes %}
+      <option value="{{ value }}"{% if value == c.mode %} selected{% endif %}>{{ shown }}</option>
+      {%- endfor %}
+    </select>
+    {{ f.error_for(mode_name) }}
+  </div>
+  <ol class="edit-rules">
+    {%- for r in c.rules %}
+    {{ rule(c, r) }}
+    {%- endfor %}
+  </ol>
+  <p class="btns edit-actions">
+    {%- if c.can_add_rule %}
+    {{ o.op("add-rule:" ~ c.at, "Adicionar regra", "plus", name="Adicionar uma regra a: " ~ c.title, id=c.add_rule_id) }}
+    {%- endif %}
+    {{ o.op("remove-condition:" ~ c.at, "Tirar a condição", "trash", name="Tirar a condição: " ~ c.title) }}
+  </p>
+  {%- endif %}
+</fieldset>
+{%- endif %}
+{% endmacro %}
+
+{#- As regras que apontam para uma pergunta ou opção que foi renomeada, removida ou movida: o aviso
+    fica no alto das perguntas, com o link para a regra, porque a pergunta dela pode estar fechada. -#}
+{% macro review(notes) %}
+<div class="alert alert--warn" role="status" id="condicoes-a-revisar">{{ m.icon('alert-triangle', 'icon--lg') }}<div><strong class="alert__title">Há condições que apontam para o que mudou de lugar ou de nome:</strong>
+  <ul class="items">
+    {%- for note in notes %}
+    <li><a href="#{{ note.target }}">{{ note.where }}</a>: {{ note.message }}</li>
+    {%- endfor %}
+  </ul>
+  <p>Escolha de novo a pergunta ou o valor de cada regra. Enquanto uma regra apontar para o que não existe, o rascunho não salva.</p>
+</div></div>
+{% endmacro %}

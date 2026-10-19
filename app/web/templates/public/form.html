@@ -1,0 +1,54 @@
+{% extends "public/base.html" %}
+{% import "public/_macros.html" as ui %}
+{#- Sem JavaScript: todas as etapas numa página só, enviada de uma vez. Com JavaScript
+    (static/js/public.js): uma etapa por vez, progresso, rascunho no aparelho e perguntas
+    condicionais. As etapas estão em _steps.html, que a prévia do admin também usa. -#}
+{% block title %}{{ spec.title }}{% endblock %}
+{% block header_class %}container--wide{% endblock %}
+{% block main %}
+<main id="conteudo" class="layout-split">
+  {% include "public/_hero.html" %}
+
+  <div class="layout-split__main">
+    <div class="container form-wrap">
+      {%- if banner %}
+      <div class="alert alert--warn stack-gap" role="alert">
+        {{ ui.icon("info", "icon--lg") }}<div>{{ banner }}</div>
+      </div>
+      {%- endif %}
+      {%- if summary %}
+      <div class="alert alert--error stack-gap" role="alert" tabindex="-1" id="resumo-erros" autofocus>
+        {{ ui.icon("alert-circle", "icon--lg") }}
+        <div>
+          <strong class="alert__title">Falta corrigir {{ summary|length }} {{ "item" if summary|length == 1 else "itens" }} para continuar</strong>
+          <ul>
+            {%- for target, label in summary %}
+            <li><a href="#{{ target }}">{{ label }}</a></li>
+            {%- endfor %}
+          </ul>
+        </div>
+      </div>
+      {%- endif %}
+
+      <form class="stepform" method="post" action="/p/{{ spec.slug }}" data-steps data-minutes="{{ screen.minutes }}" data-draft-key="rascunho:{{ spec.slug }}:{{ spec.version }}">
+        <input type="hidden" name="_idem" value="{{ idempotency_key }}">
+        <input type="hidden" name="_consent_version" value="{{ spec.consent_text_version }}">
+        {%- for key, value in tracking.items() %}
+        <input type="hidden" name="_t_{{ key }}" value="{{ value }}">
+        {%- endfor %}
+        <div class="hp" aria-hidden="true">
+          <label for="hp-site">Não preencha este campo</label>
+          <input id="hp-site" name="_website" type="text" tabindex="-1" autocomplete="off">
+        </div>
+
+        {% include "public/_steps.html" %}
+
+        <p class="savebar" data-savebar hidden>
+          <span role="status" data-save-status>Suas respostas ficam salvas neste aparelho.</span>
+          <button class="linkbtn" type="button" data-clear>Apagar respostas salvas</button>
+        </p>
+      </form>
+    </div>
+  </div>
+</main>
+{% endblock %}

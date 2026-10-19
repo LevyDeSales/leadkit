@@ -1,0 +1,31 @@
+{#- Prévia do plano na página de resultado. Recebe `plan` (sem os campos internos), `lead.name`,
+    `form.title`, `form.slug`, `scores`, `generated_date` e `brand`, a biblioteca de componentes da
+    marca. -#}
+<section class="section" aria-labelledby="previa-titulo">
+  <h2 id="previa-titulo">{{ plan.titulo }}</h2>
+  <div class="summary">
+    <p>{{ plan.resumo }}</p>
+  </div>
+</section>
+
+<section class="section" aria-labelledby="fases-titulo">
+  <h2 id="fases-titulo">Seus 90 dias, fase a fase</h2>
+  {%- for fase in plan.fases %}
+  <div class="summary">
+    <h3>{{ brand.phase_days(loop.index0) }}: {{ fase.nome }}</h3>
+    <p>{{ fase.objetivo }}</p>
+    <ol class="actions-list">
+      {%- for acao in fase.acoes %}
+      <li>{{ acao.titulo }}</li>
+      {%- endfor %}
+    </ol>
+  </div>
+  {%- endfor %}
+</section>
+
+<section class="section" aria-labelledby="passo-titulo">
+  <h2 id="passo-titulo">Comece esta semana</h2>
+  <div class="summary">
+    <p>{{ plan.proximo_passo }}</p>
+  </div>
+</section>

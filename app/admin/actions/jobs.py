@@ -1,0 +1,267 @@
+"""As ações do admin sobre os pedidos: entregar o PDF de uma tentativa (`pdf_file`), reprocessar um
+pedido (`reprocess`) e reenviar uma entrega (`resend_delivery`) ou uma sincronização (`resend_sync`).
+
+A página e a API chamam as mesmas funções (ADR 0015, "A página e a API dividem os serviços"): elas não
+conhecem `Request`, HTML nem aviso de tela. Recebem o autor (`actor`: `ADMIN_USERNAME` pela página,
+`chave:<nome>` pela API), devolvem um resultado ou levantam uma exceção de domínio, e cada lado a
+traduz (a página, em aviso e redirecionamento; a API, em JSON e status). A regra do reprocessamento (o
+motivo de 10 a 300 caracteres, a confirmação, a tentativa que a pessoa viu) e o disparo no Hatchet
+(`app.admin.launching`) moravam dentro das rotas HTML; moveram-se para cá sem mudar.
+
+**O disparo que não chega ao engine não é erro:** a ação vale (a tentativa nova existe, a entrega ou a
+sincronização voltou para pendente), `launched` diz `False`, e o reconciliador dispara o que ficou sem
+run id. Nada aqui leva dado da lead para o Hatchet: as tasks recebem só ids, e as mensagens de erro
+nunca citam o motivo digitado.
+"""
+
+from __future__ import annotations
+
+import logging
+import uuid
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Literal
+
+import sqlalchemy as sa
+from fastapi.concurrency import run_in_threadpool
+from sqlalchemy.orm import Session
+
+from app import jobs
+from app.admin import launching
+from app.deps import Deps
+from app.integrations import syncs as integration_syncs
+from app.models import Artifact, Delivery, IntegrationSync, Job
+
+logger = logging.getLogger(__name__)
+
+SIGNED_URL_TTL_SECONDS = 300
+REASON_MIN_LENGTH = 10
+REASON_MAX_LENGTH = 300
+REASON_INVALID = (
+    f"Descreva o motivo com pelo menos {REASON_MIN_LENGTH} caracteres "
+    f"(no máximo {REASON_MAX_LENGTH})."
+)
+CONFIRM_MISSING = "Confirme que entende que isso gera uma nova tentativa."
+
+
+class NoPdf(Exception):
+    """O pedido não existe, ou ainda não tem PDF (ou não tem o da tentativa pedida)."""
+
+
+class PdfRemoved(Exception):
+    """O PDF existia e a retenção já apagou o arquivo (`app.retention`)."""
+
+
+@dataclass(frozen=True)
+class PdfFile:
+    """O PDF a entregar: ou `url`, a URL assinada de curta duração do storage (a página manda o
+    navegador buscá-lo), ou `content`, os bytes. Nunca os dois."""
+
+    filename: str
+    url: str | None = None
+    content: bytes | None = None
+
+
+def pdf_file(deps: Deps, public_id: str, version: int | None, *, signed_url: bool) -> PdfFile:
+    """O PDF da tentativa `version` do pedido (a mais recente, sem `version`).
+
+    Com `signed_url`, e se o storage assina (o S3, e não o disco local), devolve a URL de 300 s em
+    vez dos bytes: é o que a página faz. Sem ele, devolve sempre os bytes: a API entrega o arquivo, e
+    uma URL assinada seria um segundo segredo, fora da chave e da auditoria.
+
+    Levanta `NoPdf` (404) e `PdfRemoved` (410). Um storage que falha levanta o erro dele."""
+    statement = (
+        sa.select(Artifact.storage_key, Artifact.version, Artifact.purged_at)
+        .join(Job, Job.id == Artifact.job_id)
+        .where(Job.public_id == public_id, Artifact.kind == "pdf")
+        .order_by(Artifact.version.desc())
+        .limit(1)
+    )
+    if version is not None:
+        statement = statement.where(Artifact.version == version)
+    with deps.sessions() as session:
+        found = session.execute(statement).one_or_none()
+    if found is None:
+        raise NoPdf
+    if found.purged_at is not None:
+        raise PdfRemoved
+    filename = f"plano-{public_id}-v{found.version}.pdf"
+    if signed_url:
+        url = deps.storage.presigned_url(
+            found.storage_key, ttl_seconds=SIGNED_URL_TTL_SECONDS, filename=filename
+        )
+        if url:
+            return PdfFile(filename, url=url)
+    return PdfFile(filename, content=deps.storage.get(found.storage_key))
+
+
+# --- reprocessar e reenviar ---------------------------------------------------------------------
+
+
+class JobNotFound(Exception):
+    """O pedido não existe."""
+
+
+class InvalidReprocess(Exception):
+    """O reprocessamento não vale: `errors` mapeia o campo (`reason`, `confirm`) ao motivo, em
+    português. Nada foi feito. A mensagem da exceção só diz os campos, nunca o texto do motivo (que
+    pode citar a lead)."""
+
+    def __init__(self, errors: dict[str, str]) -> None:
+        super().__init__("reprocessamento recusado: " + ", ".join(errors))
+        self.errors = errors
+
+
+class ReprocessRefused(Exception):
+    """O pedido não está concluído nem falho (está na fila ou gerando), ou já não está na tentativa
+    que a pessoa viu (duplo clique, outra pessoa reprocessou antes). Nada foi feito."""
+
+
+class ResendRefused(Exception):
+    """A entrega ou a sincronização não pode ser reenviada. `missing` diz por quê: `True`, ela não
+    existe neste pedido; `False`, existe mas não está em `failed` (já voltou para a fila, ou já saiu).
+    Nada foi feito."""
+
+    def __init__(self, *, missing: bool) -> None:
+        super().__init__("não existe neste pedido" if missing else "não está em failed")
+        self.missing = missing
+
+
+@dataclass(frozen=True)
+class Reprocessed:
+    """A tentativa nova de um pedido. `launched`: o engine recebeu o disparo (`False`: a tentativa
+    existe e o reconciliador a dispara)."""
+
+    job_id: uuid.UUID
+    attempt: int
+    launched: bool
+
+
+@dataclass(frozen=True)
+class Resent:
+    """A entrega ou a sincronização voltou para pendente. `launched`: o engine recebeu o disparo
+    (`False`: ela está pendente sem run id e o reconciliador a dispara)."""
+
+    launched: bool
+
+
+def _job_id(session: Session, public_id: str) -> uuid.UUID | None:
+    return session.scalar(sa.select(Job.id).where(Job.public_id == public_id))
+
+
+async def reprocess(
+    deps: Deps,
+    trigger: launching.Trigger,
+    public_id: str,
+    *,
+    actor: str,
+    reason: str,
+    confirm: bool,
+    expected_attempt: int | None,
+) -> Reprocessed:
+    """Nova tentativa auditada em nome de `actor`, disparada uma única vez.
+
+    O `reason` (depois de aparado) tem de ter de 10 a 300 caracteres e `confirm` tem de ser verdadeiro;
+    os dois problemas saem juntos em `InvalidReprocess`, antes de qualquer consulta. `expected_attempt`
+    é a tentativa que a pessoa viu: se o pedido já está noutra (duplo clique, outra pessoa, uma resposta
+    que se perdeu e foi repetida), `ReprocessRefused`, sem segunda tentativa; `None` não confere a
+    tentativa, só o estado (concluído ou falho). `trigger` é o `app.state.trigger`.
+
+    Levanta `InvalidReprocess`, `JobNotFound` e `ReprocessRefused`."""
+    reason = reason.strip()
+    errors = {}
+    if not REASON_MIN_LENGTH <= len(reason) <= REASON_MAX_LENGTH:
+        errors["reason"] = REASON_INVALID
+    if not confirm:
+        errors["confirm"] = CONFIRM_MISSING
+    if errors:
+        raise InvalidReprocess(errors)
+
+    def create() -> tuple[uuid.UUID, int | None] | None:
+        with deps.sessions.begin() as session:
+            job_id = _job_id(session, public_id)
+            if job_id is None:
+                return None
+            return job_id, jobs.reprocess(
+                session, job_id, actor=actor, reason=reason, expected_attempt=expected_attempt
+            )
+
+    created = await run_in_threadpool(create)
+    if created is None:
+        raise JobNotFound
+    job_id, attempt = created
+    if attempt is None:
+        raise ReprocessRefused
+    launched = await launching.launch_attempt(trigger, job_id, attempt)  # falha: o reconciliador
+    logger.info(
+        "admin: reprocessamento job=%s tentativa=%s por=%s launched=%s",
+        job_id,
+        attempt,
+        actor,
+        launched,
+    )
+    return Reprocessed(job_id=job_id, attempt=attempt, launched=launched)
+
+
+async def resend_delivery(
+    deps: Deps, public_id: str, delivery_id: uuid.UUID, *, actor: str
+) -> Resent:
+    """Uma entrega que falhou volta para pendente (auditado em nome de `actor`) e o `deliver` é
+    disparado de novo. Sem engine, o SDK insiste por minutos: a espera é limitada
+    (`app.admin.launching`), e o reconciliador encontra a entrega pendente sem run id.
+
+    Levanta `JobNotFound` e `ResendRefused`."""
+    await _requeue(
+        deps,
+        public_id,
+        Delivery,
+        delivery_id,
+        lambda session, job_id: jobs.resend_delivery(session, job_id, delivery_id, actor=actor),
+    )
+    logger.info("admin: reenvio delivery=%s por=%s", delivery_id, actor)
+    return Resent(launched=await launching.launch_delivery(deps, delivery_id))
+
+
+async def resend_sync(deps: Deps, public_id: str, sync_id: uuid.UUID, *, actor: str) -> Resent:
+    """Uma sincronização com a planilha que falhou volta para pendente (auditado em nome de `actor`) e
+    é disparada de novo, como o reenvio de uma entrega.
+
+    Levanta `JobNotFound` e `ResendRefused`."""
+    await _requeue(
+        deps,
+        public_id,
+        IntegrationSync,
+        sync_id,
+        lambda session, job_id: integration_syncs.resend(session, job_id, sync_id, actor=actor),
+    )
+    logger.info("admin: reenvio da sincronização sync=%s por=%s", sync_id, actor)
+    return Resent(launched=await launching.launch_sync(deps, sync_id))
+
+
+async def _requeue(
+    deps: Deps,
+    public_id: str,
+    model: type[Delivery | IntegrationSync],
+    target: uuid.UUID,
+    requeue: Callable[[Session, uuid.UUID], bool],
+) -> None:
+    """Volta a linha `target` (de `model`) do pedido `public_id` para pendente, numa transação. Se não
+    voltou, descobre por quê: não existe neste pedido (`missing`) ou existe e não está em `failed`."""
+
+    def run() -> Literal["no_job", "requeued", "refused", "missing"]:
+        with deps.sessions.begin() as session:
+            job_id = _job_id(session, public_id)
+            if job_id is None:
+                return "no_job"
+            if requeue(session, job_id):
+                return "requeued"
+            exists = session.scalar(
+                sa.select(model.id).where(model.id == target, model.job_id == job_id)
+            )
+            return "refused" if exists is not None else "missing"
+
+    outcome = await run_in_threadpool(run)
+    if outcome == "no_job":
+        raise JobNotFound
+    if outcome != "requeued":
+        raise ResendRefused(missing=outcome == "missing")

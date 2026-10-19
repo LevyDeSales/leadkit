@@ -1,0 +1,10 @@
+/* Leadkit: base própria; classes ac-* preservam templates publicados. */
+:root { --font-body: "Source Sans Pro", sans-serif; --font-display: "Source Serif Pro", serif; --wine: #17324d; --gold: #286b92; --gold-light: #dceefa; --white: #fff; --ink: #17324d; }
+* { box-sizing: border-box; } body { margin: 0; color: #17324d; font: 10pt/1.5 var(--font-body); }
+h1, h2, h3 { font-family: var(--font-display); line-height: 1.2; } p, ul, ol { margin: 0; padding: 0; } h1, h2, h3 { margin: 0; }
+.ac-eyebrow { color: #286b92; font-size: 8pt; text-transform: uppercase; letter-spacing: .1em; font-weight: 700; }
+.ac-rule { width: 22mm; margin: 5mm 0; border-top: 1pt solid #286b92; }
+.ac-lead { font-size: 13pt; line-height: 1.5; } .ac-chip { display: inline-block; padding: 1mm 3mm; background: #dceefa; border-radius: 3mm; font-weight: 600; }
+.ac-numeral { color: #286b92; font: 700 36pt var(--font-display); } .ac-panel { padding: 5mm; background: #f2f6f8; break-inside: avoid; }
+.ac-on-wine { background: #17324d; color: #fff; } .ac-on-wine h1, .ac-on-wine h2, .ac-on-wine h3 { color: #fff; }
+.running-header { position: running(header); } .running-header img { height: 7mm; }

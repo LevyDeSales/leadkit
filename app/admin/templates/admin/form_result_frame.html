@@ -1,0 +1,33 @@
+{% extends "public/base.html" %}
+{% import "public/_macros.html" as ui %}
+{#- A página de resultado do rascunho no quadro de celular do editor do PDF (form_pdf.html): a mesma
+    moldura de public/result.html, com a prévia da página e um arquivo de mentira, sem JavaScript e
+    sem pedido por trás. -#}
+{% block title %}Prévia: {{ title }}{% endblock %}
+{% block scripts %}{% endblock %}
+{% block main %}
+<main id="conteudo" class="container page">
+  <h1>Seu plano está pronto</h1>
+  <p class="lead">Montamos este plano a partir das suas respostas. Baixe o PDF para guardar e compartilhar com a sua equipe.</p>
+
+  <section class="filecard" aria-labelledby="arquivo-titulo">
+    <h2 class="sr-only" id="arquivo-titulo">Seu arquivo</h2>
+    <div class="filecard__meta">
+      <span class="filecard__icon">{{ ui.icon("file") }}</span>
+      <div>
+        <p class="filecard__name">plano-exemplo.pdf</p>
+        <p class="filecard__sub">PDF · gerado em {{ date }}</p>
+      </div>
+    </div>
+    <span class="btn btn--primary btn--lg" aria-disabled="true">{{ ui.icon("download") }}Baixar PDF</span>
+    <p class="fineprint">Prévia do rascunho: o arquivo para baixar é de mentira.</p>
+  </section>
+
+  {{ preview }}
+
+  <p class="fineprint">Plano gerado com apoio de inteligência artificial a partir das suas respostas. É uma orientação inicial e não substitui consultoria nem parecer técnico. Os resultados dependem da execução e não são garantidos.</p>
+</main>
+{% endblock %}
+{% block footer %}
+<p>Esta página é pessoal. Não compartilhe o endereço com outras pessoas.</p>
+{% endblock %}

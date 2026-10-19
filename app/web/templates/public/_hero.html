@@ -1,0 +1,16 @@
+{#- O topo da página do formulário (form.html), também na prévia do rascunho no admin
+    (admin/form_preview_frame.html): o título, a introdução e o que a lead precisa saber antes de
+    começar. O aviso de pausar e continuar só aparece com o public.js, que guarda o rascunho no
+    aparelho. -#}
+{%- import "public/_macros.html" as ui -%}
+<section class="hero on-dark" aria-labelledby="titulo">
+  <div class="container hero__inner">
+    <h1 id="titulo">{{ spec.title }}</h1>
+    <p class="lead">{{ screen.intro }}</p>
+    <ul class="facts">
+      <li>{{ ui.icon("clock") }}<span>Cerca de {{ screen.minutes }} minutos, no celular ou no computador</span></li>
+      <li data-draft-fact hidden>{{ ui.icon("history") }}<span>Você pode pausar e continuar depois, neste aparelho</span></li>
+      <li>{{ ui.icon("file") }}<span>O plano fica pronto em PDF, para baixar e guardar</span></li>
+    </ul>
+  </div>
+</section>

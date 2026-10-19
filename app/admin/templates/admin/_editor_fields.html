@@ -1,0 +1,40 @@
+{#- Os campos do editor do rascunho (form_draft.html e _form_structure.html), com o rótulo, a dica e
+    o problema que o salvar apontou neles. Importado com o contexto: lê `page.structure`, com os
+    problemas pelo nome do campo, o campo que recebe o foco e o id de cada campo. -#}
+{%- import "admin/macros.html" as m -%}
+
+{#- Os ids que o leitor de tela lê junto com o campo: a dica e o problema. -#}
+{% macro described(name, hint) -%}
+{%- set id = page.structure.field_id(name) -%}
+{{ (id ~ "-dica") if hint else "" }}{{ " " if hint and page.structure.errors.get(name) else "" }}{{ (id ~ "-erro") if page.structure.errors.get(name) else "" }}
+{%- endmacro %}
+
+{% macro error_for(name) -%}
+{%- if page.structure.errors.get(name) %}<p class="error" id="{{ page.structure.field_id(name) }}-erro">{{ m.icon('alert-circle') }}{{ page.structure.errors[name] }}</p>{% endif -%}
+{%- endmacro %}
+
+{#- Um campo de texto, de texto longo ou de número. A quebra de linha logo depois da abertura do
+    textarea é descartada pelo navegador: sem ela, um texto que começa com uma linha em branco a
+    perderia. -#}
+{% macro field(name, label, value, hint=None, opt=False, mono=False, area=False, rows=3, number=False) -%}
+{%- set id = page.structure.field_id(name) -%}
+{%- set error = page.structure.errors.get(name) -%}
+{%- set ids = described(name, hint) -%}
+<div class="field">
+  <label for="{{ id }}">{{ label }}{% if opt %} <span class="opt">(opcional)</span>{% endif %}</label>
+  {%- if hint %}
+  <p class="muted field__hint" id="{{ id }}-dica">{{ hint }}</p>
+  {%- endif %}
+  {%- if area %}
+  <textarea class="input{{ ' mono' if mono }}" id="{{ id }}" name="{{ name }}" rows="{{ rows }}"{% if mono %} autocapitalize="none" spellcheck="false"{% endif %}{% if ids %} aria-describedby="{{ ids }}"{% endif %}{% if error %} aria-invalid="true"{% endif %}{% if page.structure.focus == id %} autofocus{% endif %}>
+{{ value }}</textarea>
+  {%- else %}
+  <input class="input{{ ' mono' if mono }}" id="{{ id }}" name="{{ name }}" type="text"{% if number %} inputmode="numeric"{% endif %} value="{{ value }}" autocomplete="off"{% if mono %} autocapitalize="none" spellcheck="false"{% endif %}{% if ids %} aria-describedby="{{ ids }}"{% endif %}{% if error %} aria-invalid="true"{% endif %}{% if page.structure.focus == id %} autofocus{% endif %}>
+  {%- endif %}
+  {{ error_for(name) }}
+</div>
+{%- endmacro %}
+
+{% macro check(name, label, checked) -%}
+<label class="choice choice--check edit-check"><input type="checkbox" id="{{ page.structure.field_id(name) }}" name="{{ name }}" value="on"{% if checked %} checked{% endif %}><span class="choice__body"><span class="choice__mark">{{ m.icon('check') }}</span><span>{{ label }}</span></span></label>
+{%- endmacro %}

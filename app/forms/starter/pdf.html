@@ -1,0 +1,79 @@
+{#- PDF do plano na marca da Leadkit (app/assets/brands/leadkit).
+    Recebe `plan` (sem os campos internos), `lead.name`, `form.title`, `form.slug`, `scores`,
+    `generated_date` e `brand`, a biblioteca de componentes da marca. As URLs relativas apontam
+    para app/assets/. Cada fase tem 30 dias: a 1ª vai do dia 1 ao 30, a 2ª do 31 ao 60, e assim
+    por diante. -#}
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <title>{{ plan.titulo }}</title>
+  <meta name="author" content="Leadkit">
+  <meta name="description" content="{{ form.title }}">
+</head>
+<body>
+  {{ brand.running_header() }}
+
+  <section class="cover ac-on-wine">
+    {{ brand.logo("branca", "cover__logo") }}
+    <div class="cover__body">
+      {{ brand.eyebrow("Plano de ação · 90 dias") }}
+      <h1>{{ plan.titulo }}</h1>
+      {{ brand.rule() }}
+      {%- if lead.name %}
+      <p class="cover__for">Preparado para <strong>{{ lead.name }}</strong></p>
+      {%- endif %}
+      <p class="cover__date">{{ generated_date }}</p>
+    </div>
+    <ol class="cover__phases">
+      {%- for fase in plan.fases %}
+      <li><span class="cover__days">{{ brand.phase_days(loop.index0) }}</span>{{ fase.nome }}</li>
+      {%- endfor %}
+    </ol>
+    <p class="cover__note">{{ form.title }} · Orientação inicial a partir das suas respostas.</p>
+  </section>
+
+  <section class="start">
+    {{ brand.eyebrow("Seu ponto de partida") }}
+    <h2>Onde o projeto está hoje</h2>
+    {{ brand.rule() }}
+    {{ brand.lead(plan.resumo) }}
+  </section>
+
+  <section class="phases">
+    {{ brand.eyebrow("Seus 90 dias") }}
+    <h2>O plano, fase a fase</h2>
+    {{ brand.rule() }}
+    {%- for fase in plan.fases %}
+    <article class="phase">
+      {{ brand.chip(brand.phase_days(loop.index0)) }}
+      <h3>{{ fase.nome }}</h3>
+      <p class="phase__goal">{{ fase.objetivo }}</p>
+      <ul class="checklist">
+        {%- for acao in fase.acoes %}
+        <li>
+          <p class="checklist__title"><span class="checklist__box"></span>{{ acao.titulo }}</p>
+          <p class="checklist__how">{{ acao.como_fazer }}</p>
+        </li>
+        {%- endfor %}
+      </ul>
+      <p class="phase__deliverable"><span>Entrega da fase</span>{{ fase.entrega }}</p>
+    </article>
+    {%- endfor %}
+  </section>
+
+  {#- Fecho numa peça só: nunca uma página com só o aviso ou só a mensagem final. #}
+  <section class="closing">
+    <div class="next ac-on-wine">
+      <p class="ac-eyebrow">Comece esta semana</p>
+      <p class="next__text">{{ plan.proximo_passo }}</p>
+    </div>
+    <p class="final">{{ plan.mensagem_final }}</p>
+    <p class="fineprint">
+      {{ form.title }}. Plano inicial gerado com apoio de inteligência artificial a partir das suas
+      respostas. Ele orienta os próximos passos do projeto e não substitui consultoria nem
+      parecer técnico; os resultados dependem da execução.
+    </p>
+  </section>
+</body>
+</html>

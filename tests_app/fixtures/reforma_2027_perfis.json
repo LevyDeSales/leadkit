@@ -1,0 +1,148 @@
+[
+  {
+    "perfil": "solo_inicial",
+    "descricao": "Trabalha sozinha, carteira pequena quase toda no Simples e ainda sem estudo da Reforma.",
+    "respostas": {
+      "nome": "Ana Exemplo",
+      "email": "ana.solo@example.test",
+      "tamanho_equipe": "so_eu",
+      "clientes_total": "ate_30",
+      "clientes_simples": "mais_de_80",
+      "vendas_b2b": "nao_sei",
+      "setores": ["servicos", "profissionais"],
+      "estudo_reforma": "nao_comecei",
+      "simulacoes": "nenhum",
+      "comunicacao_clientes": "nao",
+      "cobranca_consultoria": "nao_pensei",
+      "maior_preocupacao": "clientes",
+      "objetivo": "Entender o básico da Reforma e conseguir explicar para os meus clientes o que muda em 2027 sem me enrolar."
+    },
+    "esperado": {
+      "prontidao": 0,
+      "nivel_prontidao": "inicial",
+      "exposicao": 75,
+      "nivel_exposicao": "alta",
+      "necessidade": 90,
+      "prioridade": "P1",
+      "persona": "clientes"
+    }
+  },
+  {
+    "perfil": "b2b_em_construcao",
+    "descricao": "Equipe média, carteira grande com muitos clientes que vendem para empresas e estudo em andamento.",
+    "respostas": {
+      "nome": "Beatriz Exemplo",
+      "email": "beatriz.b2b@example.test",
+      "whatsapp": "(11) 90000-0002",
+      "escritorio": "Escritório Exemplo B2B",
+      "tamanho_equipe": "6_a_15",
+      "clientes_total": "81_a_150",
+      "clientes_simples": "metade_a_80",
+      "vendas_b2b": "maioria",
+      "setores": ["comercio", "industria", "servicos"],
+      "estudo_reforma": "estudando",
+      "simulacoes": "alguns",
+      "comunicacao_clientes": "alguns",
+      "cobranca_consultoria": "pretendo",
+      "maior_preocupacao": "escolha_regime",
+      "objetivo": "Ter a simulação de etapas A e B pronta para os clientes que vendem para empresas e uma proposta de consultoria para apresentar em novembro."
+    },
+    "esperado": {
+      "prontidao": 55,
+      "nivel_prontidao": "em_construcao",
+      "exposicao": 80,
+      "nivel_exposicao": "alta",
+      "necessidade": 59,
+      "prioridade": "P2",
+      "persona": "escolha_regime"
+    }
+  },
+  {
+    "perfil": "grande_pronta",
+    "descricao": "Escritório grande, preparação completa; quer automatizar sistemas e rotinas.",
+    "respostas": {
+      "nome": "Carla Exemplo",
+      "email": "carla.grande@example.test",
+      "whatsapp": "+55 21 90000-0003",
+      "escritorio": "Exemplo Contabilidade Integrada",
+      "tamanho_equipe": "mais_de_15",
+      "clientes_total": "mais_de_150",
+      "clientes_simples": "mais_de_80",
+      "vendas_b2b": "parte",
+      "setores": ["comercio", "servicos", "industria", "profissionais"],
+      "estudo_reforma": "dominio",
+      "simulacoes": "maioria",
+      "comunicacao_clientes": "maioria",
+      "cobranca_consultoria": "ja_cobro",
+      "maior_preocupacao": "sistemas",
+      "objetivo": "Automatizar a apuração e revisar os sistemas fiscais para rodar as novas rotinas de etapas A e B sem retrabalho na virada do ano."
+    },
+    "esperado": {
+      "prontidao": 100,
+      "nivel_prontidao": "pronta",
+      "exposicao": 85,
+      "nivel_exposicao": "alta",
+      "necessidade": 34,
+      "prioridade": "P3",
+      "persona": "sistemas"
+    }
+  },
+  {
+    "perfil": "comercio_equipe",
+    "descricao": "Equipe pequena, clientes de comércio que vendem ao consumidor final e equipe ainda não preparada.",
+    "respostas": {
+      "nome": "Daniela Exemplo",
+      "email": "daniela.comercio@example.test",
+      "escritorio": "Daniela Exemplo Contabilidade",
+      "tamanho_equipe": "2_a_5",
+      "clientes_total": "31_a_80",
+      "clientes_simples": "mais_de_80",
+      "vendas_b2b": "poucos",
+      "setores": ["comercio"],
+      "estudo_reforma": "basico",
+      "simulacoes": "nenhum",
+      "comunicacao_clientes": "nao",
+      "cobranca_consultoria": "incluso",
+      "maior_preocupacao": "equipe",
+      "objetivo": "Treinar minha equipe para as novas rotinas e montar um calendário de implantação até janeiro."
+    },
+    "esperado": {
+      "prontidao": 14,
+      "nivel_prontidao": "inicial",
+      "exposicao": 60,
+      "nivel_exposicao": "media",
+      "necessidade": 76,
+      "prioridade": "P1",
+      "persona": "equipe"
+    }
+  },
+  {
+    "perfil": "servicos_precificacao",
+    "descricao": "Carteira de serviços com menos da metade no Simples, boa comunicação e foco em cobrar a consultoria.",
+    "respostas": {
+      "nome": "Elaine Exemplo",
+      "email": "elaine.servicos@example.test",
+      "whatsapp": "31 90000-0005",
+      "tamanho_equipe": "2_a_5",
+      "clientes_total": "81_a_150",
+      "clientes_simples": "menos_da_metade",
+      "vendas_b2b": "parte",
+      "setores": ["servicos", "profissionais"],
+      "estudo_reforma": "estudando",
+      "simulacoes": "alguns",
+      "comunicacao_clientes": "maioria",
+      "cobranca_consultoria": "pretendo",
+      "maior_preocupacao": "precificacao",
+      "objetivo": "Montar a tabela de preços da consultoria da Reforma e revisar os contratos antes de 2027."
+    },
+    "esperado": {
+      "prontidao": 67,
+      "nivel_prontidao": "avancada",
+      "exposicao": 50,
+      "nivel_exposicao": "media",
+      "necessidade": 40,
+      "prioridade": "P3",
+      "persona": "precificacao"
+    }
+  }
+]

@@ -1,0 +1,36 @@
+{#- Consentimento separado e nunca pré-marcado pelo servidor: processamento (obrigatório) e
+    marketing por canal (opcional). Os textos e a versão vêm do formulário (ConsentText). -#}
+{%- set text = screen.consent %}
+<div class="consent" role="group" aria-labelledby="consent-titulo" aria-describedby="consent-texto">
+  <h3 id="consent-titulo">Seus dados</h3>
+  <p id="consent-texto">{{ text.notice }}</p>
+
+  <label class="choice choice--check">
+    <input type="checkbox" id="consent-processamento" name="_privacy" value="1" required
+      {%- if consent.privacy %} checked{% endif %}
+      {%- if consent_error %} aria-invalid="true" aria-describedby="consent-erro"{% endif %}>
+    <span class="choice__body"><span class="choice__mark">{{ ui.icon("check") }}</span><span>{{ text.processing }}</span></span>
+  </label>
+  {%- if consent_error %}
+  {{ ui.error_text("consent-erro", consent_error) }}
+  {%- endif %}
+
+  {%- if text.marketing_email or text.marketing_whatsapp %}
+  <div class="consent-optional">
+    <p class="hint"><strong>Opcional:</strong> você recebe o plano mesmo sem marcar.</p>
+    {%- if text.marketing_email %}
+    <label class="choice choice--check">
+      <input type="checkbox" id="consent-email" name="_mkt_email" value="1"{% if consent.marketing_email %} checked{% endif %}>
+      <span class="choice__body"><span class="choice__mark">{{ ui.icon("check") }}</span><span>{{ text.marketing_email }}</span></span>
+    </label>
+    {%- endif %}
+    {%- if text.marketing_whatsapp %}
+    <label class="choice choice--check">
+      <input type="checkbox" id="consent-whatsapp" name="_mkt_whatsapp" value="1"{% if consent.marketing_whatsapp %} checked{% endif %}>
+      <span class="choice__body"><span class="choice__mark">{{ ui.icon("check") }}</span><span>{{ text.marketing_whatsapp }}</span></span>
+    </label>
+    {%- endif %}
+    <p class="fineprint">Você pode cancelar quando quiser.</p>
+  </div>
+  {%- endif %}
+</div>

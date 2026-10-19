@@ -1,0 +1,148 @@
+{#- O editor das etapas, das perguntas, das opções e da identidade da lead (app/admin/form_editor.py),
+    dentro do formulário do rascunho. Cada campo tem por nome o caminho dele na definição. Os botões
+    de incluir, remover e reordenar mandam o formulário inteiro com a operação: sem JavaScript, a
+    página volta inteira; com o HTMX, volta só este trecho, e o resto da página fica como estava. -#}
+{%- import "admin/macros.html" as m -%}
+{%- import "admin/_editor_fields.html" as f with context -%}
+{%- import "admin/_condition_editor.html" as c with context -%}
+{%- set s = page.structure -%}
+
+{#- Um botão de operação do editor: sem JavaScript é um envio do formulário para a operação; com o
+    HTMX, troca só este trecho. `formnovalidate`: uma pergunta ainda vazia não trava a operação. -#}
+{% macro op(value, text, icon, name=None, id=None) -%}
+<button class="btn btn--ghost btn--sm" type="submit" name="op" value="{{ value }}" formaction="{{ page.structure.edit_url }}" formnovalidate hx-post="{{ page.structure.edit_url }}"{% if id %} id="{{ id }}"{% endif %}{% if name %} aria-label="{{ name }}"{% endif %}{% if id and page.structure.focus == id %} autofocus{% endif %}>{{ m.icon(icon) }}{{ text }}</button>
+{%- endmacro %}
+
+<div id="estrutura" class="stackcol" hx-target="this" hx-swap="outerHTML">
+<section class="box" id="etapas" aria-labelledby="etapas-titulo">
+  <h2 id="etapas-titulo">Etapas e perguntas</h2>
+  <p class="muted">Cada etapa é uma tela do formulário. Incluir, remover e reordenar só valem quando você salvar o rascunho.{% if page.unsaved %} <strong>Há mudanças nesta página que ainda não foram salvas.</strong>{% endif %}</p>
+  {% if s.dropped %}
+  {{ m.dropped_values(s.dropped) }}
+  {% endif %}
+  {% if s.conditions.notes %}
+  {{ c.review(s.conditions.notes) }}
+  {% endif %}
+  {{ f.error_for("steps") }}
+
+  {%- for step in s.edit.steps %}
+  {%- set i = loop.index0 %}
+  {%- set prefix = "steps." ~ i %}
+  <fieldset class="edit-step" id="{{ s.field_id(prefix) }}">
+    <legend>Etapa {{ i + 1 }}</legend>
+    {{ f.error_for(prefix) }}
+    {{ f.field(prefix ~ ".title", "Título da etapa", step.title) }}
+    {{ f.field(prefix ~ ".help", "Ajuda da etapa", step.help, opt=True, area=True, rows=2) }}
+
+    <ol class="edit-questions">
+      {%- for q in step.questions %}
+      {%- set j = loop.index0 %}
+      {%- set qp = prefix ~ ".questions." ~ j %}
+      {%- set number = "pergunta " ~ (j + 1) ~ " da etapa " ~ (i + 1) %}
+      <li>
+      <details class="edit-q" id="{{ s.field_id(qp) }}"{% if (i ~ "." ~ j) in s.opened or (i ~ "." ~ j) in s.conditions.reviewing %} open{% endif %}>
+        <summary><span class="edit-q__head"><b>{{ q.label or "Pergunta nova" }}</b><span class="muted">{{ s.kind_label(q.kind) }} · {{ "obrigatória" if q.required else "opcional" }}{% if q.name %} · <span class="mono">{{ q.name }}</span>{% endif %}</span>{% set when = s.conditions.of(i, j) %}{% if when.summary %}<span class="muted edit-q__when">{{ when.summary }}</span>{% endif %}</span>{% if (i ~ "." ~ j) in s.conditions.reviewing %}<span class="badge badge--warn">{{ m.icon('alert-triangle') }}revise a condição</span>{% endif %}{% if (i ~ "." ~ j) in s.troubled %}<span class="badge badge--err">{{ m.icon('alert-circle') }}com problema</span>{% endif %}{{ m.icon('chevron-down') }}</summary>
+        <div class="edit-q__body">
+          {{ f.error_for(qp) }}
+          <div class="edit-grid">
+            {{ f.field(qp ~ ".label", "Rótulo", q.label, hint="A pergunta, como a lead lê.") }}
+            {#- Trocar o tipo desenha a pergunta de novo, com os campos do tipo novo: o HTMX manda
+                a operação junto com o formulário; sem JavaScript, o botão faz o mesmo. -#}
+            {%- set kind_id = s.field_id(qp ~ '.kind') %}
+            {%- set refresh = "refresh-question:" ~ i ~ ":" ~ j %}
+            <div class="field">
+              <label for="{{ kind_id }}">Tipo</label>
+              <select class="select" id="{{ kind_id }}" name="{{ qp }}.kind" hx-post="{{ s.edit_url }}" hx-trigger="change" hx-vals='{"op": "{{ refresh }}"}'{% if s.focus == kind_id %} autofocus{% endif %}{% if s.errors.get(qp ~ '.kind') %} aria-invalid="true" aria-describedby="{{ kind_id }}-erro"{% endif %}>
+                {%- for value, text in s.kinds %}
+                <option value="{{ value }}"{% if value == q.kind %} selected{% endif %}>{{ text }}</option>
+                {%- endfor %}
+              </select>
+              <noscript><button class="btn btn--ghost btn--sm" type="submit" name="op" value="{{ refresh }}" formaction="{{ s.edit_url }}" formnovalidate>Mostrar os campos do tipo</button></noscript>
+              {{ f.error_for(qp ~ ".kind") }}
+            </div>
+            {{ f.field(qp ~ ".name", "Nome da resposta", q.name, hint="A chave da resposta no envio, no webhook e no prompt (answers." ~ (q.name or "nome") ~ "). Em branco, sai do rótulo.", mono=True) }}
+            {{ f.field(qp ~ ".help", "Ajuda", q.help, opt=True) }}
+          </div>
+          <div class="edit-checks">
+            {{ f.check(qp ~ ".required", "Obrigatória", q.required) }}
+            {%- if not q.always_contact %}
+            {{ f.check(qp ~ ".contact", "Dado de contato: fica fora do rascunho no aparelho", q.contact) }}
+            {%- elif q.contact %}
+            {#- E-mail e telefone ficam fora do rascunho no aparelho de todo jeito: a caixa não
+                aparece, e a marcação que a definição traz segue como estava. #}
+            <input type="hidden" name="{{ qp }}.contact" value="on">
+            {%- endif %}
+          </div>
+          {%- if not q.choice %}
+          <div class="edit-grid">
+            {{ f.field(qp ~ ".placeholder", "Texto no campo vazio", q.placeholder, opt=True) }}
+            {{ f.field(qp ~ ".autocomplete", "Preenchimento automático", q.autocomplete, hint="Para o navegador: name, email, tel, organization…", opt=True, mono=True) }}
+            {%- if "min_length" in q.fields %}
+            {{ f.field(qp ~ ".min_length", "Tamanho mínimo", q.min_length, opt=True, number=True) }}
+            {%- endif %}
+            {{ f.field(qp ~ ".max_length", "Tamanho máximo", q.max_length, hint="Em caracteres. Em branco: " ~ q.blank_max_length ~ ".", opt=True, number=True) }}
+          </div>
+          {{ f.field(qp ~ ".example", "Resposta de exemplo", q.example, hint="Fictícia: vale para o teste do rascunho, as prévias e o PDF de exemplo.", opt=not q.required, area=q.kind == "textarea", rows=2) }}
+          {%- else %}
+          <fieldset class="edit-options" id="{{ s.field_id(qp ~ '.options') }}">
+            <legend>Opções</legend>
+            <p class="muted field__hint">O valor é o que fica gravado no envio e vai no webhook: estável depois de publicado. O rótulo é o que a lead lê e pode melhorar. Marque a da resposta de exemplo.</p>
+            {{ f.error_for(qp ~ ".options") }}
+            <ol class="edit-option-list">
+              {%- for option in q.options %}
+              {%- set k = loop.index0 %}
+              {%- set op_ = qp ~ ".options." ~ k %}
+              <li class="edit-opt" id="{{ s.field_id(op_) }}">
+                {{ f.error_for(op_) }}
+                {{ f.field(op_ ~ ".label", "Rótulo da opção " ~ (k + 1), option.label) }}
+                {{ f.field(op_ ~ ".value", "Valor da opção " ~ (k + 1), option.value, hint="Em branco, sai do rótulo.", mono=True) }}
+                {{ f.field(op_ ~ ".points", "Pontos da opção " ~ (k + 1), option.points, hint=("Para a pontuação do formulário (a fórmula pontos lê). Em branco, a opção não tem pontos." if k == 0 else None), opt=True) }}
+                <label class="choice choice--check edit-check"><input type="{{ 'radio' if q.kind == 'choice' else 'checkbox' }}" name="{{ qp }}.example_option" value="{{ k }}"{% if option.example %} checked{% endif %}><span class="choice__body"><span class="choice__mark">{{ m.icon('check') }}</span><span>Na resposta de exemplo</span></span></label>
+                {{ c.block(s.conditions.of(i, j, k)) }}
+                <p class="btns edit-actions">{{ op("up-option:" ~ i ~ ":" ~ j ~ ":" ~ k, "Subir", "arrow-up", name="Subir a opção " ~ (k + 1) ~ " da " ~ number) }}{{ op("down-option:" ~ i ~ ":" ~ j ~ ":" ~ k, "Descer", "arrow-down", name="Descer a opção " ~ (k + 1) ~ " da " ~ number) }}{{ op("remove-option:" ~ i ~ ":" ~ j ~ ":" ~ k, "Remover", "trash", name="Remover a opção " ~ (k + 1) ~ " da " ~ number) }}</p>
+              </li>
+              {%- endfor %}
+            </ol>
+            {{ f.error_for(qp ~ ".example") }}
+            <p class="btns">{{ op("add-option:" ~ i ~ ":" ~ j, "Adicionar opção", "plus", name="Adicionar uma opção à " ~ number, id="op-add-option-" ~ i ~ "-" ~ j) }}</p>
+          </fieldset>
+          {%- if "max_choices" in q.fields %}
+          <div class="edit-grid">
+            {{ f.field(qp ~ ".min_choices", "Mínimo de escolhas", q.min_choices, hint="Em branco: 1.", opt=True, number=True) }}
+            {{ f.field(qp ~ ".max_choices", "Máximo de escolhas", q.max_choices, hint="Em branco: todas as opções.", opt=True, number=True) }}
+          </div>
+          {%- endif %}
+          {%- endif %}
+          {{ c.block(s.conditions.of(i, j)) }}
+          <p class="btns edit-actions">{{ op("up-question:" ~ i ~ ":" ~ j, "Subir", "arrow-up", name="Subir a " ~ number) }}{{ op("down-question:" ~ i ~ ":" ~ j, "Descer", "arrow-down", name="Descer a " ~ number) }}{{ op("remove-question:" ~ i ~ ":" ~ j, "Remover a pergunta", "trash", name="Remover a " ~ number) }}</p>
+        </div>
+      </details>
+      </li>
+      {%- endfor %}
+    </ol>
+    <p class="btns edit-actions">{{ op("add-question:" ~ i, "Adicionar pergunta", "plus", name="Adicionar uma pergunta à etapa " ~ (i + 1), id="op-add-question-" ~ i) }}{{ op("up-step:" ~ i, "Subir a etapa", "arrow-up", name="Subir a etapa " ~ (i + 1)) }}{{ op("down-step:" ~ i, "Descer a etapa", "arrow-down", name="Descer a etapa " ~ (i + 1)) }}{{ op("remove-step:" ~ i, "Remover a etapa", "trash", name="Remover a etapa " ~ (i + 1) ~ " e as perguntas dela") }}</p>
+  </fieldset>
+  {%- endfor %}
+  <p class="btns">{{ op("add-step", "Adicionar etapa", "plus", name="Adicionar uma etapa", id="op-add-step") }}</p>
+</section>
+
+<section class="box" id="identidade" aria-labelledby="identidade-titulo">
+  <h2 id="identidade-titulo">Identidade da lead</h2>
+  <p class="muted">As perguntas que identificam a lead no admin e no webhook. O e-mail é obrigatório; o nome e o telefone, se o formulário pede.</p>
+  {{ f.error_for("identity") }}
+  {%- for choice in s.identity %}
+  {%- set name = "identity." ~ choice.role %}
+  <div class="field">
+    <label for="{{ s.field_id(name) }}">{{ choice.label }}</label>
+    <p class="muted field__hint" id="{{ s.field_id(name) }}-dica">{{ choice.hint }}</p>
+    <select class="select" id="{{ s.field_id(name) }}" name="{{ name }}" aria-describedby="{{ f.described(name, True) }}"{% if s.errors.get(name) %} aria-invalid="true"{% endif %}>
+      <option value=""{% if not choice.selected %} selected{% endif %}>Nenhuma pergunta</option>
+      {%- for value, text in choice.options %}
+      <option value="{{ value }}"{% if value == choice.selected %} selected{% endif %}>{{ text }}</option>
+      {%- endfor %}
+    </select>
+    {{ f.error_for(name) }}
+  </div>
+  {%- endfor %}
+</section>
+</div>

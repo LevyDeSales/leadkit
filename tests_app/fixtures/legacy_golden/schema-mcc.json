@@ -1,0 +1,311 @@
+{
+  "$defs": {
+    "Diagnosis": {
+      "properties": {
+        "momento_atual": {
+          "description": "Conteúdo demonstrativo de momento_atual. Entre 1 e 4000 caracteres.",
+          "type": "string"
+        },
+        "principais_indicadores": {
+          "$ref": "#/$defs/Indicators"
+        },
+        "principal_gargalo": {
+          "description": "Conteúdo demonstrativo de principal_gargalo. Entre 1 e 4000 caracteres.",
+          "type": "string"
+        },
+        "principal_alavanca_crescimento": {
+          "description": "Conteúdo demonstrativo de principal_alavanca_crescimento. Entre 1 e 4000 caracteres.",
+          "type": "string"
+        },
+        "ganhos_esperados": {
+          "description": "Conteúdo demonstrativo de ganhos_esperados. Entre 4 e 6 itens.",
+          "items": {
+            "description": "Entre 1 e 300 caracteres.",
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "momento_atual",
+        "principais_indicadores",
+        "principal_gargalo",
+        "principal_alavanca_crescimento",
+        "ganhos_esperados"
+      ]
+    },
+    "FinalNote": {
+      "properties": {
+        "titulo": {
+          "description": "Entre 1 e 300 caracteres.",
+          "type": "string"
+        },
+        "mensagem_final": {
+          "description": "Conteúdo demonstrativo de mensagem_final. Entre 1 e 4000 caracteres. Pelo menos 3 parágrafos, separados por linha em branco.",
+          "type": "string"
+        },
+        "lembretes": {
+          "description": "Conteúdo demonstrativo de lembretes. Entre 3 e 6 itens.",
+          "items": {
+            "description": "Entre 1 e 300 caracteres.",
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "titulo",
+        "mensagem_final",
+        "lembretes"
+      ]
+    },
+    "Indicators": {
+      "description": "Conteúdo demonstrativo de principais_indicadores.",
+      "properties": {
+        "numero_clientes": {
+          "description": "Entre 1 e 300 caracteres.",
+          "type": "string"
+        },
+        "ticket_medio": {
+          "description": "Entre 1 e 300 caracteres.",
+          "type": "string"
+        },
+        "faturamento_mensal": {
+          "description": "Entre 1 e 300 caracteres.",
+          "type": "string"
+        },
+        "tamanho_equipe": {
+          "description": "Entre 1 e 300 caracteres.",
+          "type": "string"
+        },
+        "origem_clientes": {
+          "description": "Entre 1 e 300 caracteres.",
+          "type": "string"
+        },
+        "perfil_clientes": {
+          "description": "Entre 1 e 300 caracteres.",
+          "type": "string"
+        },
+        "dependencia_da_dona": {
+          "description": "Entre 1 e 300 caracteres.",
+          "type": "string"
+        },
+        "maturidade_operacional": {
+          "description": "Entre 1 e 300 caracteres.",
+          "type": "string"
+        }
+      },
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "numero_clientes",
+        "ticket_medio",
+        "faturamento_mensal",
+        "tamanho_equipe",
+        "origem_clientes",
+        "perfil_clientes",
+        "dependencia_da_dona",
+        "maturidade_operacional"
+      ]
+    },
+    "Mistake": {
+      "properties": {
+        "titulo": {
+          "description": "Entre 1 e 300 caracteres.",
+          "type": "string"
+        },
+        "o_que_acontece": {
+          "description": "Entre 1 e 4000 caracteres.",
+          "type": "string"
+        },
+        "consequencia": {
+          "description": "Entre 1 e 4000 caracteres.",
+          "type": "string"
+        },
+        "melhor_pratica": {
+          "description": "Conteúdo demonstrativo de melhor_pratica. Entre 2 e 5 itens.",
+          "items": {
+            "description": "Entre 1 e 300 caracteres.",
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "titulo",
+        "o_que_acontece",
+        "consequencia",
+        "melhor_pratica"
+      ]
+    },
+    "Phase": {
+      "properties": {
+        "nome": {
+          "description": "Entre 1 e 300 caracteres.",
+          "type": "string"
+        },
+        "pilar_prioritario": {
+          "description": "Conteúdo demonstrativo de pilar_prioritario. Entre 1 e 300 caracteres.",
+          "type": "string"
+        },
+        "foco": {
+          "description": "Conteúdo demonstrativo de foco. Entre 1 e 4000 caracteres.",
+          "type": "string"
+        },
+        "acoes": {
+          "description": "Conteúdo demonstrativo de acoes. Entre 4 e 6 itens.",
+          "items": {
+            "description": "Entre 1 e 220 caracteres.",
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "aulas_recomendadas": {
+          "description": "Conteúdo demonstrativo de aulas_recomendadas. Entre 2 e 5 itens.",
+          "items": {
+            "enum": [
+              "Recurso aulas 1",
+              "Recurso aulas 2",
+              "Recurso aulas 3",
+              "Recurso aulas 4",
+              "Recurso aulas 5",
+              "Recurso aulas 6",
+              "Recurso aulas 7",
+              "Recurso aulas 8",
+              "Recurso aulas 9",
+              "Recurso aulas 10",
+              "Recurso aulas 11",
+              "Recurso aulas 12",
+              "Recurso aulas 13",
+              "Recurso aulas 14",
+              "Recurso aulas 15",
+              "Recurso aulas 16",
+              "Recurso aulas 17",
+              "Recurso aulas 18",
+              "Recurso aulas 19",
+              "Recurso aulas 20",
+              "Recurso aulas 21",
+              "Recurso aulas 22",
+              "Recurso aulas 23",
+              "Recurso aulas 24",
+              "Recurso aulas 25",
+              "Recurso aulas 26",
+              "Recurso aulas 27",
+              "Recurso aulas 28",
+              "Recurso aulas 29",
+              "Recurso aulas 30",
+              "Recurso aulas 31",
+              "Recurso aulas 32",
+              "Recurso aulas 33",
+              "Recurso aulas 34",
+              "Recurso aulas 35",
+              "Recurso aulas 36",
+              "Recurso aulas 37",
+              "Recurso aulas 38",
+              "Recurso aulas 39",
+              "Recurso aulas 40",
+              "Recurso aulas 41",
+              "Recurso aulas 42",
+              "Recurso aulas 43",
+              "Recurso aulas 44"
+            ],
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "entregaveis_irpf": {
+          "description": "Conteúdo demonstrativo de entregaveis_irpf. Entre 3 e 8 itens.",
+          "items": {
+            "type": "string",
+            "description": "Valores permitidos: Recurso combo 1; Recurso combo 2; Recurso combo 3; Recurso combo 4; Recurso combo 5; Recurso combo 6; Recurso combo 7; Recurso combo 8; Recurso combo 9; Recurso combo 10; Recurso combo 11; Recurso ecossistema 1; Recurso ecossistema 2; Recurso ecossistema 3; Recurso ecossistema 4; Recurso ecossistema 5; Recurso ecossistema 6; Recurso ecossistema 7; Recurso ecossistema 8; Recurso ecossistema 9; Recurso ecossistema 10; Recurso ecossistema 11; Recurso ecossistema 12; Recurso ecossistema 13; Recurso ecossistema 14; Recurso ecossistema 15; Recurso ecossistema 16; Recurso ecossistema 17; Recurso ecossistema 18; Recurso ecossistema 19; Recurso ecossistema 20; Recurso ecossistema 21 \"Exemplo\"; Recurso ecossistema 22; Recurso ecossistema 23; Recurso ecossistema 24; Recurso ecossistema 25; Recurso materiais 1; Recurso materiais 2; Recurso materiais 3; Recurso materiais 4; Recurso materiais 5; Recurso materiais 6; Recurso materiais 7; Recurso materiais 8."
+          },
+          "type": "array"
+        },
+        "entregas_esperadas": {
+          "description": "Conteúdo demonstrativo de entregas_esperadas. Entre 2 e 6 itens.",
+          "items": {
+            "description": "Entre 1 e 300 caracteres.",
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "criterios_de_conclusao": {
+          "description": "Conteúdo demonstrativo de criterios_de_conclusao. Entre 2 e 6 itens.",
+          "items": {
+            "description": "Entre 1 e 300 caracteres.",
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "nome",
+        "pilar_prioritario",
+        "foco",
+        "acoes",
+        "aulas_recomendadas",
+        "entregaveis_irpf",
+        "entregas_esperadas",
+        "criterios_de_conclusao"
+      ]
+    }
+  },
+  "description": "Conteúdo demonstrativo de atividade.",
+  "properties": {
+    "titulo": {
+      "description": "Entre 1 e 300 caracteres.",
+      "type": "string"
+    },
+    "diagnostico_estrategico": {
+      "$ref": "#/$defs/Diagnosis"
+    },
+    "direcao_estrategica_irpf": {
+      "description": "Conteúdo demonstrativo de direcao_estrategica_irpf. Entre 1 e 4000 caracteres.",
+      "type": "string"
+    },
+    "fases": {
+      "description": "Conteúdo demonstrativo de fases. Exatamente 3 itens.",
+      "items": {
+        "$ref": "#/$defs/Phase"
+      },
+      "type": "array"
+    },
+    "pontos_de_atencao": {
+      "description": "Conteúdo demonstrativo de pontos_de_atencao. Entre 3 e 5 itens.",
+      "items": {
+        "description": "Entre 1 e 300 caracteres.",
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "erros_comuns_execucao": {
+      "description": "Conteúdo demonstrativo de erros_comuns_execucao. Entre 4 e 6 itens.",
+      "items": {
+        "$ref": "#/$defs/Mistake"
+      },
+      "type": "array"
+    },
+    "nota_final_maturidade": {
+      "$ref": "#/$defs/FinalNote"
+    }
+  },
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "titulo",
+    "diagnostico_estrategico",
+    "direcao_estrategica_irpf",
+    "fases",
+    "pontos_de_atencao",
+    "erros_comuns_execucao",
+    "nota_final_maturidade"
+  ]
+}

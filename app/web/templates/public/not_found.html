@@ -1,0 +1,10 @@
+{% extends "public/base.html" %}
+{% import "public/_macros.html" as ui %}
+{% block title %}Página não encontrada{% endblock %}
+{% block main %}
+<main id="conteudo" class="container container--narrow page">
+  <div class="statusicon statusicon--neutral">{{ ui.icon("info") }}</div>
+  <h1>Não encontramos esta página</h1>
+  <p class="lead">Confira se o endereço está completo. Se você chegou aqui por um link da {{ site_brand() }}, abra o link de novo ou fale com a equipe.</p>
+</main>
+{% endblock %}

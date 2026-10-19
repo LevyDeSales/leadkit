@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<meta name="htmx-config" content='{"allowEval":false,"allowScriptTags":false,"selfRequestsOnly":true,"historyCacheSize":0,"refreshOnHistoryMiss":true,"includeIndicatorStyles":false}'>
+<title>{% block title %}Painel{% endblock %} · Operação · {{ site_brand() }}</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="{{ static_url('css/admin.css') }}">
+<script src="/static/vendor/htmx-2.0.11.min.js" defer></script>
+<script src="{{ static_url('js/admin.js') }}" defer></script>
+{% block head %}{% endblock %}
+</head>
+<body class="admin"{% block body_attrs %}{% endblock %}>
+{% include "admin/_icons.html" %}
+<a class="skip-link" href="#conteudo">Ir para o conteúdo</a>
+{% block body %}{% endblock %}
+</body>
+</html>

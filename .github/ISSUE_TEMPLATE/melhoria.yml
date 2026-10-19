@@ -1,0 +1,50 @@
+name: Melhoria
+description: Uma funcionalidade nova ou uma mudança no que já existe.
+title: "[melhoria] "
+labels: ["tipo/melhoria", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Descreva o problema antes da solução. Para pedir um diagnóstico novo, use o modelo "Novo formulário".
+  - type: textarea
+    id: problema
+    attributes:
+      label: Qual problema isso resolve
+      description: O que acontece hoje e por que atrapalha.
+    validations:
+      required: true
+  - type: dropdown
+    id: para_quem
+    attributes:
+      label: Para quem
+      multiple: true
+      options:
+        - A lead
+        - A operadora (painel admin)
+        - O time comercial (webhook e CRM)
+        - Quem desenvolve ou faz o deploy
+    validations:
+      required: true
+  - type: textarea
+    id: proposta
+    attributes:
+      label: O que você propõe
+    validations:
+      required: true
+  - type: textarea
+    id: alternativas
+    attributes:
+      label: Alternativas consideradas
+  - type: textarea
+    id: dados_pessoais
+    attributes:
+      label: Dados pessoais
+      description: A proposta coleta, guarda ou envia algum dado novo da lead? Para onde, e por quanto tempo?
+  - type: checkboxes
+    id: confirmacao
+    attributes:
+      label: Confirmação
+      options:
+        - label: Esta issue não tem segredos, tokens nem dados reais de leads.
+          required: true

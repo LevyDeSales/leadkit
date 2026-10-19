@@ -1,0 +1,27 @@
+{%- import "public/_macros.html" as ui -%}
+{%- set state_icon = {"done": "check", "current": "loader", "todo": "circle"} -%}
+{%- set state_label = {"done": "concluída", "current": "em andamento", "todo": "aguardando"} -%}
+<div id="progresso" hx-get="/d/{{ job.public_id }}/progresso?etapa={{ progress.stage }}" hx-trigger="every {{ progress.poll_seconds }}s" hx-swap="outerHTML">
+  {%- if progress.slow %}
+  <div class="alert alert--warn mt">
+    {{ ui.icon("clock", "icon--lg") }}
+    <div>
+      <strong class="alert__title">Está demorando mais que o normal</strong>
+      <p>Seu plano continua sendo preparado e nenhuma resposta foi perdida. Pode deixar esta página aberta.</p>
+    </div>
+  </div>
+  {%- endif %}
+  <section class="panel" aria-labelledby="prog-titulo">
+    <h2 id="prog-titulo">Etapas do seu plano</h2>
+    <ol class="stages">
+      {%- for step in progress.steps %}
+      <li class="stage is-{{ step.state }}"{% if step.state == "current" %} aria-current="step"{% endif %}>
+        <span class="stage__dot">{{ ui.icon(state_icon[step.state], "spin" if step.state == "current" else "") }}</span>
+        <span class="stage__label">{{ step.label }} <span class="sr-only">({{ state_label[step.state] }})</span>
+          {%- if step.note %}<span class="stage__note">{{ step.note }}</span>{% endif %}</span>
+      </li>
+      {%- endfor %}
+    </ol>
+    <p class="livebox">{{ ui.icon("refresh") }}<span>Atualizamos esta página sozinhos. Não precisa recarregar.</span></p>
+  </section>
+</div>

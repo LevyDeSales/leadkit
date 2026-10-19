@@ -1,0 +1,117 @@
+{% extends "admin/layout.html" %}
+{% import "admin/macros.html" as m %}
+{% set section = "destinations" %}
+{% block title %}{{ page.title }}{% endblock %}
+{% block content %}
+<nav class="crumbs" aria-label="Você está em"><a href="/admin/destinations">Destinos</a><span aria-hidden="true">/</span><span>{{ page.title }}</span></nav>
+
+<div class="page-head">
+  <div>
+    <h1>{{ page.title }}</h1>
+    <p>{{ page.intro }}</p>
+  </div>
+</div>
+
+<div class="stackcol">
+{% if cipher_missing %}
+<div class="alert alert--error" role="alert">{{ m.icon('alert-circle', 'icon--lg') }}<div><strong class="alert__title">Falta WEBHOOK_ENCRYPTION_KEY</strong><p>Sem a chave, o app não guarda segredos novos nem abre os guardados. Defina a chave no ambiente e reinicie a API e o worker (app/README.md).</p></div></div>
+{% endif %}
+
+{% if new_secret %}
+{#- A única vez em que o segredo aparece: a página não fica em cache (no-store) e recarregar não o mostra de novo. -#}
+<section class="box form-stack" id="novo-segredo" aria-labelledby="ns-titulo">
+  <div class="alert alert--ok" role="status">{{ m.icon('check', 'icon--lg') }}<div><strong class="alert__title" id="ns-titulo">Segredo novo: copie agora</strong><p>Ele não aparece de novo. Ponha no receptor, que confere com ele o <span class="mono">X-MCC-Signature</span> de cada evento. Se havia um segredo antes, ele já não vale.</p></div></div>
+  <div class="field">
+    <label for="segredo-novo">Segredo do destino</label>
+    <input class="input mono" id="segredo-novo" value="{{ new_secret }}" readonly autocomplete="off" spellcheck="false">
+  </div>
+</section>
+{% endif %}
+
+<section class="box" id="endereco" aria-labelledby="end-titulo">
+  <h2 id="end-titulo">Endereço</h2>
+  {% if page.fallback %}<p class="muted">{{ page.fallback }}</p>{% endif %}
+  {#- Com HTMX, o botão trava enquanto o pedido vai, e um segundo clique é descartado (a criação gera o segredo, que só aparece na resposta). Sem JavaScript, é um POST comum. -#}
+  <form class="form-stack" method="post" action="{{ page.base }}/url" hx-post="{{ page.base }}/url" hx-target="#conteudo" hx-select="#conteudo" hx-swap="outerHTML show:window:top" hx-sync="this:drop" hx-disabled-elt="find button">
+    <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+    <input type="hidden" name="version" value="{{ page.stored.version if page.stored else 0 }}">
+    <p class="muted">Quem entrega é o worker, que só alcança um <strong>https público</strong> ou um serviço na rede <span class="mono">gerador-planos_internal</span> da stack. O evento de teste sai da API, que também está na rede do Traefik: um teste que passa não garante que o worker chega ao endereço.</p>
+    <div class="field">
+      <label for="url">URL do receptor <span class="opt">(https, sem usuário e senha)</span></label>
+      <input class="input mono" id="url" name="url" type="url" value="{{ url }}" maxlength="{{ max_url_length }}" required autocomplete="off" spellcheck="false" placeholder="https://"{% if errors.get("url") %} aria-invalid="true" aria-describedby="url-erro"{% endif %}>
+      {% if errors.get("url") %}<p class="error" id="url-erro">{{ m.icon('alert-circle') }}{{ errors["url"] }}</p>{% endif %}
+    </div>
+    {% if needs_confirmation %}
+    <label class="choice choice--check"><input type="checkbox" name="confirm_http" value="on" required><span class="choice__body"><span class="choice__mark">{{ m.icon('check') }}</span><span>Confirmo que o receptor só aceita http e que os dados das leads vão sem criptografia até ele.</span></span></label>
+    {% endif %}
+    <div class="btns"><button class="btn btn--primary" type="submit">{{ "Salvar o endereço" if page.stored else "Criar o destino" }}</button></div>
+  </form>
+  {% if page.stored %}
+  <p class="muted">Mudar a URL mantém o segredo. Se o receptor novo ainda não o conhece, troque o segredo abaixo.</p>
+  <dl class="kv">
+    <dt>Criado</dt><dd>{{ page.stored.created_by }} · {{ m.when(page.stored.created) }}</dd>
+    <dt>Última mudança</dt><dd>{{ page.stored.updated_by }} · {{ m.when(page.stored.updated) }}</dd>
+  </dl>
+  {% else %}
+  <p class="muted">Ao criar o destino, o app gera o segredo e o mostra uma vez para você copiar.</p>
+  {% endif %}
+</section>
+
+{% if page.stored %}
+<section class="box" id="segredo" aria-labelledby="seg-titulo">
+  <h2 id="seg-titulo">Segredo</h2>
+  <p>Gerado em {{ m.when(page.stored.secret_created) }}. Ele assina cada evento e só aparece quando é gerado.</p>
+  {% if page.unreadable %}
+  <div class="alert alert--error" role="alert">{{ m.icon('alert-circle', 'icon--lg') }}<div><strong class="alert__title">O segredo guardado não abre com a WEBHOOK_ENCRYPTION_KEY atual</strong><p>As entregas para este destino falham. Confira a chave no ambiente do app, ou gere um segredo novo abaixo e ponha no receptor.</p></div></div>
+  {% endif %}
+  <details class="reprocess"{% if errors.get("confirm") %} open{% endif %}>
+    <summary class="btn btn--secondary">{{ m.icon('refresh') }}Trocar o segredo…</summary>
+    <form method="post" action="{{ page.base }}/secret" hx-post="{{ page.base }}/secret" hx-target="#conteudo" hx-select="#conteudo" hx-swap="outerHTML show:window:top" hx-sync="this:drop" hx-disabled-elt="find button" aria-labelledby="troca-titulo">
+      <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+      <input type="hidden" name="version" value="{{ page.stored.version }}">
+      <h3 id="troca-titulo">Trocar o segredo</h3>
+      <div class="note">{{ m.icon('alert-triangle') }}<p>O segredo atual deixa de valer na hora: ponha o novo no receptor logo em seguida. Até lá, ele recusa os eventos. Se a recusa vier como 401 ou 403, a entrega falha na hora e precisa ser reenviada pelo pedido; se vier como 5xx, ela se repete por cerca de 3,5 h.</p></div>
+      <label class="choice choice--check"><input type="checkbox" name="confirm" value="on" required{% if errors.get("confirm") %} aria-invalid="true" aria-describedby="troca-erro"{% endif %}><span class="choice__body"><span class="choice__mark">{{ m.icon('check') }}</span><span>Entendo que o segredo atual deixa de valer agora.</span></span></label>
+      {% if errors.get("confirm") %}<p class="error" id="troca-erro">{{ m.icon('alert-circle') }}{{ errors["confirm"] }}</p>{% endif %}
+      <div class="btns"><button class="btn btn--primary" type="submit">Gerar um segredo novo</button></div>
+    </form>
+  </details>
+</section>
+
+<section class="box" id="teste" aria-labelledby="teste-titulo">
+  <h2 id="teste-titulo">Evento de teste</h2>
+  <p>Manda um <span class="mono">webhook.teste</span> assinado como o <span class="mono">plano.concluido</span>, com dados fictícios e nenhum dado de lead, e mostra o que o receptor respondeu.</p>
+  {#- Sem JavaScript é um POST comum que devolve a página inteira; com HTMX, troca só o resultado. -#}
+  <form method="post" action="{{ page.base }}/test" hx-post="{{ page.base }}/test" hx-target="#resultado-teste" hx-select="#resultado-teste" hx-swap="outerHTML">
+    <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+    <button class="btn btn--secondary" type="submit">{{ m.icon('send') }}Mandar o evento de teste</button>
+  </form>
+  <div id="resultado-teste" aria-live="polite">
+    {% if test %}
+    <div class="alert alert--{{ 'ok' if test.ok else 'warn' }}" role="status">{{ m.icon('check' if test.ok else 'alert-triangle', 'icon--lg') }}<div><strong class="alert__title">{{ test.headline }}</strong><p>{{ test.note }}</p></div></div>
+    {% if test.body %}
+    <h3>Começo da resposta</h3>
+    <pre class="json" tabindex="0" aria-label="Começo da resposta do receptor">{{ test.body }}</pre>
+    {% endif %}
+    {% endif %}
+  </div>
+</section>
+
+<section class="box" id="remover" aria-labelledby="rem-titulo">
+  <h2 id="rem-titulo">Remover o destino</h2>
+  <details class="reprocess"{% if errors.get("remove") %} open{% endif %}>
+    <summary class="btn btn--secondary">{{ m.icon('x') }}Remover…</summary>
+    <form method="post" action="{{ page.base }}/remove" aria-labelledby="rem-form-titulo">
+      <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+      <input type="hidden" name="version" value="{{ page.stored.version }}">
+      <h3 id="rem-form-titulo">Remover este destino</h3>
+      <div class="note">{{ m.icon('alert-triangle') }}<p>{% if page.form_slug %}O formulário passa a usar o destino padrão, se houver, e as entregas em repetição vão para ele na tentativa seguinte; sem padrão, elas esperam um destino novo.{% else %}Os formulários sem destino próprio deixam de ser entregues, e as entregas deles em repetição esperam um destino novo.{% endif %}</p></div>
+      <label class="choice choice--check"><input type="checkbox" name="confirm" value="on" required{% if errors.get("remove") %} aria-invalid="true" aria-describedby="rem-erro"{% endif %}><span class="choice__body"><span class="choice__mark">{{ m.icon('check') }}</span><span>Entendo para onde os eventos passam a ir.</span></span></label>
+      {% if errors.get("remove") %}<p class="error" id="rem-erro">{{ m.icon('alert-circle') }}{{ errors["remove"] }}</p>{% endif %}
+      <div class="btns"><button class="btn btn--primary" type="submit">Remover o destino</button></div>
+    </form>
+  </details>
+</section>
+{% endif %}
+</div>
+{% endblock %}

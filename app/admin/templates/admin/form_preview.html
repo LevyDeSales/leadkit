@@ -1,0 +1,39 @@
+{% extends "admin/layout.html" %}
+{% import "admin/macros.html" as m %}
+{% set section = "forms" %}
+{% block title %}Prévia de {{ page.nav.title }}{% endblock %}
+
+{% block content %}
+<nav class="crumbs" aria-label="Você está em"><a href="/admin/forms">Formulários</a><span aria-hidden="true">/</span><a href="{{ page.nav.form_url }}">{{ page.nav.title }}</a><span aria-hidden="true">/</span><a href="{{ page.nav.draft_url }}">Rascunho</a><span aria-hidden="true">/</span><span>Prévia</span></nav>
+
+<header class="detail-head">
+  <div>
+    <h1>Prévia da página pública de {{ page.nav.title }}</h1>
+    <p class="meta"><span class="mono">{{ page.nav.slug }}</span><span>o rascunho salvo, como a lead vê no celular</span></p>
+  </div>
+  <p class="btns"><a class="btn btn--secondary" href="{{ page.nav.draft_url }}">Editar o rascunho</a><a class="btn btn--ghost" href="{{ page.nav.tests_url }}">Testar o rascunho</a></p>
+</header>
+
+{#- As etapas vêm primeiro: na tela estreita, o quadro do celular fica embaixo delas. -#}
+<div class="cols cols--aside-first">
+  <div class="stackcol">
+    <section class="box" id="etapas-previa" aria-labelledby="etapas-previa-titulo">
+      <h2 id="etapas-previa-titulo">Etapas</h2>
+      <p class="muted">A prévia funciona como a página da lead no celular: marque as respostas para ver as perguntas e as opções que as condições mostram e escondem, e ande pelas etapas com os botões. Ela não confere as respostas. Nada do que você marcar é enviado nem fica guardado neste aparelho, e a página no ar só muda quando você publicar.</p>
+      <p class="muted">Os links abaixo abrem a prévia de novo, na etapa escolhida e sem as respostas marcadas. Uma etapa em que nenhuma pergunta aparece é pulada.</p>
+      <ol class="items">
+        {%- for step in page.steps %}
+        <li><a href="{{ step.url }}" target="previa">Etapa {{ step.number }}: {{ step.title }}</a></li>
+        {%- endfor %}
+      </ol>
+      <p class="footnote"><a href="{{ page.frame_url }}" target="_blank" rel="noopener">Abrir a prévia numa aba própria</a></p>
+    </section>
+  </div>
+
+  <div class="stackcol">
+    <div class="phone">
+      <iframe class="phone__screen" name="previa" src="{{ page.frame_url }}" width="{{ page.width }}" height="{{ page.height }}" title="Prévia da página pública na largura de um celular ({{ page.width }} px)"></iframe>
+    </div>
+  </div>
+</div>
+{% endblock %}

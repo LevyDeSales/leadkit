@@ -1,0 +1,80 @@
+{% macro icon(name, cls="") -%}
+<svg class="icon{% if cls %} {{ cls }}{% endif %}" aria-hidden="true" focusable="false"><use href="#i-{{ name }}"/></svg>
+{%- endmacro %}
+
+{% macro refcode(public_id) -%}
+<p class="refcode"><span>Código de atendimento</span><code>{{ public_id }}</code></p>
+{%- endmacro %}
+
+{% macro error_text(id, message) -%}
+<p class="error" id="{{ id }}">{{ icon("alert-circle") }}<span>{{ message }}</span></p>
+{%- endmacro %}
+
+{% macro optional(show) -%}
+{% if show %} <span class="opt">(opcional)</span>{% endif %}
+{%- endmacro %}
+
+{#- Atributos comuns de input/textarea; limites e obrigatoriedade vêm do modelo Answers. -#}
+{% macro text_attrs(v) -%}
+id="{{ v.id }}" name="{{ v.question.name }}"
+{%- if v.required %} required{% endif %}
+{%- if v.min_length %} minlength="{{ v.min_length }}"{% endif %}
+{%- if v.max_length %} maxlength="{{ v.max_length }}"{% endif %}
+{%- if v.question.autocomplete %} autocomplete="{{ v.question.autocomplete }}"{% endif %}
+{%- if v.question.placeholder %} placeholder="{{ v.question.placeholder }}"{% endif %}
+{%- if v.describedby %} aria-describedby="{{ v.describedby }}"{% endif %}
+{%- if v.error %} aria-invalid="true"{% endif %}
+{%- if v.draft %} data-draft{% endif %}
+{%- endmacro %}
+
+{#- Uma pergunta. `data-question` e `data-option` dizem ao public.js o nome e o valor, para as
+    condições esconderem e mostrarem; `data-required-when-shown` marca a obrigatória que tem
+    condição: o public.js a exige quando ela aparece (sem JavaScript, o servidor decide). -#}
+{% macro question(v) -%}
+{%- set q = v.question -%}
+{%- if q.kind in ("choice", "choices") %}
+<fieldset class="fieldset{% if v.error %} is-invalid{% endif %}" data-question="{{ q.name }}"
+  {%- if v.required_when_shown %} data-required-when-shown{% endif %}
+  {%- if v.describedby %} aria-describedby="{{ v.describedby }}"{% endif %}
+  {%- if q.kind == "choices" and v.required %} data-required-group{% endif %}>
+  <legend>{{ q.label }}{{ optional(v.mark_optional) }}</legend>
+  {%- if q.help %}
+  <p class="hint" id="{{ v.id }}-ajuda">{{ q.help }}</p>
+  {%- endif %}
+  {%- if v.error %}
+  {{ error_text(v.id ~ "-erro", v.error) }}
+  {%- endif %}
+  <div class="choices{% if q.options|length > 4 %} choices--2-md{% endif %}">
+    {%- for option in q.options %}
+    <label class="choice{% if q.kind == "choices" %} choice--check{% endif %}" data-option="{{ option.value }}">
+      <input type="{{ "radio" if q.kind == "choice" else "checkbox" }}" id="{{ v.id }}-{{ loop.index0 }}" name="{{ q.name }}" value="{{ option.value }}"
+        {%- if option.value in v.selected %} checked{% endif %}
+        {%- if v.required and q.kind == "choice" %} required{% endif %}
+        {%- if v.error %} aria-invalid="true"{% endif %}
+        {%- if v.draft %} data-draft{% endif %}>
+      <span class="choice__body"><span class="choice__mark">{{ icon("check") }}</span><span>{{ option.label }}</span></span>
+    </label>
+    {%- endfor %}
+  </div>
+</fieldset>
+{%- else %}
+<div class="field" data-question="{{ q.name }}"{% if v.required_when_shown %} data-required-when-shown{% endif %}>
+  <label for="{{ v.id }}">{{ q.label }}{{ optional(v.mark_optional) }}</label>
+  {%- if q.kind == "textarea" %}
+  <textarea class="input" rows="4" {{ text_attrs(v) }}>{{ v.value }}</textarea>
+  {%- elif q.kind == "email" %}
+  <input class="input" type="email" inputmode="email" autocapitalize="none" spellcheck="false" {{ text_attrs(v) }} value="{{ v.value }}">
+  {%- elif q.kind == "tel" %}
+  <input class="input" type="tel" inputmode="tel" {{ text_attrs(v) }} value="{{ v.value }}">
+  {%- else %}
+  <input class="input" type="text" {{ text_attrs(v) }} value="{{ v.value }}">
+  {%- endif %}
+  {%- if q.help %}
+  <p class="hint" id="{{ v.id }}-ajuda">{{ q.help }}</p>
+  {%- endif %}
+  {%- if v.error %}
+  {{ error_text(v.id ~ "-erro", v.error) }}
+  {%- endif %}
+</div>
+{%- endif %}
+{%- endmacro %}

@@ -1,0 +1,33 @@
+{% extends "public/base.html" %}
+{% import "public/_macros.html" as ui %}
+{#- A prévia vem do template do formulário (FormSpec.templates), já renderizado. -#}
+{% block title %}Seu plano está pronto{% endblock %}
+{% block body_attrs %} data-clear-draft="{{ details.slug }}"{% endblock %}
+{% block main %}
+<main id="conteudo" class="container page">
+  <h1>Seu plano está pronto{% if details.first_name %}, {{ details.first_name }}{% endif %}</h1>
+  <p class="lead">Montamos este plano a partir das suas respostas. Baixe o PDF para guardar e compartilhar com a sua equipe.</p>
+
+  <section class="filecard" aria-labelledby="arquivo-titulo">
+    <h2 class="sr-only" id="arquivo-titulo">Seu arquivo</h2>
+    <div class="filecard__meta">
+      <span class="filecard__icon">{{ ui.icon("file") }}</span>
+      <div>
+        <p class="filecard__name">plano-{{ job.public_id }}.pdf</p>
+        {%- if size %}
+        <p class="filecard__sub">PDF · {{ size }} · gerado em {{ generated_on }}</p>
+        {%- endif %}
+      </div>
+    </div>
+    <a class="btn btn--primary btn--lg" href="/d/{{ job.public_id }}/pdf" download>{{ ui.icon("download") }}Baixar PDF</a>
+    <p class="fineprint">Este link fica ativo até <strong>{{ valid_until }}</strong>, neste aparelho.</p>
+  </section>
+
+  {{ preview if preview else "" }}
+
+  <p class="fineprint">Plano gerado com apoio de inteligência artificial a partir das suas respostas. É uma orientação inicial e não substitui consultoria nem parecer técnico. Os resultados dependem da execução e não são garantidos.</p>
+</main>
+{% endblock %}
+{% block footer %}
+<p>Esta página é pessoal. Não compartilhe o endereço com outras pessoas.</p>
+{% endblock %}

@@ -1,0 +1,147 @@
+{#- O editor do modelo do plano (app/admin/plan_editor.py), dentro do formulário do rascunho: a
+    árvore de campos e as regras de expressões proibidas. Cada campo tem por nome o caminho dele na
+    definição. Os botões de incluir, remover e reordenar mandam o formulário inteiro com a operação:
+    sem JavaScript, a página volta inteira; com o HTMX, volta só este trecho. -#}
+{%- import "admin/macros.html" as m -%}
+{%- import "admin/_editor_fields.html" as f with context -%}
+{%- import "admin/_editor_ops.html" as o with context -%}
+{%- set p = page.structure.plan -%}
+
+{#- O corpo de um campo, ou dos itens de uma lista: o tipo, a descrição e o que o tipo pede. -#}
+{% macro body(n, at, item) %}
+  {{ f.error_for(at) }}
+  <div class="edit-grid">
+    {%- if not item %}
+    {{ f.field(at ~ ".name", "Nome do campo", n.name, hint="A chave do campo no plano gravado e no webhook. Letras minúsculas sem acento, números e _.", mono=True) }}
+    {%- endif %}
+    {{ o.kind_select(at ~ ".kind", p.item_kinds if item else p.kinds, n.kind, "plan-refresh:" ~ at) }}
+  </div>
+  {%- if not item %}
+  {{ f.field(at ~ ".label", "Rótulo na tela do pedido", n.label, opt=True, hint="Como o nome do campo aparece para você no admin, com acento e espaços (por exemplo, «Situação» para situacao). Em branco, o admin mostra o nome do campo. O LLM, o PDF e o webhook não veem o rótulo.") }}
+  {%- endif %}
+  {{ f.field(at ~ ".description", "Descrição para o LLM", n.description, opt=True, area=True, rows=2, hint="O que o LLM deve escrever aqui. Os limites abaixo entram sozinhos no fim da descrição.") }}
+  {%- if not item %}
+  <div class="edit-checks">
+    {{ f.check(at ~ ".internal", "Campo interno: o LLM escreve, mas a lead nunca vê (fica fora do PDF e da prévia)", n.internal) }}
+  </div>
+  {%- endif %}
+  {%- if n.kind == "text" %}
+  <div class="edit-grid">
+    {{ f.field(at ~ ".min_length", "Tamanho mínimo", n.min_length, hint="Em caracteres.", opt=True, number=True) }}
+    {{ f.field(at ~ ".max_length", "Tamanho máximo", n.max_length, hint="Em caracteres.", opt=True, number=True) }}
+    {{ f.field(at ~ ".min_paragraphs", "Mínimo de parágrafos", n.min_paragraphs, hint="Os parágrafos se separam por uma linha em branco.", opt=True, number=True) }}
+  </div>
+  <div class="edit-grid">
+    {{ f.field(at ~ ".forbidden_pattern.pattern", "Padrão proibido", n.pattern, hint="Uma expressão regular, sem diferença de maiúsculas. Se o texto tiver o padrão, o LLM refaz. Exemplo: [0-9]+ proíbe números. Um padrão que demora mais de 0,5 s para conferir um texto recusa esse texto: evite grupos repetidos dentro de grupos repetidos.", opt=True, mono=True) }}
+    {{ f.field(at ~ ".forbidden_pattern.message", "O que dizer ao LLM quando o padrão aparece", n.pattern_message, hint="Em branco: «contém um trecho que este campo não aceita».", opt=True) }}
+  </div>
+  {%- elif n.kind == "list" %}
+  <div class="edit-grid">
+    {{ f.field(at ~ ".min_items", "Mínimo de itens", n.min_items, opt=True, number=True) }}
+    {{ f.field(at ~ ".max_items", "Máximo de itens", n.max_items, opt=True, number=True) }}
+  </div>
+  <fieldset class="edit-options" id="{{ p.field_id(at ~ '.items') }}">
+    <legend>Itens da lista</legend>
+    <p class="muted field__hint">Como é cada item: um texto, um grupo de campos ou uma opção fixa.</p>
+    {{ f.error_for(at ~ ".items") }}
+    {{ body(n.items, at ~ ".items", True) }}
+  </fieldset>
+  {%- elif n.kind == "group" %}
+  {{ f.field(at ~ ".model", "Nome do grupo no schema", n.model, hint="Em branco, sai do nome do campo.", opt=True, mono=True) }}
+  <fieldset class="edit-options" id="{{ p.field_id(at ~ '.fields') }}">
+    <legend>Campos do grupo</legend>
+    {{ f.error_for(at ~ ".fields") }}
+    <ol class="edit-questions">
+      {%- for child in n.fields %}
+      <li>{{ node(child, at ~ ".fields." ~ loop.index0) }}</li>
+      {%- endfor %}
+    </ol>
+    <p class="btns">{{ o.op("plan-add-field:" ~ at, "Adicionar campo", "plus", name="Adicionar um campo ao grupo", id="op-" ~ at|replace(".", "-") ~ "-add-field") }}</p>
+  </fieldset>
+  {%- else %}
+  {%- set values_id = p.field_id(at ~ ".values_from") %}
+  <fieldset class="edit-options" id="{{ values_id }}" aria-describedby="{{ f.described(at ~ '.values_from', True) }}">
+    <legend>Listas dos dados do formulário <span class="opt">(opcional)</span></legend>
+    <p class="muted field__hint" id="{{ values_id }}-dica">Marque uma ou mais listas para o LLM só poder citar nomes que existem nelas. As opções são os itens das listas marcadas, sem repetir, na ordem do número ao lado de cada uma e, dentro da lista, na ordem dela. Uma lista marcada sem número vem depois das numeradas. Sem nenhuma marcada, valem os valores fixos abaixo.</p>
+    {{ f.error_for(at ~ ".values_from") }}
+    <div class="edit-checks">
+      {%- for choice in p.source_choices(n) %}
+      <div class="edit-order">
+        <label class="choice choice--check edit-check"><input type="checkbox" id="{{ values_id }}-{{ loop.index }}" name="{{ at }}.values_from" value="{{ choice.name }}"{% if choice.checked %} checked{% endif %}><span class="choice__body"><span class="choice__mark">{{ m.icon('check') }}</span><span class="mono">{{ choice.name }}</span>{% if not choice.exists %} <span class="muted">(não existe mais nos dados)</span>{% endif %}</span></label>
+        <input class="input mono" type="text" inputmode="numeric" name="{{ at }}.values_order.{{ choice.name }}" value="{{ choice.position }}" autocomplete="off" aria-label="Posição da lista {{ choice.name }} nas opções">
+      </div>
+      {%- else %}
+      <p class="muted">Os dados do formulário ainda não têm uma lista.</p>
+      {%- endfor %}
+    </div>
+  </fieldset>
+  {{ f.field(at ~ ".values", "Valores fixos", n.values, hint="Um por linha: letras minúsculas sem acento, números e _. Só valem quando nenhuma lista está marcada.", area=True, rows=4, mono=True) }}
+  {{ f.field(at ~ ".in_window", "Janela de cada valor", n.in_window, hint=p.windows_hint(), opt=True, area=True, rows=3, mono=True) }}
+  {%- endif %}
+{% endmacro %}
+
+{#- Um campo da árvore: uma caixa que abre, com o corpo e os botões de subir, descer e remover. -#}
+{% macro node(n, at) %}
+{%- set label = n.name or "Campo novo" %}
+<details class="edit-q" id="{{ p.field_id(at) }}"{% if at in p.opened %} open{% endif %}>
+  <summary><span class="edit-q__head"><b>{{ label }}</b><span class="muted">{{ p.kind_label(n.kind) }}{% if n.internal %} · interno{% endif %}</span></span>{% if at in p.troubled %}<span class="badge badge--err">{{ m.icon('alert-circle') }}com problema</span>{% endif %}{{ m.icon('chevron-down') }}</summary>
+  <div class="edit-q__body">
+    {{ body(n, at, False) }}
+    <p class="btns edit-actions">{{ o.op("plan-up:" ~ at, "Subir", "arrow-up", name="Subir o campo " ~ label) }}{{ o.op("plan-down:" ~ at, "Descer", "arrow-down", name="Descer o campo " ~ label) }}{{ o.op("plan-remove:" ~ at, "Remover o campo", "trash", name="Remover o campo " ~ label ~ " e o que ele tem dentro") }}</p>
+  </div>
+</details>
+{% endmacro %}
+
+<div id="plano-editor" class="stackcol" hx-target="this" hx-swap="outerHTML">
+<section class="box" id="f-plan" aria-labelledby="plano-titulo">
+  <h2 id="plano-titulo">Modelo do plano</h2>
+  <p class="muted">Os campos na ordem em que o LLM escreve, com o formato que o PDF usa. Incluir, remover e reordenar só valem quando você salvar o rascunho. O plano de exemplo, mais abaixo, precisa ter os campos daqui.</p>
+  {{ f.error_for("plan") }}
+  {{ f.error_for("plan.fields") }}
+  {{ f.field("plan.description", "Descrição do plano", p.edit.description, opt=True, area=True, rows=2, hint="O papel do plano inteiro, para o LLM.") }}
+  <ol class="edit-questions" id="f-plan-fields">
+    {%- for n in p.edit.fields %}
+    <li>{{ node(n, "plan.fields." ~ loop.index0) }}</li>
+    {%- endfor %}
+  </ol>
+  <p class="btns">{{ o.op("plan-add-field:plan", "Adicionar campo", "plus", name="Adicionar um campo ao plano", id="op-plan-add-field") }}</p>
+</section>
+
+<section class="box" id="f-phases" aria-labelledby="fases-titulo">
+  <h2 id="fases-titulo">Fases com datas</h2>
+  <p class="muted">O plano segue o calendário real: a primeira fase começa no dia em que o plano é gerado (em São Paulo), e cada uma começa no dia seguinte ao fim da anterior. O prompt recebe, fase a fase, o período, a situação de cada janela e os valores permitidos (<span class="mono">phases</span>). Para o servidor recusar um valor fora da janela, ligue o valor à janela no campo de opções fixas, em «Janela de cada valor». Deixe os três campos em branco para um plano sem calendário.</p>
+  {{ f.error_for("phases") }}
+  {{ f.field("phases.days", "Dias de cada fase", p.edit.phases.days, hint="Um número por fase, separados por vírgula: 30, 30, 30 são três fases de 30 dias. A quantidade de números é a quantidade de fases.", opt=True, number=True) }}
+  {{ o.kind_select("phases.plan_field", p.list_choices(), p.edit.phases.plan_field, label="Lista do plano com um item por fase") }}
+  {{ o.kind_select("phases.windows", p.block_choices(), p.edit.phases.windows, label="Bloco de janelas dos dados") }}
+</section>
+
+<section class="box" id="f-plan-forbidden" aria-labelledby="expressoes-titulo">
+  <h2 id="expressoes-titulo">Expressões proibidas</h2>
+  <p class="muted">Frases que o plano não pode conter, como uma promessa de resultado. A busca ignora maiúsculas, acentos e espaços repetidos. Se uma aparecer, o LLM refaz o plano; ele recebe só o campo e a regra, nunca o texto do plano. O padrão proibido de um campo está no próprio campo.</p>
+  {{ f.error_for("plan.forbidden") }}
+  {%- for rule in p.edit.rules %}
+  {%- set r = "plan.forbidden." ~ loop.index0 %}
+  <fieldset class="edit-step" id="{{ p.field_id(r) }}">
+    <legend>Regra {{ loop.index }}</legend>
+    {{ f.error_for(r) }}
+    {{ f.field(r ~ ".expressions", "Expressões proibidas", rule.expressions, hint="Uma por linha.", area=True, rows=3) }}
+    {{ o.kind_select(r ~ ".scope", p.scopes, rule.scope, label="Onde vale") }}
+    <fieldset class="edit-options" id="{{ p.field_id(r ~ '.fields') }}">
+      <legend>Campos de texto</legend>
+      <p class="muted field__hint">Só conta quando a regra vale nos campos marcados ou em todos menos nos marcados.</p>
+      {{ f.error_for(r ~ ".fields") }}
+      <div class="edit-checks">
+        {%- for path, checked in p.choices(rule) %}
+        <label class="choice choice--check edit-check"><input type="checkbox" id="{{ p.field_id(r ~ '.fields') }}-{{ loop.index }}" name="{{ r }}.fields" value="{{ path }}"{% if checked %} checked{% endif %}><span class="choice__body"><span class="choice__mark">{{ m.icon('check') }}</span><span class="mono">{{ path }}</span></span></label>
+        {%- else %}
+        <p class="muted">O plano ainda não tem campos de texto com nome.</p>
+        {%- endfor %}
+      </div>
+    </fieldset>
+    <p class="btns edit-actions">{{ o.op("plan-remove-rule:" ~ loop.index0, "Remover a regra", "trash", name="Remover a regra " ~ loop.index) }}</p>
+  </fieldset>
+  {%- endfor %}
+  <p class="btns">{{ o.op("plan-add-rule", "Adicionar regra", "plus", name="Adicionar uma regra de expressões proibidas", id="op-plan-add-rule") }}</p>
+</section>
+</div>

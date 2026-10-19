@@ -1,0 +1,189 @@
+{% extends "admin/layout.html" %}
+{% import "admin/macros.html" as m %}
+{% set section = "jobs" %}
+{% block title %}{{ job.name or "Pedido" }} · {{ job.public_id }}{% endblock %}
+{% block content %}
+<nav class="crumbs" aria-label="Você está em"><a href="/admin">Pedidos</a><span aria-hidden="true">/</span><span>{{ job.name or "Sem nome" }}</span></nav>
+
+<header class="detail-head">
+  <div>
+    <h1>{{ job.name or "Sem nome" }}</h1>
+    <p class="meta">
+      <span>{{ job.email or "Contato indisponível" }}</span>
+      <span>Recebido em {{ m.when(job.received) }}</span>
+      <span>Código <span class="mono">{{ job.public_id }}</span></span>
+      <span>Tentativa {{ job.attempt }}</span>
+    </p>
+  </div>
+  <div class="badges">{{ m.badge(job.status) }}{% if job.priority %}{{ m.badge(job.priority) }}{% endif %}</div>
+  {% if job.failure %}
+  <div class="alert alert--error" role="status">{{ m.icon('alert-circle', 'icon--lg') }}<div><strong class="alert__title">A geração falhou: {{ job.failure }}</strong><p>Confira a linha do tempo. Se o problema já foi resolvido, reprocesse o pedido.</p></div></div>
+  {% endif %}
+  <section class="acts" id="acoes" aria-label="Ações">
+    <div class="acts__row">
+      {% if job.pdfs and not job.pdfs[0].removed %}<a class="btn btn--primary" href="/admin/jobs/{{ job.public_id }}/pdf">{{ m.icon('download') }}Baixar PDF</a>{% endif %}
+      {% if job.run_url %}<a class="btn btn--secondary" href="{{ job.run_url }}" target="_blank" rel="noopener noreferrer">{{ m.icon('external') }}Ver execução no Hatchet<span class="sr-only"> (abre em nova aba)</span></a>{% endif %}
+    </div>
+    {% if job.can_reprocess %}
+    {#- Painel em linha (não modal); sem JS é um POST comum com 303 de volta para esta página. -#}
+    <details class="reprocess"{% if errors %} open{% endif %}>
+      <summary class="btn btn--secondary">{{ m.icon('refresh') }}Reprocessar…</summary>
+      <form method="post" action="/admin/jobs/{{ job.public_id }}/reprocess" aria-labelledby="rep-titulo">
+        <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+        <input type="hidden" name="attempt" value="{{ job.attempt }}">
+        <h2 id="rep-titulo">Reprocessar este pedido</h2>
+        <div class="note">{{ m.icon('alert-triangle') }}<p>Isso cria a tentativa {{ job.attempt + 1 }} e uma nova chamada de IA. O PDF atual continua no histórico, e o lead passa a ver o novo plano quando ele ficar pronto. Fica registrado em seu nome.</p></div>
+        <div class="field">
+          <label for="rep-motivo">Motivo <span class="opt">(de 10 a 300 caracteres)</span></label>
+          <textarea class="input" id="rep-motivo" name="reason" rows="3" required minlength="10" maxlength="300"{% if errors.get("reason") %} aria-invalid="true" aria-describedby="rep-motivo-erro"{% endif %}>{{ reason }}</textarea>
+          {% if errors.get("reason") %}<p class="error" id="rep-motivo-erro">{{ m.icon('alert-circle') }}{{ errors["reason"] }}</p>{% endif %}
+        </div>
+        <label class="choice choice--check"><input type="checkbox" name="confirm" value="on" required{% if errors.get("confirm") %} aria-invalid="true" aria-describedby="rep-confirma-erro"{% endif %}><span class="choice__body"><span class="choice__mark">{{ m.icon('check') }}</span><span>Entendo que isso gera uma nova tentativa para {{ job.name or "este lead" }}.</span></span></label>
+        {% if errors.get("confirm") %}<p class="error" id="rep-confirma-erro">{{ m.icon('alert-circle') }}{{ errors["confirm"] }}</p>{% endif %}
+        <div class="btns"><button class="btn btn--primary" type="submit">Reprocessar pedido</button></div>
+      </form>
+    </details>
+    {% else %}
+    <p class="muted">Reprocessar fica disponível quando o pedido termina (concluído ou com falha).</p>
+    {% endif %}
+  </section>
+</header>
+
+<div class="cols">
+  <div class="stackcol">
+    <section class="box" id="linha-do-tempo" aria-labelledby="tl-titulo">
+      <h2 id="tl-titulo">Linha do tempo</h2>
+      {% for attempt in job.timeline %}
+      <div class="attempt">
+        <h3>Tentativa {{ attempt.number }}{% if attempt.outcome %} {{ m.badge(attempt.outcome) }}{% endif %}</h3>
+        <ol class="timeline">
+          {% for event in attempt.events %}
+          <li><span class="{{ event.kind }}">{{ m.icon({'ok': 'check', 'bad': 'x', 'wait': 'clock'}[event.kind]) }}</span>
+            <span>{{ event.label }}{% if event.note %}<small>{{ event.note }}</small>{% endif %}</span>
+            <span class="t">{% if event.at %}{{ m.when(event.at) }}{% endif %}</span></li>
+          {% endfor %}
+        </ol>
+      </div>
+      {% endfor %}
+      <p class="muted footnote">Logs e novas tentativas de cada tarefa ficam no Hatchet{% if job.run_url %} (<a href="{{ job.run_url }}" target="_blank" rel="noopener noreferrer">abrir execução</a>){% endif %}. Aqui você vê o resultado de negócio.</p>
+    </section>
+
+    <section class="box" id="entregas" aria-labelledby="ent-titulo">
+      <h2 id="ent-titulo">Entregas</h2>
+      {% if job.deliveries %}
+      <div class="tablewrap" role="region" aria-label="Tabela de entregas" tabindex="0">
+        <table class="table table--compact">
+          <caption class="sr-only">Entregas deste pedido</caption>
+          <thead><tr><th scope="col">Destino</th><th scope="col">Tentativa</th><th scope="col">Estado</th><th scope="col">Envios</th><th scope="col">Último erro</th><th scope="col">Entregue em</th><th scope="col"><span class="sr-only">Ação</span></th></tr></thead>
+          <tbody>
+          {% for delivery in job.deliveries %}
+            <tr>
+              <td><b>{{ delivery.destination }}</b>{% if delivery.target %}<span class="sub mono">{{ delivery.target }}</span>{% endif %}{% if delivery.run_url %}<a class="sub" href="{{ delivery.run_url }}" target="_blank" rel="noopener noreferrer">execução{{ m.icon('external', 'icon--sm') }}<span class="sr-only"> (abre em nova aba)</span></a>{% endif %}</td>
+              <td class="num">{{ delivery.job_attempt }}</td>
+              <td>{{ m.badge(delivery.badge) }}</td>
+              <td class="num">{{ delivery.attempts }}</td>
+              <td>{% if delivery.last_error %}<span class="mono">{{ delivery.last_error }}</span>{% else %}<span class="muted">—</span>{% endif %}</td>
+              <td class="num">{{ m.when(delivery.when) }}</td>
+              <td>{% if delivery.state == "failed" %}
+                <form class="inline" method="post" action="/admin/jobs/{{ job.public_id }}/deliveries/{{ delivery.id }}/resend">
+                  <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+                  <button class="btn btn--secondary btn--sm" type="submit">{{ m.icon('send') }}Reenviar agora</button>
+                </form>
+              {% endif %}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <p class="muted">Nenhuma entrega ainda. Ela nasce quando o plano fica pronto e o formulário tem destino do webhook (<a href="/admin/destinations">Destinos</a>).</p>
+      {% endif %}
+    </section>
+
+    {% if job.syncs %}
+    <section class="box" id="sincronizacoes" aria-labelledby="sinc-titulo">
+      <h2 id="sinc-titulo">Sincronizações com a planilha</h2>
+      <div class="tablewrap" role="region" aria-label="Tabela de sincronizações" tabindex="0">
+        <table class="table table--compact">
+          <caption class="sr-only">Sincronizações deste pedido com a tabela de uma integração</caption>
+          <thead><tr><th scope="col">Integração</th><th scope="col">Tentativa</th><th scope="col">Estado</th><th scope="col">Envios</th><th scope="col">Resultado ou último erro</th><th scope="col">Quando</th><th scope="col"><span class="sr-only">Ação</span></th></tr></thead>
+          <tbody>
+          {% for sync in job.syncs %}
+            <tr>
+              <td><b>{{ sync.target }}</b></td>
+              <td class="num">{{ sync.job_attempt }}</td>
+              <td>{{ m.badge(sync.badge) }}</td>
+              <td class="num">{{ sync.attempts }}</td>
+              <td>{% if sync.last_error %}<span class="mono">{{ sync.last_error }}</span>{% elif sync.result %}{{ sync.result }}{% else %}<span class="muted">—</span>{% endif %}</td>
+              <td class="num">{{ m.when(sync.when) }}</td>
+              <td>{% if sync.state == "failed" %}
+                <form class="inline" method="post" action="/admin/jobs/{{ job.public_id }}/syncs/{{ sync.id }}/resend">
+                  <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+                  <button class="btn btn--secondary btn--sm" type="submit">{{ m.icon('send') }}Reenviar agora</button>
+                </form>
+              {% endif %}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <p class="muted footnote">A linha da tabela é achada pelo código do pedido: reenviar atualiza a mesma linha, nunca cria outra.</p>
+    </section>
+    {% endif %}
+
+    <section class="box" id="plano" aria-labelledby="plano-titulo">
+      <h2 id="plano-titulo">Plano gerado</h2>
+      {% if job.plan %}
+      <p class="muted">{{ job.plan.note }}</p>
+      <dl class="kv kv--stack">{% for label, item in job.plan.fields %}<dt>{{ label }}</dt><dd>{{ m.value(item, job.plan.labels, job.plan.keys[loop.index0] ~ ".") }}</dd>{% endfor %}</dl>
+      <details class="acc"><summary>Ver JSON validado do plano {{ m.icon('chevron-down') }}</summary>
+        <pre class="json" tabindex="0" aria-label="JSON do plano (somente leitura)">{{ job.plan.json }}</pre>
+      </details>
+      {% else %}
+      <p class="muted">O plano ainda não foi gerado.</p>
+      {% endif %}
+      {% if job.pdfs %}
+      <h3>PDFs</h3>
+      <ul class="files">
+        {% for pdf in job.pdfs %}<li>{{ m.icon('file') }}{% if pdf.removed %}<span>PDF da tentativa {{ pdf.version }}</span><span class="muted"> · {{ pdf.size }} · {{ m.when(pdf.created) }} · removido em {{ m.when(pdf.removed) }} (prazo de retenção)</span>{% else %}<a href="/admin/jobs/{{ job.public_id }}/pdf?version={{ pdf.version }}">PDF da tentativa {{ pdf.version }}</a><span class="muted"> · {{ pdf.size }} · {{ m.when(pdf.created) }}</span>{% endif %}</li>{% endfor %}
+      </ul>
+      {% endif %}
+    </section>
+
+    <section class="box" id="respostas" aria-labelledby="resp-titulo">
+      <h2 id="resp-titulo">Respostas do formulário</h2>
+      <p class="muted">{{ job.form }}</p>
+      {% for group in job.answers %}
+      {% if group.title %}<h3>{{ group.title }}</h3>{% endif %}
+      <dl class="kv kv--answers">{% for label, item in group.items %}<dt>{{ label }}</dt><dd>{{ m.value(item) }}</dd>{% endfor %}</dl>
+      {% endfor %}
+    </section>
+  </div>
+
+  <div class="stackcol">
+    <section class="box" id="pontuacao" aria-labelledby="score-titulo">
+      <h2 id="score-titulo">Pontuação e prioridade</h2>
+      <p class="internal">{{ m.icon('lock') }}Uso interno do comercial. Não aparece para o lead nem no PDF.</p>
+      <dl class="kv">
+        <dt>Prioridade</dt><dd>{{ m.badge(job.priority) }}</dd>
+        <dt>Persona</dt><dd>{{ job.persona or "—" }}</dd>
+        {% for label, item in job.scores %}<dt>{{ label }}</dt><dd>{{ m.value(item) }}</dd>{% endfor %}
+      </dl>
+    </section>
+
+    <section class="box" id="consentimentos" aria-labelledby="cons-titulo">
+      <h2 id="cons-titulo">Contato e consentimentos</h2>
+      <dl class="kv">
+        <dt>E-mail</dt><dd>{% if job.email %}<a href="mailto:{{ job.email }}">{{ job.email }}</a>{% else %}Contato indisponível{% endif %}</dd>
+        <dt>Telefone</dt><dd>{{ job.phone or "—" }}</dd>
+        <dt>Link do lead</dt><dd>{% if job.link_expired %}expirou em {{ m.when(job.link_expires) }}{% else %}vale até {{ m.when(job.link_expires) }}{% endif %}</dd>
+      </dl>
+      <ul class="consents">
+        {% for consent in job.consents %}
+        <li class="{{ 'ok' if consent.granted else 'no' }}">{{ m.icon('check' if consent.granted else 'x') }}<span>{{ consent.label }}<small>{{ consent.note }}</small></span></li>
+        {% endfor %}
+      </ul>
+    </section>
+  </div>
+</div>
+{% endblock %}

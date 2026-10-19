@@ -1,0 +1,19 @@
+# Contexto do build em lista de permissão: entra só o que a imagem usa (pyproject.toml, uv.lock,
+# app/ e o entrypoint em deploy/). Ficam de fora os testes, os relatórios, os exports do n8n, a
+# documentação, o .git e qualquer .env (inclusive deploy/.env, com os segredos de produção).
+*
+!pyproject.toml
+!uv.lock
+!LICENSE
+!THIRD_PARTY_NOTICES.md
+!app
+!deploy
+**/.env*
+**/__pycache__
+**/*.py[cod]
+**/.DS_Store
+app/README.md
+deploy/*.yaml
+deploy/Caddyfile
+# A pasta da stack Swarm pode ter app.env, db.env e o segredo do receptor de teste.
+deploy/swarm

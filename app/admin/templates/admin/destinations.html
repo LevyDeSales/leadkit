@@ -1,0 +1,53 @@
+{% extends "admin/layout.html" %}
+{% import "admin/macros.html" as m %}
+{% set section = "destinations" %}
+{% block title %}Destinos do webhook{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Destinos do webhook</h1>
+    <p>Para onde vai o evento <span class="mono">plano.concluido</span> de cada formulário. Um formulário com destino próprio usa o dele; os outros usam o destino padrão.</p>
+  </div>
+</div>
+
+<div class="stackcol">
+{% if cipher_missing %}
+<div class="alert alert--error" role="alert">{{ m.icon('alert-circle', 'icon--lg') }}<div><strong class="alert__title">Falta WEBHOOK_ENCRYPTION_KEY</strong><p>Sem a chave, o app não guarda segredos novos nem abre os guardados, e as entregas esperam. Defina a chave no ambiente e reinicie a API e o worker (app/README.md).</p></div></div>
+{% endif %}
+{% with unserved=overview.unserved, unreadable=overview.unreadable %}{% include "admin/_destination_warnings.html" %}{% endwith %}
+
+<section class="box" id="padrao" aria-labelledby="padrao-titulo">
+  <h2 id="padrao-titulo">Destino padrão</h2>
+  {% if overview.default %}
+  <dl class="kv">
+    <dt>Host</dt><dd><span class="mono">{{ overview.default.host }}</span></dd>
+    <dt>Última mudança</dt><dd>{{ overview.default.updated_by }} · {{ m.when(overview.default.updated) }}</dd>
+    <dt>Segredo gerado</dt><dd>{{ m.when(overview.default.secret_created) }}</dd>
+  </dl>
+  <p><a class="btn btn--secondary" href="/admin/destinations/default">Abrir o destino padrão</a></p>
+  {% else %}
+  <p class="muted">Nenhum. Os formulários sem destino próprio não são entregues.</p>
+  <p><a class="btn btn--primary" href="/admin/destinations/default">Configurar o destino padrão</a></p>
+  {% endif %}
+</section>
+
+<section class="box" id="formularios" aria-labelledby="form-titulo">
+  <h2 id="form-titulo">Formulários</h2>
+  <div class="tablewrap" role="region" aria-label="Destino de cada formulário" tabindex="0">
+    <table class="table table--cards">
+      <caption class="sr-only">Destino de cada formulário</caption>
+      <thead><tr><th scope="col">Formulário</th><th scope="col">Destino</th><th scope="col"><span class="sr-only">Ação</span></th></tr></thead>
+      <tbody>
+      {% for row in overview.forms %}
+        <tr>
+          <td class="who" data-label="Formulário"><b>{{ row.title }}</b><span class="mono">{{ row.slug }}</span></td>
+          <td data-label="Destino">{{ m.badge(row.badge) }}{% if row.host %}<span class="sub mono">{{ row.host }}</span>{% endif %}</td>
+          <td data-label="Ação"><a class="btn btn--secondary btn--sm" href="{{ row.edit_url }}">Abrir<span class="sr-only"> o destino de {{ row.slug }}</span></a></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+</div>
+{% endblock %}

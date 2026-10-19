@@ -1,0 +1,26 @@
+{% extends "public/base.html" %}
+{% import "public/_macros.html" as ui %}
+{#- HTMX só aqui: #progresso se atualiza sozinho e o servidor para o polling (286) quando o
+    pedido termina. Sem JavaScript, a página recarrega a cada 15 s. -#}
+{% block title %}Estamos montando seu plano{% endblock %}
+{% block head %}
+<meta name="htmx-config" content='{"allowEval":false,"allowScriptTags":false,"selfRequestsOnly":true,"historyCacheSize":0,"includeIndicatorStyles":false}'>
+<noscript><meta http-equiv="refresh" content="15"></noscript>
+<script src="/static/vendor/htmx-2.0.11.min.js" defer></script>
+{%- endblock %}
+{% block body_attrs %} data-clear-draft="{{ details.slug }}" hx-history="false"{% endblock %}
+{% block main %}
+<main id="conteudo" class="container container--narrow page">
+  <h1>Estamos montando seu plano{% if details.first_name %}, {{ details.first_name }}{% endif %}</h1>
+  <p class="lead">Isso costuma levar de 1 a 3 minutos. Se precisar sair, volte por este mesmo endereço, neste aparelho.</p>
+  {% include "public/_progress.html" %}
+  {#- Região viva fora do trecho trocado: muda só quando a etapa muda (hx-swap-oob). -#}
+  <p id="anuncio" class="sr-only" role="status" aria-live="polite" aria-atomic="true">{{ progress.announcement }}</p>
+  {%- if notice %}
+  {% include "public/_notice.html" %}
+  {%- endif %}
+</main>
+{% endblock %}
+{% block footer %}
+<p>Esta página é pessoal. Não compartilhe o endereço com outras pessoas.</p>
+{% endblock %}

@@ -1,0 +1,118 @@
+# Produção num VPS: Postgres, migrations, API, worker do Hatchet e Caddy (HTTPS automático).
+# Hatchet Cloud, S3, OpenAI e o webhook ficam fora; tudo é configurado em deploy/.env (modelo em
+# deploy/.env.example). Na raiz do repositório:
+#   docker compose -f deploy/compose.yaml up -d --build
+# Primeiro deploy, atualização, logs, backup e rollback: app/README.md, seção "Deploy em VPS".
+name: leadkit
+
+x-logging: &logging
+  # Com rodízio: sem limite o Docker guarda os logs para sempre, e o log de acesso tem IPs.
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+x-app: &app
+  # A mesma imagem para migrate, api e worker, construída da raiz do repositório. APP_IMAGE_TAG só
+  # troca a tag (o CI usa `ci`); o rollback do README reaproveita a imagem anterior pela tag.
+  image: leadkit:${APP_IMAGE_TAG:-latest}
+  build:
+    context: ..
+  env_file: .env
+  init: true
+  restart: unless-stopped
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  logging: *logging
+
+services:
+  postgres:
+    image: postgres:16-trixie
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-mcc}
+      # Obrigatória: sem ela o compose para com "required variable POSTGRES_PASSWORD".
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+      POSTGRES_DB: ${POSTGRES_DB:-mcc}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    logging: *logging
+
+  # Uma vez a cada `up`: aplica as migrations antes de a API e o worker subirem.
+  migrate:
+    <<: *app
+    command: ["migrate"]
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    <<: *app
+    command: ["api"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    # Sem `ports`: só o Caddy, na rede do compose, chega na porta 8000.
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz', timeout=4)"
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 30s
+
+  worker:
+    <<: *app
+    command: ["worker"]
+    environment:
+      # /health do SDK: 200 só com o worker conectado ao Hatchet (porta interna, não publicada).
+      HATCHET_CLIENT_WORKER_HEALTHCHECK_ENABLED: "true"
+      HATCHET_CLIENT_WORKER_HEALTHCHECK_PORT: "8001"
+    # O SIGTERM espera as tasks em andamento: acima da mais longa (plan, até 9 min).
+    stop_grace_period: 10m
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=4)"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN: ${DOMAIN:?defina DOMAIN em deploy/.env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data # certificados: perder este volume obriga a emitir de novo
+      - caddy_config:/config
+    logging: *logging
+
+volumes:
+  postgres_data:
+  caddy_data:
+  caddy_config:

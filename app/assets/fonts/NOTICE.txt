@@ -1,0 +1,29 @@
+Fontes embutidas nos PDFs do Leadkit (SIL Open Font License 1.1).
+
+Arquivos originais, sem modificação; os oito TTF conferem byte a byte com os sdists oficiais
+das versões abaixo, após validação SHA-256 do arquivo publicado no PyPI.
+
+font-source-sans-pro 0.0.1
+  Origem: https://files.pythonhosted.org/packages/62/db/6be92aed80a2a328d3632c59aeb0986f82403096ea1a3896468bfcbc2987/font-source-sans-pro-0.0.1.tar.gz
+  SHA-256 do sdist: 3f81d8e52b0d7e930e2c867c0d3ee549312d03f97b71b664a8361006311f72e5
+  Licença integral, copiada do sdist: LICENSE-SourceSansPro.txt
+  Copyright 2010, 2012, 2014 Adobe Systems Incorporated.
+  Reserved Font Name: Source.
+  SourceSansPro-It.ttf sha256 36133e9f508b0b4c639e84b2a09855350be0b13700ad729ab519aa78e5c48d20
+  SourceSansPro-BoldIt.ttf sha256 eab3e6c76c677dda287b2e56f41f718cc975a14150f72ef82e0a87f1b56eac4c
+  SourceSansPro-Regular.ttf sha256 b77f3a700edd0fc0dec73258f882d5c3926c77f5caf6800a201d2166568d2309
+  SourceSansPro-Bold.ttf sha256 2efc3a95d076f2d04c5928c0ad698b7c61cc302d6f6e79e9643cd3722f7becc2
+  SourceSansPro-Semibold.ttf sha256 b440fd42fd5a54e1b252731deca9cc86604bee6ffa99281f5874c3476eb17eae
+
+font-source-serif-pro 0.0.1
+  Origem: https://files.pythonhosted.org/packages/63/67/91cc3b7eb11ff589927a70d1f79eafc412f7dea4104a509d9a4b7cb94a9a/font-source-serif-pro-0.0.1.tar.gz
+  SHA-256 do sdist: d903ac3e5c3515df2ea98654fc04b6399069f74152f8b9136db4c4c16a75e2ce
+  Licença integral, copiada do sdist: LICENSE-SourceSerifPro.txt
+  Copyright 2014 Adobe Systems Incorporated; os TTF também preservam copyright 2014–2018.
+  Reserved Font Name: Source.
+  SourceSerifPro-Semibold.ttf sha256 83cc8531f284efb749bbb54f9fb4a0e0450cba918a41df76fabb3a42f2f95899
+  SourceSerifPro-Regular.ttf sha256 b4e0771f06d8f6573a535312762b0b2f4fb9a03372239e39b0e7cf203da8ea9a
+  SourceSerifPro-Bold.ttf sha256 78041207a9c5166a82d41676d4c87f4c5ba4e1c13ac654e6e9e3538a5a0b0525
+
+A OFL permite embutir e distribuir as fontes com o software, mantendo avisos e licença.
+Os arquivos de fonte permanecem sob OFL; a licença não se aplica aos documentos PDF gerados.

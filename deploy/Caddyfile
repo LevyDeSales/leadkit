@@ -1,0 +1,8 @@
+# HTTPS automático (Let's Encrypt) para o domínio em DOMAIN, na frente da API.
+# Sem log de acesso aqui, de propósito: os links do lead levam o token na URL (`?t=`), que o log do
+# uvicorn já esconde. Se ligar o `log`, tire a query string antes.
+{$DOMAIN} {
+	encode zstd gzip
+	header Strict-Transport-Security "max-age=31536000"
+	reverse_proxy api:8000
+}

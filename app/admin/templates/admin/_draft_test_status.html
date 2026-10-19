@@ -1,0 +1,8 @@
+{#- O estado de um teste em andamento. O HTMX o troca a cada poucos segundos; quando o teste
+    termina, a resposta é 286 com HX-Refresh, e a página recarrega com o resultado. -#}
+{%- import "admin/macros.html" as m -%}
+{%- set test = page.test -%}
+<div id="estado" class="test-status" hx-get="{{ test.url }}/status" hx-trigger="every {{ page.poll_seconds }}s" hx-swap="outerHTML" role="status">
+  <p>{{ m.badge(test.status) }} {{ test.progress }}</p>
+  <p class="muted">Costuma levar de 10 a 40 segundos. Esta página se atualiza sozinha.</p>
+</div>

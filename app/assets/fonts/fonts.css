@@ -1,0 +1,12 @@
+/* Fontes livres (OFL) disponíveis para os templates de PDF; ver NOTICE.txt.
+   Carregado antes do CSS do formulário, que pode trocar a família padrão abaixo. */
+@font-face { font-family: "Source Sans Pro"; font-weight: 400; font-style: normal; src: url("SourceSansPro-Regular.ttf"); }
+@font-face { font-family: "Source Sans Pro"; font-weight: 400; font-style: italic; src: url("SourceSansPro-It.ttf"); }
+@font-face { font-family: "Source Sans Pro"; font-weight: 600; font-style: normal; src: url("SourceSansPro-Semibold.ttf"); }
+@font-face { font-family: "Source Sans Pro"; font-weight: 700; font-style: normal; src: url("SourceSansPro-Bold.ttf"); }
+@font-face { font-family: "Source Sans Pro"; font-weight: 700; font-style: italic; src: url("SourceSansPro-BoldIt.ttf"); }
+@font-face { font-family: "Source Serif Pro"; font-weight: 400; font-style: normal; src: url("SourceSerifPro-Regular.ttf"); }
+@font-face { font-family: "Source Serif Pro"; font-weight: 600; font-style: normal; src: url("SourceSerifPro-Semibold.ttf"); }
+@font-face { font-family: "Source Serif Pro"; font-weight: 700; font-style: normal; src: url("SourceSerifPro-Bold.ttf"); }
+
+html { font-family: "Source Sans Pro"; }
