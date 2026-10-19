@@ -5,10 +5,12 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
 import pytest
+import sqlalchemy as sa
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -362,3 +364,85 @@ def test_publisher_rejects_forks_prs_other_shas_and_missing_or_failed_checks(
     overrides: dict[str, Any],
 ) -> None:
     assert not publisher_allowed({"vars.LEADKIT_PUBLISH_ENABLED": "true", **overrides})
+
+
+def test_swarm_rehearsal_accepts_the_real_guard_refusal(
+    shared_engine, database_url: str, tmp_path: Path
+) -> None:
+    """O ensaio precisa reconhecer a recusa real e ainda permitir rollback sem migrar.
+
+    Só o transporte Docker é substituído: o deploy.sh e o Alembic/guard usam código real
+    e PostgreSQL 16. Não há Swarm local; versões e disponibilidade ficam no ensaio remoto.
+    """
+    from test_swarm_scripts import Server, Staging
+
+    staging_dir = tmp_path / "staging"
+    staging_dir.mkdir()
+    server = Server(tmp_path, Staging(staging_dir))
+    docker = server.bin_dir / "docker"
+    docker.rename(server.bin_dir / "docker-stub")
+    docker.write_text(
+        "#!/usr/bin/env bash\n"
+        'if [[ "$1" == run ]]; then\n'
+        '  echo "$*" >> "$STUB_CALLS"\n'
+        '  exec "$GUARD_PYTHON" -m alembic -c "$GUARD_ROOT/app/alembic.ini" upgrade head\n'
+        "fi\n"
+        'exec "$(dirname "$0")/docker-stub" "$@"\n'
+    )
+    docker.chmod(0o755)
+    env = {
+        "STUB_NETWORK": "1",
+        "GUARD_PYTHON": sys.executable,
+        "GUARD_ROOT": str(ROOT),
+        "DATABASE_URL": database_url,
+        "PYTHONPATH": str(ROOT),
+        "IMAGE": "gerador-planos:ci",
+    }
+    with shared_engine.begin() as connection:
+        original = connection.exec_driver_sql(
+            "SELECT version_num FROM alembic_version"
+        ).scalar_one()
+        connection.exec_driver_sql("UPDATE alembic_version SET version_num = 'ci_futura'")
+    try:
+        refused = server.run("deploy.sh", **env)
+        assert refused.returncode != 0
+        assert "revisão incompatível" in refused.stderr
+        assert not any(call.startswith("stack deploy") for call in server.calls)
+        log = tmp_path / "back-sem-rollback.log"
+        log.write_text(refused.stdout + refused.stderr)
+        rehearsal = next(
+            step["run"]
+            for step in steps_of("swarm")
+            if step.get("name", "").startswith("Update, break and go back")
+        )
+        # Executa as asserções do próprio workflow contra a saída do deploy real.
+        assertions = rehearsal.split('cat "$RUNNER_TEMP/back-sem-rollback.log"')[-1]
+        assertions = assertions.split('test "$(versions)"')[0]
+        checked = subprocess.run(
+            ["bash", "-e", "-c", assertions],
+            capture_output=True,
+            text=True,
+            env={**os.environ, "RUNNER_TEMP": str(tmp_path)},
+            check=False,
+        )
+        assert checked.returncode == 0, checked.stdout + checked.stderr
+        assert "revisão incompatível" in checked.stdout
+        assert "a stack não foi mexida" in checked.stdout
+
+        server.calls_file.write_text("")
+        rollback = server.run("deploy.sh", ROLLBACK="1", **env)
+        assert rollback.returncode == 0, rollback.stdout + rollback.stderr
+        assert "sem migrations" in rollback.stdout
+        assert any(call.startswith("stack deploy") for call in server.calls)
+        assert not any(call.startswith("run ") for call in server.calls)
+        with shared_engine.connect() as connection:
+            assert (
+                connection.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one()
+                == "ci_futura"
+            )
+    finally:
+        with shared_engine.begin() as connection:
+            connection.execute(
+                sa.text("UPDATE alembic_version SET version_num = :revision"),
+                {"revision": original},
+            )
