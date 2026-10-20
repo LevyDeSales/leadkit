@@ -109,7 +109,13 @@
     <button class="btn btn--secondary" type="submit">{{ m.icon('send') }}Mandar o evento de teste</button>
   </form>
   <div id="resultado-teste" aria-live="polite">
-    {% if test %}
+    {% if test_error %}
+    <div class="alert alert--error" role="alert">{{ m.icon('alert-circle', 'icon--lg') }}<div>
+      <strong class="alert__title">Evento de teste não enviado</strong>
+      <p>{{ test_error }}</p>
+      <p><a href="#purpose">Conferir a finalidade do receptor</a> · <a href="/admin/destinations#formularios">Abrir destinos dos formulários</a></p>
+    </div></div>
+    {% elif test %}
     <div class="alert alert--{{ 'ok' if test.ok else 'warn' }}" role="status">{{ m.icon('check' if test.ok else 'alert-triangle', 'icon--lg') }}<div><strong class="alert__title">{{ test.headline }}</strong><p>{{ test.note }}</p></div></div>
     {% if test.body %}
     <h3>Começo da resposta</h3>

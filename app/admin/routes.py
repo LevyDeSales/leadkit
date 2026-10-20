@@ -615,6 +615,7 @@ def _destination_page(
     status_code: int = 200,
     new_secret: str | None = None,
     test: views.ProbeView | None = None,
+    test_error: str | None = None,
     errors: dict[str, str] | None = None,
     url: str | None = None,
     needs_confirmation: bool = False,
@@ -654,6 +655,7 @@ def _destination_page(
             else (page.stored.events if page.stored else ("plano.concluido",)),
             "new_secret": new_secret,
             "test": test,
+            "test_error": test_error,
             "errors": errors or {},
             "url": url,
             "needs_confirmation": needs_confirmation,
@@ -822,7 +824,7 @@ def send_test_event(
     except destinations.UnreadableSecret:
         return _destination_page(request, status_code=409, test=views.UNREADABLE_PROBE)
     except destinations.InvalidPurpose as exc:
-        return _destination_page(request, status_code=422, errors={"purpose": exc.message})
+        return _destination_page(request, status_code=422, test_error=exc.message)
     except destinations.UnsupportedEvent:
         return _back(session, form_slug, "O destino não declarou aceitar o evento de captura.")
     if probe is None:
