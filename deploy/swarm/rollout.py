@@ -35,6 +35,9 @@ class Rollout:
         self.pinned = ""
         self.node = ""
         self.tracked = {"api": {}, "worker": {}}
+        self.observed_images = {}
+        self.observed_since = time.time_ns()
+        self.exit_proofs = {}
         self.epoch = str(uuid.uuid4())
         self.baseline = {}
 
@@ -208,17 +211,116 @@ class Rollout:
                     )
         return tasks
 
-    def observe(self, role, *, wait=False):
-        self.tasks(role)
+    def removed_container(self, task, present):
+        cid = task["Status"]["ContainerStatus"]["ContainerID"]
+        image = self.observed_images.get(cid)
+        if (
+            not isinstance(image, str)
+            or not DIGEST.fullmatch(image)
+            or not re.fullmatch(r"[a-f0-9]{64}", cid)
+            or task["NodeID"] != self.node
+            or (task["ID"] in present and task["Status"]["State"] not in TERMINAL)
+        ):
+            raise RolloutError("Um container ausente não tem saída comprovada; mantenha a pausa.")
+        node = self.decoded("node", "inspect", self.node)[0]
+        local = self.docker("info", "--format", "{{.Swarm.NodeID}}").stdout.strip()
+        if (
+            local != self.node
+            or node["Status"]["State"] != "ready"
+            or node.get("ManagerStatus", {}).get("Reachability") != "reachable"
+        ):
+            raise RolloutError("O nó local não confirma a saída; mantenha a pausa.")
+        # Não basta inspect falhar: o daemon precisa listar e comprovar a destruição
+        # do ID completo cuja imagem já foi observada, inclusive após remover a task.
+        if self.docker("ps", "-aq", "--no-trunc", "--filter", f"id={cid}").stdout.strip():
+            raise RolloutError(
+                "Um container existente não pôde ser inspecionado; mantenha a pausa."
+            )
+        until = time.time_ns()
+        if cid in self.exit_proofs:
+            proof = self.exit_proofs[cid]
+            if (
+                isinstance(proof, dict)
+                and set(proof) == {"container_id", "image", "node_id", "since", "time_nano"}
+                and proof["container_id"] == cid
+                and proof["image"] == image
+                and proof["node_id"] == self.node
+                and type(proof["since"]) is int
+                and proof["since"] == self.observed_since
+                and type(proof["time_nano"]) is int
+                and self.observed_since <= proof["time_nano"] <= until
+            ):
+                return {"Image": image, "State": {"Running": False}}, "remove"
+            raise RolloutError("A prova de saída não corresponde à observação; mantenha a pausa.")
+        raw = self.docker(
+            "events",
+            "--since",
+            f"{self.observed_since // 10**9}.{self.observed_since % 10**9:09d}",
+            "--until",
+            f"{until // 10**9}.{until % 10**9:09d}",
+            "--filter",
+            "type=container",
+            "--filter",
+            f"container={cid}",
+            "--filter",
+            "event=destroy",
+            "--format",
+            "{{json .}}",
+        )
+        try:
+            events = [json.loads(line) for line in raw.stdout.splitlines()]
+            destroyed = next(
+                (
+                    event["timeNano"]
+                    for event in events
+                    if event.get("Type") == "container"
+                    and event.get("Action") == "destroy"
+                    and event.get("Actor", {}).get("ID") == cid
+                    and event.get("scope") == "local"
+                    and type(event.get("timeNano")) is int
+                    and self.observed_since <= event["timeNano"] <= until
+                ),
+                None,
+            )
+        except (ValueError, TypeError, AttributeError):
+            destroyed = False
+        if destroyed is None or destroyed is False:
+            raise RolloutError("Falta prova local de destruição do container; mantenha a pausa.")
+        self.exit_proofs[cid] = {
+            "container_id": cid,
+            "image": image,
+            "node_id": self.node,
+            "since": self.observed_since,
+            "time_nano": destroyed,
+        }
+        return {"Image": image, "State": {"Running": False}}, "remove"
+
+    def container(self, task, present):
+        cid = task["Status"]["ContainerStatus"]["ContainerID"]
+        raw = self.docker("inspect", "--type", "container", cid, optional=True)
+        if raw.returncode:
+            return self.removed_container(task, present)
+        try:
+            container = json.loads(raw.stdout)[0]
+            image = container["Image"]
+            if not DIGEST.fullmatch(image):
+                raise ValueError
+        except (ValueError, KeyError, IndexError, TypeError):
+            raise RolloutError("Um container não tem identidade de imagem comprovada.") from None
+        self.observed_images[cid] = image
+        return container, task["Status"]["State"]
+
+    def observe(self, role, *, wait=False, wait_ids=None):
+        present = {task["ID"] for task in self.tasks(role)}
         observations = []
         for task in self.tracked[role].values():
             cid = task["Status"]["ContainerStatus"]["ContainerID"]
-            container = self.decoded("inspect", "--type", "container", cid)[0]
+            container, state = self.container(task, present)
             running = container["State"]["Running"]
-            if wait and running:
+            if wait and running and (wait_ids is None or task["ID"] in wait_ids):
                 # O Docker espera o processo efetivamente sair, inclusive durante o grace period.
-                self.docker("container", "wait", cid)
-                container = self.decoded("inspect", "--type", "container", cid)[0]
+                self.docker("container", "wait", cid, optional=True)
+                container, state = self.container(task, present)
                 running = container["State"]["Running"]
             image = container["Image"]
             if not DIGEST.fullmatch(image):
@@ -229,7 +331,7 @@ class Rollout:
                     "node_id": task["NodeID"],
                     "container_id": cid,
                     "image": image,
-                    "state": task["Status"]["State"],
+                    "state": state,
                     "healthy": container["State"].get("Health", {}).get("Status") == "healthy",
                     "running": running,
                 }
@@ -497,11 +599,7 @@ class Rollout:
             # Apenas as tasks que deixaram a configuração atual devem sair; as ativas permanecem.
             tasks = self.tasks(role)
             active_ids = {task["ID"] for task in tasks if task["DesiredState"] == "running"}
-            for task_id, task in list(self.tracked[role].items()):
-                if task_id not in active_ids:
-                    self.docker(
-                        "container", "wait", task["Status"]["ContainerStatus"]["ContainerID"]
-                    )
+            self.observe(role, wait=True, wait_ids=set(self.tracked[role]) - active_ids)
         evidence = self.verify()
         # Nova coleta completa antes do commit detecta mudança de Spec, tasks ou saúde.
         if evidence != self.verify():

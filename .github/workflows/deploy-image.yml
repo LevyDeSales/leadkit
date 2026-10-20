@@ -530,6 +530,17 @@ jobs:
             printf '{"stage":"historical_service_ready","role":"%s"}\n' "$role"
           done
           bootstrap_role=none
+          # Baseline privada só com IDs/estado/imagem imutável; a janela antecede a observação.
+          python3 - "$folder" "$compat" <<'PYBASE'
+          import json
+          import sys
+          from pathlib import Path
+          from rollout import Rollout
+          rollout = Rollout(sys.argv[1], "", sys.argv[2], False)
+          rollout.node = rollout.docker("info", "--format", "{{.Swarm.NodeID}}").stdout.strip()
+          roles = {role: rollout.observe(role) for role in ("api", "worker")}
+          Path("exit-baseline.json").write_text(json.dumps({"node": rollout.node, "since": rollout.observed_since, "roles": roles}))
+          PYBASE
           export CI_REAL_DOCKER="$(command -v docker)" CI_COMPAT_STACK="$compat" CI_COMPAT_FOLDER="$folder"
           cat > bin/docker <<'SH'
           #!/usr/bin/env bash
@@ -553,6 +564,7 @@ jobs:
               "inspect --format") operation=container.inspect ;;
               "info "*) operation=info ;;
               "ps "*) operation=container.ls ;;
+              "events "*) operation=container.events ;;
               "run "*)
                 case "${@: -1}" in
                   capability|status|begin|attest|migrate) operation="run.${@: -1}" ;;
@@ -565,7 +577,45 @@ jobs:
             record_operation "$@"
             "$CI_REAL_DOCKER" "$@"
           }
+          container_stopped() {
+            # Reusa o helper e sua prova positiva; nenhum stderr/objeto do daemon sai no job.
+            python3 - "$CI_COMPAT_FOLDER" "$CI_COMPAT_STACK" "$1" <<'PYEXIT'
+          import json
+          import sys
+          from pathlib import Path
+          sys.path.insert(0, sys.argv[1])
+          from rollout import Rollout, TERMINAL
+          try:
+              baseline = json.loads((Path(sys.argv[1]) / "exit-baseline.json").read_text())
+              rollout = Rollout(sys.argv[1], "", sys.argv[2], False)
+              rollout.node, rollout.observed_since = baseline["node"], baseline["since"]
+              if type(rollout.observed_since) is not int or rollout.observed_since <= 0: raise ValueError
+              if rollout.docker("info", "--format", "{{.Swarm.NodeID}}").stdout.strip() != rollout.node: raise ValueError
+              node = rollout.decoded("node", "inspect", rollout.node)[0]
+              if node["Status"]["State"] != "ready" or node.get("ManagerStatus", {}).get("Reachability") != "reachable": raise ValueError
+              rollout.exit_proofs = baseline.get("proofs", {})
+              selected = None
+              for role, rows in baseline["roles"].items():
+                  for row in rows:
+                      cid = row["container_id"]
+                      rollout.observed_images[cid] = row["image"]
+                      rollout.tracked[role][row["id"]] = {"ID": row["id"], "NodeID": row["node_id"],
+                          "DesiredState": "running", "Status": {"State": row["state"], "ContainerStatus": {"ContainerID": cid}}}
+                      if cid == sys.argv[3]: selected = role
+              if selected is None: raise ValueError
+              row = next(row for row in rollout.observe(selected) if row["container_id"] == sys.argv[3])
+              if row["running"] or row["state"] not in TERMINAL: raise ValueError
+              baseline["proofs"] = rollout.exit_proofs
+              (Path(sys.argv[1]) / "exit-baseline.json").write_text(json.dumps(baseline))
+          except Exception:
+              raise SystemExit(1) from None
+          PYEXIT
+          }
           record_operation "$@"
+          if [[ "$1" == ci-prove-stopped ]]; then
+            container_stopped "$2"
+            exit 0
+          fi
           if [[ "$1" == run && "${@: -1}" == migrate ]]; then
             : > "$CI_COMPAT_FOLDER/before-ddl"
             for role in api worker; do
@@ -575,7 +625,7 @@ jobs:
               observed_docker service inspect --format '{{.ID}} {{.Version.Index}} {{.Spec.Mode.Replicated.Replicas}} {{.PreviousSpec.Mode.Replicated.Replicas}}' "$service" >> "$CI_COMPAT_FOLDER/before-ddl"
             done
             while read -r container; do
-              test "$(observed_docker inspect --format '{{.State.Running}}' "$container")" = false
+              container_stopped "$container"
               echo "$container stopped" >> "$CI_COMPAT_FOLDER/before-ddl"
             done < "$CI_COMPAT_FOLDER/old-containers"
             observed_docker "$@"
@@ -613,7 +663,7 @@ jobs:
           operations = {"image.inspect", "image.tag", "service.inspect", "service.ls", "service.ps",
                         "service.scale", "service.update", "container.inspect", "container.wait", "container.ls",
                         "task.inspect", "network.inspect", "node.inspect", "stack.deploy", "info", "other",
-                        "run.capability", "run.status", "run.begin", "run.attest", "run.migrate"}
+                        "run.capability", "run.status", "run.begin", "run.attest", "run.migrate", "container.events"}
           checkpoint = Path("last-docker-operation")
           operation = checkpoint.read_text().strip() if checkpoint.is_file() else "unknown"
           if operation not in operations:
@@ -655,7 +705,7 @@ jobs:
           done
           bootstrap_role=none
           while read -r container; do
-            test "$(docker inspect --format '{{.State.Running}}' "$container")" = false
+            "$folder/bin/docker" ci-prove-stopped "$container"
           done < old-containers
           echo 'Bootstrap real: saída antesDDL, falha apósDDL, recusaold0 e retomadacap1 comprovadas'
 

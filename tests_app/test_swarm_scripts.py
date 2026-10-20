@@ -22,6 +22,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import time
 
 args = sys.argv[1:]
 calls = Path(os.environ['STUB_CALLS'])
@@ -114,6 +115,20 @@ elif head == ['service','scale']:
             role = name.rsplit('_',1)[-1]
             apply(state, role, state['services'][role]['Spec']['TaskTemplate']['ContainerSpec']['Image'],int(replicas))
     if os.getenv('STUB_SCALE_FAIL'): code=1
+    if os.getenv('STUB_REAP'):
+        for tid, task in list(state['tasks'].items()):
+            if task['DesiredState'] == 'shutdown':
+                cid = task['Status']['ContainerStatus']['ContainerID']
+                if os.getenv('STUB_REAP') != 'visible':
+                    state['containers'].pop(cid, None)
+                state.setdefault('destroyed', []).append(cid)
+                state.setdefault('destroyed_at', {})[cid] = time.time_ns()
+                if os.getenv('STUB_REAP_ACTIVE'):
+                    task['Status']['State']='running'
+                    task['DesiredState']='remove'
+                if os.getenv('STUB_REAP_REMOTE'): task['NodeID']='remote-node'
+                if os.getenv('STUB_REAP') == 'task':
+                    del state['tasks'][tid]
 elif head == ['service','update']:
     role = args[-1].rsplit('_',1)[-1]
     svc = state['services'][role]
@@ -139,9 +154,9 @@ elif head == ['stack','deploy']:
                 apply(state,role,old['TaskTemplate']['ContainerSpec']['Image'],old['Mode']['Replicated']['Replicas'])
                 svc['UpdateStatus']={'State':'rollback_completed'}
 elif args[:1] == ['info']:
-    out=node
+    out='different-node' if os.getenv('STUB_NODE_CHANGE') and state.get('destroyed') else node
 elif head == ['node','inspect']:
-    out=json.dumps([{'Status':{'State':'down' if os.getenv('STUB_NODE_DOWN') else 'ready'},'ManagerStatus':{'Reachability':'reachable'}}])
+    out=json.dumps([{'Status':{'State':'down' if os.getenv('STUB_NODE_DOWN') or (os.getenv('STUB_NODE_LOST') and state.get('destroyed')) else 'ready'},'ManagerStatus':{'Reachability':'reachable'}}])
 elif args[:1] == ['inspect']:
     kind=args[args.index('--type')+1]
     names=args[args.index('--type')+2:]
@@ -152,16 +167,43 @@ elif args[:1] == ['inspect']:
         if os.getenv('STUB_MISSING_CONTAINER'):
             for value in values: value['Status']['ContainerStatus']['ContainerID']=''
     else:
-        values=[state['containers'][x] for x in names]
+        if os.getenv('STUB_INITIAL_INSPECT_FAIL') or any(x not in state['containers'] for x in names) or (os.getenv('STUB_REAP')=='visible' and state.get('destroyed')):
+            code=1
+            values=[]
+        else:
+            values=[state['containers'][x] for x in names]
     out=json.dumps(values)
 elif head == ['container','wait']:
     out='0'
 elif args[:1] == ['ps']:
     if '-aq' in args:
-        role=args[-1].rsplit('_',1)[-1]
-        out='\n'.join(t['Status']['ContainerStatus']['ContainerID'] if '--no-trunc' in args else t['Status']['ContainerStatus']['ContainerID'][:12] for t in state['tasks'].values() if t['role']==role)
+        if args[-1].startswith('id='):
+            cid=args[-1].split('=',1)[1]
+            out=cid if cid in state['containers'] else ''
+            if os.getenv('STUB_LOCAL_LIST_FAIL'): code=1
+        else:
+            role=args[-1].rsplit('_',1)[-1]
+            out='\n'.join(t['Status']['ContainerStatus']['ContainerID'] if '--no-trunc' in args else t['Status']['ContainerStatus']['ContainerID'][:12] for t in state['tasks'].values() if t['role']==role and t['Status']['ContainerStatus']['ContainerID'] in state['containers'])
     elif 'service.name='+os.getenv('STUB_DB_SERVICE','never') in ' '.join(args):
         out='container'
+elif args[:1] == ['events']:
+    if os.getenv('STUB_EVENTS_FAIL'): code=1
+    elif not os.getenv('STUB_NO_DESTROY'):
+        out='\n'.join(json.dumps({'Type':'container','Action':'destroy','Actor':{'ID':cid},'scope':'local','timeNano':state['destroyed_at'][cid]}) for cid in state.get('destroyed',[]))
+        fault=os.getenv('STUB_EVENT_FAULT')
+        if fault=='id': out=out.replace('"ID": "','"ID": "wrong-')
+        if fault=='action': out=out.replace('destroy','die')
+        if fault=='type': out=out.replace('container','image')
+        if fault=='json': out='SYNTHETIC_PRIVATE_ERROR'
+        if fault=='old': out='\n'.join(json.dumps({'Type':'container','Action':'destroy','Actor':{'ID':cid},'scope':'local','timeNano':0}) for cid in state.get('destroyed',[]))
+        if fault=='scope': out=out.replace('local','swarm')
+        if fault=='future': out='\n'.join(json.dumps({'Type':'container','Action':'destroy','Actor':{'ID':cid},'scope':'local','timeNano':time.time_ns()+10**12}) for cid in state.get('destroyed',[]))
+        if fault=='time_type': out='\n'.join(json.dumps({'Type':'container','Action':'destroy','Actor':{'ID':cid},'scope':'local','timeNano':str(state['destroyed_at'][cid])}) for cid in state.get('destroyed',[]))
+        if os.getenv('STUB_CONSUME_EVENTS'):
+            key=next(x for x in args if x.startswith('container='))
+            count=state.setdefault('event_reads',{}).get(key,0)
+            state['event_reads'][key]=count+1
+            if count: out=''
 elif args[:1] == ['exec']:
     out='dump'
 elif args[:1] == ['run']:
@@ -739,6 +781,52 @@ def test_first_adoption_stops_both_old_services_before_migration(server):
     assert scale < migration
     assert "gerador-planos_api=0" in server.calls[scale]
     assert "gerador-planos_worker=0" in server.calls[scale]
+
+
+@pytest.mark.parametrize("reaped", ["container", "task"])
+def test_first_adoption_proves_exit_when_swarm_reaps_stopped_containers(server, reaped):
+    result = deploy(server, STUB_NETWORK="1", STUB_CONTRACT_FLOOR="0", STUB_REAP=reaped)
+    assert result.returncode == 0, result.stderr
+    assert rollout_state(server)["phase"] == "verified"
+    assert any(call.startswith("events ") for call in server.calls)
+    retired = rollout_state(server)["attested"]["services"]["api"]["retired"]
+    assert retired and all(not row["running"] for row in retired)
+
+
+def test_first_adoption_keeps_positive_proof_after_event_history_rotates(server):
+    result = deploy(
+        server, STUB_NETWORK="1", STUB_CONTRACT_FLOOR="0", STUB_REAP="task", STUB_CONSUME_EVENTS="1"
+    )
+    assert result.returncode == 0, result.stderr
+    assert rollout_state(server)["phase"] == "verified"
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        {"STUB_NO_DESTROY": "1"},
+        {"STUB_EVENTS_FAIL": "1"},
+        {"STUB_LOCAL_LIST_FAIL": "1"},
+        {"STUB_REAP_ACTIVE": "1"},
+        {"STUB_REAP_REMOTE": "1"},
+        {"STUB_REAP": "visible"},
+        {"STUB_INITIAL_INSPECT_FAIL": "1"},
+        {"STUB_NODE_CHANGE": "1"},
+        {"STUB_NODE_LOST": "1"},
+        *(
+            {"STUB_EVENT_FAULT": value}
+            for value in ("id", "action", "type", "json", "old", "scope", "future", "time_type")
+        ),
+    ],
+)
+def test_removed_container_with_incomplete_exit_proof_keeps_gate_closed(server, fault):
+    result = deploy(
+        server, STUB_NETWORK="1", STUB_CONTRACT_FLOOR="0", **{"STUB_REAP": "container", **fault}
+    )
+    assert result.returncode == 1
+    assert not any(call.startswith("run ") and call.endswith(" migrate") for call in server.calls)
+    assert "attested" not in rollout_state(server)
+    assert "SYNTHETIC_PRIVATE_ERROR" not in result.stdout + result.stderr
 
 
 def rollout_state(server):

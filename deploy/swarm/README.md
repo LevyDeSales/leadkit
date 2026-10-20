@@ -130,6 +130,23 @@ Ausência de observação fecha o gate. `/readyz`, conexão Hatchet ou uma répl
 compatibilidade de toda a frota. A atestação é uma declaração do host operacional autorizado; o
 app valida o contrato e o epoch, sem ganhar acesso ao daemon.
 
+O Swarm pode remover tasks e containers depois da escala para zero. Nesse caso, o helper só
+comprova a saída se já observou o ID completo, o nó e a imagem imutável do container, a task
+está terminal ou foi removida do inventário e o mesmo daemon local confirma a destruição.
+Isso exige nó disponível, listagem local bem-sucedida sem aquele container e evento local
+`destroy` do mesmo ID, com `timeNano` dentro da janela iniciada antes da observação. A consulta
+de eventos tem fim absoluto; falha de `inspect`, ausência ou `DesiredState=remove` isolados
+não comprovam parada. O ensaio CI reutiliza essa prova também antes do DDL e após a retomada.
+
+Eventos Docker guardam somente os últimos 256 registros globais; não são um histórico durável.
+Evento ausente, antigo, perdido após restart, inválido ou de outro ID mantém o bloqueio.
+Uma prova positiva já validada é conservada durante a execução, com nova conferência do nó
+e inventário local em cada uso. O CI conserva somente essa evidência operacional na baseline
+privada do ensaio para a conferência final, sem depender da retenção posterior do evento.
+O roteiro não substitui essa prova por uma tag de imagem nem por uma lista vazia. Preserve
+os processos antigos observáveis durante o ensaio; se a prova foi perdida, investigue no host
+antes de retomar, sem apagar o piso ou forjar evidência.
+
 O [backup.sh](backup.sh) usa o serviço DB da stack e grava dump no diretório configurado. Agende e
 ensaie restauração em banco isolado. A baseline pública é para banco vazio; uma instalação existente
 exige ensaio de compatibilidade próprio antes de qualquer promoção autorizada.

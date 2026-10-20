@@ -843,3 +843,88 @@ def test_migration_wrapper_keeps_controlled_post_commit_failure(tmp_path: Path) 
     assert (tmp_path / "ddl-committed-launcher-failed").exists()
     assert (tmp_path / "last-docker-operation").read_text().strip() == "run.migrate"
     assert result.stdout == result.stderr == ""
+
+
+@pytest.mark.parametrize(
+    "proof",
+    [
+        "stopped",
+        "destroyed",
+        "task_removed",
+        "running",
+        "missing",
+        "list_error",
+        "event_error",
+        "wrong_id",
+        "history_rotated",
+        "cached_wrong_id",
+    ],
+)
+def test_bootstrap_proves_old_container_exit_without_requiring_retention(
+    tmp_path: Path, proof: str
+) -> None:
+    from test_swarm_scripts import Server, Staging
+
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    server = Server(tmp_path, Staging(staging))
+    rehearsal = next(
+        step["run"]
+        for step in steps_of("swarm")
+        if step.get("name") == "Rehearse real pre-projection bootstrap and forward recovery"
+    )
+    wrapper = server.folder / "wrapper-docker"
+    wrapper.write_text(rehearsal.split("cat > bin/docker <<'SH'\n", 1)[1].split("\nSH\n", 1)[0])
+    wrapper.chmod(0o700)
+    baseline = rehearsal[
+        rehearsal.index('python3 - "$folder" "$compat"') : rehearsal.index("export CI_REAL_DOCKER=")
+    ]
+    script = server.folder / "prove.sh"
+    script.write_text(
+        "#!/usr/bin/env bash\nset -euo pipefail\n"
+        + baseline
+        + "\n"
+        + (
+            "true"
+            if proof == "running"
+            else "docker service scale gerador-planos_api=0 gerador-planos_worker=0"
+        )
+        + '\ncid=$(python3 -c \'import json; print(json.load(open("exit-baseline.json"))["roles"]["api"][0]["container_id"])\')\n./wrapper-docker ci-prove-stopped "$cid"\n'
+        + (
+            'python3 - <<\'PY\'\nimport json\nfrom pathlib import Path\np=Path("exit-baseline.json"); d=json.loads(p.read_text()); next(iter(d["proofs"].values()))["container_id"]="wrong"; p.write_text(json.dumps(d))\nPY\n'
+            if proof == "cached_wrong_id"
+            else ""
+        )
+        + './wrapper-docker ci-prove-stopped "$cid"\n'
+    )
+    script.chmod(0o700)
+    faults = {"STUB_REAP": "container"}
+    if proof in {"stopped", "running"}:
+        faults = {}
+    if proof == "task_removed":
+        faults = {"STUB_REAP": "task"}
+    if proof == "missing":
+        faults["STUB_NO_DESTROY"] = "1"
+    if proof == "list_error":
+        faults["STUB_LOCAL_LIST_FAIL"] = "1"
+    if proof == "event_error":
+        faults["STUB_EVENTS_FAIL"] = "1"
+    if proof == "wrong_id":
+        faults["STUB_EVENT_FAULT"] = "id"
+    if proof in {"history_rotated", "cached_wrong_id"}:
+        faults["STUB_CONSUME_EVENTS"] = "1"
+    result = server.run(
+        "prove.sh",
+        folder=str(server.folder),
+        compat="gerador-planos",
+        CI_REAL_DOCKER=str(server.bin_dir / "docker"),
+        CI_COMPAT_FOLDER=str(server.folder),
+        CI_COMPAT_STACK="gerador-planos",
+        STUB_NETWORK="1",
+        STUB_CONTRACT_FLOOR="0",
+        **faults,
+    )
+    assert (result.returncode == 0) == (
+        proof in {"stopped", "destroyed", "task_removed", "history_rotated"}
+    )
+    assert result.stdout == result.stderr == ""
