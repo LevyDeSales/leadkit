@@ -445,10 +445,12 @@ class Rollout:
         if result.returncode:
             if "revisão incompatível" in result.stdout + result.stderr:
                 raise RolloutError(
-                    "revisão incompatível; a stack não foi mexida. Use imagem compatível e o roteiro de retorno."
+                    "revisão incompatível; a imagem não foi atualizada. "
+                    "Confira a pausa e o gate antes de usar imagem compatível pelo roteiro de retorno."
                 )
             raise RolloutError(
-                "as migrations falharam; a stack não foi mexida. Preserve o gate bloqueado."
+                "as migrations falharam; a imagem não foi atualizada. "
+                "Confira a pausa e preserve o gate bloqueado."
             )
 
     def update_unchanged(self, role, service):

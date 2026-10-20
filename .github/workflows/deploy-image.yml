@@ -1018,21 +1018,72 @@ jobs:
 
       - name: Run deploy.sh on the stack deployed by hand
         run: |
-          # A primeira vez do deploy.sh no servidor, sem nada novo: nenhuma réplica é trocada, nem a
-          # do Postgres.
+          # A adoção pode fixar a referência da imagem; o DB e o código binário não mudam.
+          # Só depois da adoção a chamada idêntica deve preservar todas as tasks.
           cd "$CONF"
           running() {
-            docker service ps --filter desired-state=running --format '{{.Name}} {{.ID}}' \
+            docker service ps --no-trunc --filter desired-state=running --format '{{.Name}} {{.ID}}' \
               gerador-planos_db gerador-planos_api gerador-planos_worker | sort
           }
+          expected=$(docker image inspect --format '{{.Id}}' gerador-planos:ci)
+          runtime() {
+            python3 - "$expected" "${1:-initial}" <<'PY'
+          import json
+          import re
+          import subprocess
+          import sys
+
+          def docker(*args):
+              result = subprocess.run(["docker", *args], capture_output=True, text=True, timeout=30)
+              if result.returncode: raise ValueError
+              return result.stdout.strip()
+
+          try:
+              target, mode = sys.argv[1:]
+              if not re.fullmatch(r"sha256:[a-f0-9]{64}", target): raise ValueError
+              db = None
+              fleet = []
+              metadata = '{"id":{{json .Id}},"image":{{json .Image}},"running":{{json .State.Running}},"health":{{json .State.Health.Status}},"started":{{json .State.StartedAt}},"restarts":{{json .RestartCount}}}'
+              for role in ("db", "api", "worker"):
+                  service = f"gerador-planos_{role}"
+                  replicas = int(docker("service", "inspect", "--format", "{{.Spec.Mode.Replicated.Replicas}}", service))
+                  ids = docker("service", "ps", "-q", "--no-trunc", "--filter", "desired-state=running", service).split()
+                  if replicas < 1 or len(ids) != replicas or len(set(ids)) != replicas: raise ValueError
+                  if role == "db" and replicas != 1: raise ValueError
+                  for task in ids:
+                      cid = docker("inspect", "--type", "task", "--format", "{{.Status.ContainerStatus.ContainerID}}", task)
+                      if not re.fullmatch(r"[a-f0-9]{64}", cid): raise ValueError
+                      item = json.loads(docker("inspect", "--type", "container", "--format", metadata, cid))
+                      if item["id"] != cid or item["running"] is not True or item["health"] != "healthy": raise ValueError
+                      if role != "db" and item["image"] != target: raise ValueError
+                      if not isinstance(item["started"], str) or not item["started"]: raise ValueError
+                      if type(item["restarts"]) is not int or item["restarts"] < 0: raise ValueError
+                      fleet.append({"role": role, "task": task, "container": cid, "started": item["started"], "restarts": item["restarts"]})
+                      if role == "db":
+                          db = {"task": task, "container": cid, "started": item["started"], "restarts": item["restarts"]}
+              if mode in {"verified", "snapshot"}:
+                  query = "select minimum_contract || ':' || phase from deployment_contract where id=1"
+                  if docker("exec", db["container"], "sh", "-c", 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "$1"', "sh", query) != "1:verified": raise ValueError
+              print(json.dumps(sorted(fleet, key=lambda row: (row["role"], row["task"])) if mode == "snapshot" else db, sort_keys=True))
+          except Exception:
+              print("A frota não confirmou identidade, saúde ou contrato do ensaio.", file=sys.stderr)
+              raise SystemExit(1) from None
+          PY
+          }
+          db_before=$(runtime)
+          IMAGE=gerador-planos:ci ./deploy.sh
+          test "$(runtime verified)" = "$db_before"
+          stable=$(runtime snapshot)
           before=$(running)
           IMAGE=gerador-planos:ci ./deploy.sh
           after=$(running)
           if [ "$after" != "$before" ]; then
-            echo "réplicas trocadas:"
+            echo "réplicas trocadas na chamada idêntica:"
             diff <(echo "$before") <(echo "$after") || true
             exit 1
           fi
+          test "$(runtime verified)" = "$db_before"
+          test "$(runtime snapshot)" = "$stable"
 
       - name: Update, break and go back with deploy.sh without dropping requests
         run: |
@@ -1116,7 +1167,7 @@ jobs:
           fi
           cat "$RUNNER_TEMP/back-sem-rollback.log"
           grep -F 'revisão incompatível' "$RUNNER_TEMP/back-sem-rollback.log"
-          grep -F 'a stack não foi mexida' "$RUNNER_TEMP/back-sem-rollback.log"
+          grep -F 'a imagem não foi atualizada' "$RUNNER_TEMP/back-sem-rollback.log"
           test "$(versions)" = "$before"
           ROLLBACK=1 IMAGE=gerador-planos:ci ./deploy.sh > "$RUNNER_TEMP/back.log" 2>&1 || { cat "$RUNNER_TEMP/back.log"; exit 1; }
           cat "$RUNNER_TEMP/back.log"

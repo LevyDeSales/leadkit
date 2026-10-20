@@ -432,7 +432,7 @@ def test_swarm_rehearsal_accepts_the_real_guard_refusal(request, tmp_path: Path)
         )
         assert checked.returncode == 0, checked.stdout + checked.stderr
         assert "revisão incompatível" in checked.stdout
-        assert "a stack não foi mexida" in checked.stdout
+        assert "a imagem não foi atualizada" in checked.stdout
 
         server.calls_file.write_text("")
         rollback = server.run("deploy.sh", ROLLBACK="1", **env)
@@ -938,3 +938,137 @@ def test_bootstrap_proves_old_container_exit_without_requiring_retention(
         proof in {"stopped", "destroyed", "task_removed", "history_rotated"}
     )
     assert result.stdout == result.stderr == ""
+
+
+@pytest.mark.parametrize(
+    "fault,expected_status,expected_deploys",
+    [
+        ("normal", 0, 2),
+        ("multiple", 0, 2),
+        *[
+            (name, 1, 1)
+            for name in (
+                "adoption_db",
+                "adoption_db_restart",
+                "adoption_image",
+                "adoption_extra_image",
+                "adoption_health",
+                "adoption_stopped",
+                "adoption_contract",
+            )
+        ],
+        *[
+            (name, 1, 2)
+            for name in (
+                "second_api",
+                "second_worker",
+                "second_db",
+                "second_db_restart",
+                "second_api_container",
+                "second_api_restart",
+            )
+        ],
+    ],
+)
+def test_manual_stack_adoption_precedes_strict_noop(
+    tmp_path: Path, fault: str, expected_status: int, expected_deploys: int
+) -> None:
+    """Executa o bloco real; só o deploy externo e o daemon fornecem metadados sintéticos."""
+    run_manual_stack_adoption(
+        tmp_path, fault, expected_status=expected_status, expected_deploys=expected_deploys
+    )
+
+
+def run_manual_stack_adoption(
+    tmp_path: Path, fault: str, *, expected_status: int, expected_deploys: int
+) -> None:
+    import json
+
+    configuration = tmp_path / "conf"
+    configuration.mkdir()
+    (configuration / "app.env").write_text("SYNTHETIC_CONFIGURATION\n")
+    state = tmp_path / "deploys.json"
+    state.write_text("[]")
+    binary = tmp_path / "bin"
+    binary.mkdir()
+    deploy = configuration / "deploy.sh"
+    deploy.write_text(
+        f"#!{sys.executable}\n"
+        "import json, os\nfrom pathlib import Path\n"
+        "p=Path(os.environ['NOOP_STATE']); calls=json.loads(p.read_text())\n"
+        "calls.append(os.environ.get('IMAGE')); p.write_text(json.dumps(calls))\n"
+    )
+    deploy.chmod(0o700)
+    docker = binary / "docker"
+    docker.write_text(f"#!{sys.executable}\n" + MANUAL_ADOPTION_DOCKER)
+    docker.chmod(0o700)
+    script = next(
+        step["run"]
+        for step in steps_of("swarm")
+        if step.get("name") == "Run deploy.sh on the stack deployed by hand"
+    )
+    result = subprocess.run(
+        ["bash", "-e", "-o", "pipefail", "-c", script],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={
+            **os.environ,
+            "CONF": str(configuration),
+            "PATH": f"{binary}:{os.environ['PATH']}",
+            "NOOP_STATE": str(state),
+            "NOOP_FAULT": fault,
+        },
+    )
+    assert result.returncode == expected_status, result.stdout + result.stderr
+    assert json.loads(state.read_text()) == ["gerador-planos:ci"] * expected_deploys
+    assert (configuration / "app.env").read_text() == "SYNTHETIC_CONFIGURATION\n"
+    assert "SYNTHETIC_PRIVATE" not in result.stdout + result.stderr
+
+
+MANUAL_ADOPTION_DOCKER = r"""
+import hashlib, json, os, sys
+from pathlib import Path
+args=sys.argv[1:]; phase=len(json.loads(Path(os.environ['NOOP_STATE']).read_text()))
+fault=os.environ['NOOP_FAULT']; target='sha256:'+'a'*64
+
+def active(role):
+    count=2 if role=='worker' and fault in {'multiple','adoption_extra_image'} else 1
+    rows=[]
+    for slot in range(1,count+1):
+        version='manual' if phase==0 and role!='db' else 'adopted'
+        if role=='db': version='original'
+        if phase>=1 and fault=='adoption_db' and role=='db': version='replaced'
+        if phase>=2 and fault=='second_'+role: version='recreated'
+        tid=hashlib.sha256(f'{role}-{slot}-{version}'.encode()).hexdigest()
+        cid=hashlib.sha256(tid.encode()).hexdigest()
+        if phase>=2 and role=='api' and fault=='second_api_container': cid=hashlib.sha256((cid+'changed').encode()).hexdigest()
+        restarted=(role=='db' and ((fault=='adoption_db_restart' and phase>=1) or (fault=='second_db_restart' and phase>=2))) or (role=='api' and fault=='second_api_restart' and phase>=2)
+        wrong_image=phase>=1 and ((fault=='adoption_image' and role=='api') or (fault=='adoption_extra_image' and role=='worker' and slot==2))
+        unhealthy=phase>=1 and fault=='adoption_health' and role=='worker'
+        stopped=phase>=1 and fault=='adoption_stopped' and role=='api'
+        metadata={'id':cid,'image':'sha256:'+'b'*64 if wrong_image else target,
+                  'running':not stopped,'health':'unhealthy' if unhealthy else 'healthy',
+                  'started':'2026-10-21T00:00:00Z' if restarted else '2026-10-20T00:00:00Z',
+                  'restarts':1 if restarted else 0}
+        rows.append((tid,cid,metadata))
+    return rows
+
+if args[:2]==['image','inspect']: print(target)
+elif args[:2]==['service','inspect']:
+    role=args[-1].rsplit('_',1)[-1]; print(len(active(role)))
+elif args[:2]==['service','ps']:
+    services=[x for x in args if x.startswith('gerador-planos_')]
+    if '-q' in args:
+        print('\n'.join(row[0] for name in services for row in active(name.rsplit('_',1)[-1])))
+    else:
+        print('\n'.join(f'{name}.{slot} {row[0]}' for name in services for slot,row in enumerate(active(name.rsplit('_',1)[-1]),1)))
+elif args[:2]==['inspect','--type']:
+    kind=args[2]; identity=args[-1]
+    row=next((row for role in ('db','api','worker') for row in active(role) if identity==row[0 if kind=='task' else 1]),None)
+    if row is None: sys.stderr.write('SYNTHETIC_PRIVATE_DAEMON_ERROR'); raise SystemExit(1)
+    print(row[1] if kind=='task' else json.dumps(row[2]))
+elif args[0]=='exec': print('1:blocked' if fault=='adoption_contract' else '1:verified')
+else:
+    sys.stderr.write('SYNTHETIC_PRIVATE_DAEMON_ERROR'); raise SystemExit(2)
+"""
