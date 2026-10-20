@@ -580,8 +580,18 @@ def test_historical_source_is_readable_by_image_user_before_build_without_openin
     assert stat.S_IMODE(env_file.stat().st_mode) == 0o600
 
 
+@pytest.mark.parametrize(
+    "fault,reason,last_operation",
+    [
+        ({"STUB_OLD_RUNNING": "1"}, "old_process_alive", "container.inspect"),
+        ({"STUB_REAP_RACE": "wait", "STUB_LATE_TASK": "1"}, "inventory_changed", "container.ls"),
+    ],
+)
 def test_early_adoption_refusal_is_diagnosed_without_accepting_it_as_post_ddl_failure(
     tmp_path: Path,
+    fault: dict[str, str],
+    reason: str,
+    last_operation: str,
 ) -> None:
     """O helper real recusa processo vivo; só Docker é falso e os marcadores continuam obrigatórios."""
     import json
@@ -614,14 +624,14 @@ def test_early_adoption_refusal_is_diagnosed_without_accepting_it_as_post_ddl_fa
         CI_COMPAT_STACK="gerador-planos",
         STUB_NETWORK="1",
         STUB_CONTRACT_FLOOR="0",
-        STUB_OLD_RUNNING="1",
+        **fault,
     )
     assert result.returncode == 1
     assert json.loads(result.stdout) == {
         "stage": "first_adoption",
         "exit_code": 1,
-        "reason": "old_process_alive",
-        "last_operation": "container.inspect",
+        "reason": reason,
+        "last_operation": last_operation,
         "before_ddl": False,
         "ddl_committed": False,
     }

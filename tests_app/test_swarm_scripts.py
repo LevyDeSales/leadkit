@@ -65,6 +65,7 @@ def reap_during_observation(state, cid):
     state['removed_during_observation'] = True
     for tid, task in list(state['tasks'].items()):
         if task['Status']['ContainerStatus']['ContainerID'] == cid:
+            state.setdefault('reaped_tasks', {})[cid] = copy.deepcopy(task)
             outcome=os.getenv('STUB_RACE_OUTCOME','removed')
             if outcome in {'active','terminal'}:
                 task['DesiredState']='remove'
@@ -191,6 +192,22 @@ elif head == ['node','inspect']:
 elif args[:1] == ['inspect']:
     kind=args[args.index('--type')+1]
     names=args[args.index('--type')+2:]
+    if os.getenv('STUB_LATE_TASK') and kind=='container' and state.get('scaled') and state['floor']==0:
+        for old_cid in names:
+            prior=state.get('reaped_tasks',{}).get(old_cid)
+            if prior and prior['role']=='api':
+                count=state.get('missing_api_inspects',0)+1
+                state['missing_api_inspects']=count
+                if count==2:
+                    extra=copy.deepcopy(prior)
+                    extra['ID']='api-late-refresh'
+                    extra['DesiredState']='remove'
+                    extra['Status']['State']='running'
+                    cid=hashlib.sha256(extra['ID'].encode()).hexdigest()
+                    extra['Status']['ContainerStatus']['ContainerID']=cid
+                    state['tasks'][extra['ID']]=extra
+                    state['containers'][cid]={'Image':b,'State':{'Running':True,'Health':{'Status':'healthy'}}}
+                    state['late_live_cid']=cid
     if kind=='task':
         values=[copy.deepcopy(state['tasks'][x]) for x in names]
         if os.getenv('STUB_REMOTE_NODE'):
@@ -254,6 +271,9 @@ elif args[:1] == ['exec']:
     out='dump'
 elif args[:1] == ['run']:
     if args[-1]=='migrate':
+        if os.getenv('STUB_LATE_TASK'):
+            late=state.get('late_live_cid')
+            state['late_running_at_ddl']=bool(late and state['containers'].get(late,{}).get('State',{}).get('Running'))
         state['floor']=1
         if os.getenv('STUB_MIGRATE_FAIL'): code=1
     elif 'app.deployment_contract' in args:
@@ -856,6 +876,21 @@ def test_first_adoption_refreshes_inventory_when_container_disappears_during_obs
     assert state["removed_during_observation"]
     assert state["phase"] == "verified"
     assert any(call.startswith("events ") for call in server.calls)
+
+
+def test_second_quiesce_collection_refuses_late_running_task_before_ddl(server):
+    result = deploy(
+        server, STUB_NETWORK="1", STUB_CONTRACT_FLOOR="0", STUB_REAP_RACE="wait", STUB_LATE_TASK="1"
+    )
+    state = rollout_state(server)
+    assert state["missing_api_inspects"] >= 2
+    assert not any(
+        call.startswith("run ") and call.endswith(" migrate") for call in server.calls
+    ), {"late_running_at_ddl": state.get("late_running_at_ddl")}
+    assert result.returncode == 1
+    assert state["containers"][state["late_live_cid"]]["State"]["Running"]
+    assert state["floor"] == 0 and "attested" not in state
+    assert "Traceback" not in result.stdout + result.stderr
 
 
 @pytest.mark.parametrize("boundary", ["wait", "inspect"])

@@ -648,6 +648,7 @@ jobs:
 
           text = Path("first-adoption.log").read_text(errors="replace")
           reasons = (
+              ("inventory_changed", "O inventário de tasks mudou durante a coleta"),
               ("old_process_alive", "Um processo antigo ainda está em saída"),
               ("container_unidentified", "Há container sem task identificável"),
               ("container_unobserved", "Uma task não tem container observável"),

@@ -141,6 +141,9 @@ Depois de `wait` ou de um `inspect` que falhe, o helper renova o inventário ant
 se a task terminou ou foi removida. Os objetos recebidos precisam corresponder exatamente aos
 IDs de tasks solicitados, sem omissões ou duplicados. Uma imagem diferente para um container
 já observado é inconsistência e bloqueia o roteiro; não substitui a identidade conservada.
+Se esse refresh descobrir outra task durante a coleta, o helper recusa a coleta incompleta
+antes de comprovar a pausa ou executar DDL. Repita o roteiro após investigar o inventário;
+não há tentativa automática que possa omitir o processo recém-descoberto.
 
 Eventos Docker guardam somente os últimos 256 registros globais; não são um histórico durável.
 Evento ausente, antigo, perdido após restart, inválido ou de outro ID mantém o bloqueio.

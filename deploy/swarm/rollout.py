@@ -353,6 +353,10 @@ class Rollout:
                     "running": running,
                 }
             )
+        if {row["id"] for row in observations} != set(self.tracked[role]):
+            raise RolloutError(
+                "O inventário de tasks mudou durante a coleta; nenhuma pausa foi comprovada."
+            )
         return observations
 
     def quiesce(self):
