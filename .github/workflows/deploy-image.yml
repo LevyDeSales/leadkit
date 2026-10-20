@@ -404,6 +404,149 @@ jobs:
           chmod 600 "$conf/app.env" "$conf/db.env"
           ls -l "$conf"
 
+      - name: Rehearse real pre-projection bootstrap and forward recovery
+        run: |
+          umask 077
+          old_sha=7e199a5f0e2a6cf538f99d486cef0cd9f21bc783
+          old_image=leadkit:compat-old-7e
+          compat=leadkit-compat
+          folder="$RUNNER_TEMP/swarm-compat"
+          source="$RUNNER_TEMP/source-compat-old"
+          mkdir -p "$folder/bin" "$source"
+          # Fonte pública fixada, sem credenciais nem configuração de instalação.
+          curl --fail --silent --show-error --location --retry 3 \
+            "https://github.com/LevyDeSales/leadkit/archive/$old_sha.tar.gz" \
+            --output "$RUNNER_TEMP/compat-old.tar.gz"
+          tar -xzf "$RUNNER_TEMP/compat-old.tar.gz" --strip-components=1 -C "$source"
+          docker build --quiet --tag "$old_image" "$source"
+          cp "$CONF/stack.yaml" "$CONF/deploy.sh" "$CONF/rollout.py" "$CONF/app.env" "$CONF/db.env" "$folder/"
+          python3 - "$folder/app.env" "$compat" <<'PY'
+          import re
+          import sys
+          from pathlib import Path
+          from urllib.parse import urlsplit, urlunsplit
+          path = Path(sys.argv[1])
+          stack = sys.argv[2]
+          text = path.read_text()
+          values = dict(line.split("=", 1) for line in text.splitlines() if line and not line.startswith("#") and "=" in line)
+          url = urlsplit(values["DATABASE_URL"])
+          credentials = url.netloc.rsplit("@", 1)[0]
+          changes = {
+              "STACK_NAME": stack,
+              "PUBLIC_BASE_URL": "https://compat.ci.test",
+              "DATABASE_URL": urlunsplit((url.scheme, f"{credentials}@{stack}_db:{url.port or 5432}", url.path, url.query, url.fragment)),
+              "HATCHET_CLIENT_NAMESPACE": "ci-compat-",
+          }
+          for name, value in changes.items():
+              if re.search(rf"^{name}=", text, flags=re.M):
+                  text = re.sub(rf"^{name}=.*$", lambda _: f"{name}={value}", text, flags=re.M)
+              else:
+                  text += f"\n{name}={value}\n"
+          path.write_text(text)
+          PY
+          chmod 600 "$folder/app.env" "$folder/db.env"
+          cleanup_compat() {
+            docker stack rm "$compat" >/dev/null 2>&1 || true
+            for _ in $(seq 1 60); do
+              if ! docker network inspect "${compat}_internal" >/dev/null 2>&1; then break; fi
+              sleep 2
+            done
+            docker volume rm "${compat}_pgdata" >/dev/null 2>&1 || true
+          }
+          trap cleanup_compat EXIT
+          cd "$folder"
+          printf 'services:\n  api:\n    deploy:\n      replicas: 0\n  worker:\n    deploy:\n      replicas: 0\n' > paused.yaml
+          IMAGE="$old_image" STACK="$compat" DOMAIN=compat.ci.test \
+            docker stack deploy --detach=false --resolve-image never -c stack.yaml -c paused.yaml "$compat"
+          for _ in $(seq 1 60); do
+            db=$(docker ps -q -f "label=com.docker.swarm.service.name=${compat}_db" | head -n 1)
+            if [ -n "$db" ] && [ "$(docker inspect --format '{{.State.Health.Status}}' "$db")" = healthy ]; then break; fi
+            sleep 2
+           done
+          test -n "$db"
+          test "$(docker inspect --format '{{.State.Health.Status}}' "$db")" = healthy
+          psql_compat() { docker exec "$db" sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "$1"' sh "$1"; }
+          docker run --rm --network "${compat}_internal" --env-file app.env "$old_image" migrate \
+            > "$RUNNER_TEMP/compat-old-migrate.log" 2>&1 || { echo 'A migration histórica falhou'; exit 1; }
+          test "$(psql_compat 'select version_num from alembic_version')" = 0015_capture_delivery
+          IMAGE="$old_image" STACK="$compat" DOMAIN=compat.ci.test \
+            docker stack deploy --detach=false --resolve-image never -c stack.yaml "$compat"
+          : > old-containers
+          # API e worker históricos reais, ligados somente ao Hatchet Lite local do runner.
+          # Não se criam pedidos, nem chamadas LLM/S3/webhook ou tasks com dados de lead.
+          for role in api worker; do
+            task=$(docker service ps -q --filter desired-state=running "${compat}_$role" | head -n 1)
+            test -n "$task"
+            container=$(docker inspect --type task --format '{{.Status.ContainerStatus.ContainerID}}' "$task")
+            test -n "$container"
+            for _ in $(seq 1 90); do
+              [ "$(docker inspect --format '{{.State.Health.Status}}' "$container")" = healthy ] && break
+              sleep 2
+            done
+            test "$(docker inspect --format '{{.State.Health.Status}}' "$container")" = healthy
+            test "$(docker inspect --format '{{.State.Running}}' "$container")" = true
+            echo "$container" >> old-containers
+          done
+          export CI_REAL_DOCKER="$(command -v docker)" CI_COMPAT_STACK="$compat" CI_COMPAT_FOLDER="$folder"
+          cat > bin/docker <<'SH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          if [[ "$1" == run && "${@: -1}" == migrate ]]; then
+            : > "$CI_COMPAT_FOLDER/before-ddl"
+            for role in api worker; do
+              service="${CI_COMPAT_STACK}_$role"
+              test "$("$CI_REAL_DOCKER" service inspect --format '{{.Spec.Mode.Replicated.Replicas}}' "$service")" = 0
+              test "$("$CI_REAL_DOCKER" service inspect --format '{{.PreviousSpec.Mode.Replicated.Replicas}}' "$service")" = 0
+              "$CI_REAL_DOCKER" service inspect --format '{{.ID}} {{.Version.Index}} {{.Spec.Mode.Replicated.Replicas}} {{.PreviousSpec.Mode.Replicated.Replicas}}' "$service" >> "$CI_COMPAT_FOLDER/before-ddl"
+            done
+            while read -r container; do
+              test "$("$CI_REAL_DOCKER" inspect --format '{{.State.Running}}' "$container")" = false
+              echo "$container stopped" >> "$CI_COMPAT_FOLDER/before-ddl"
+            done < "$CI_COMPAT_FOLDER/old-containers"
+            "$CI_REAL_DOCKER" "$@"
+            touch "$CI_COMPAT_FOLDER/ddl-committed-launcher-failed"
+            exit 42
+          fi
+          exec "$CI_REAL_DOCKER" "$@"
+          SH
+          chmod 700 bin/docker
+          if env -u DOMAIN -u STACK PATH="$folder/bin:$PATH" IMAGE=gerador-planos:ci ./deploy.sh > first-adoption.log 2>&1; then
+            echo 'A falha controlada após DDL deveria interromper a primeira adoção'; exit 1
+          fi
+          test -s before-ddl
+          test -e ddl-committed-launcher-failed
+          cat before-ddl
+          cat first-adoption.log
+          test "$(psql_compat 'select version_num from alembic_version')" = 0016_plan_audiences
+          test "$(psql_compat "select minimum_contract || ':' || phase from deployment_contract where id=1")" = 1:blocked
+          for role in api worker; do
+            test "$(docker service inspect --format '{{.Spec.Mode.Replicated.Replicas}}' "${compat}_$role")" = 0
+            test "$(docker service inspect --format '{{.PreviousSpec.Mode.Replicated.Replicas}}' "${compat}_$role")" = 0
+          done
+          versions() { docker service inspect --format '{{.ID}} {{.Version.Index}}' "${compat}_api" "${compat}_worker"; }
+          before=$(versions)
+          if env -u DOMAIN -u STACK IMAGE="$old_image" ./deploy.sh > refuse-old.log 2>&1; then
+            echo 'Imagem antiga não pode voltar após0016'; exit 1
+          fi
+          test "$(versions)" = "$before"
+          test "$(psql_compat "select minimum_contract || ':' || phase from deployment_contract where id=1")" = 1:blocked
+          cat refuse-old.log
+          env -u DOMAIN -u STACK IMAGE=gerador-planos:ci ./deploy.sh
+          test "$(psql_compat "select minimum_contract || ':' || phase from deployment_contract where id=1")" = 1:verified
+          candidate=$(docker image inspect --format '{{.Id}}' gerador-planos:ci)
+          for role in api worker; do
+            current=$(docker service inspect --format '{{.Spec.TaskTemplate.ContainerSpec.Image}}' "${compat}_$role")
+            previous=$(docker service inspect --format '{{.PreviousSpec.TaskTemplate.ContainerSpec.Image}}' "${compat}_$role")
+            test "$(docker image inspect --format '{{.Id}}' "$current")" = "$candidate"
+            test "$(docker image inspect --format '{{.Id}}' "$previous")" = "$candidate"
+            test "$(docker service inspect --format '{{.Spec.Mode.Replicated.Replicas}}' "${compat}_$role")" = 1
+            test "$(docker service inspect --format '{{.PreviousSpec.Mode.Replicated.Replicas}}' "${compat}_$role")" = 1
+          done
+          while read -r container; do
+            test "$(docker inspect --format '{{.State.Running}}' "$container")" = false
+          done < old-containers
+          echo 'Bootstrap real: saída antesDDL, falha apósDDL, recusaold0 e retomadacap1 comprovadas'
+
       - name: Check that two stack names never share a Traefik name
         run: |
           # O que o Swarm recebe do stack.yaml com STACK=stack-a e com STACK=stack-b: os dois routers,

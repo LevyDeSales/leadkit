@@ -251,10 +251,11 @@ def test_the_swarm_rebuild_from_the_local_image_stays_on_the_default_builder() -
     """O passo do `swarm` que reaproveita a tag para outra imagem (`LABEL ci.build=reaproveitada`)
     parte da imagem local `gerador-planos:ci`: só o builder padrão a enxerga, não o do cache."""
     plain = [s["run"] for s in steps_of("swarm") if "docker build" in str(s.get("run", ""))]
-    (script,) = plain
+    assert len(plain) == 2  # Imagem histórica fixada e reconstrução local da candidata.
+    (script,) = [script for script in plain if "FROM gerador-planos:ci" in script]
     assert "FROM gerador-planos:ci" in script
     assert "LABEL ci.build=reaproveitada" in script
-    assert "--builder" not in script
+    assert all("--builder" not in script for script in plain)
     assert [s for s in steps_of("image") if "docker build" in str(s.get("run", ""))] == []
 
 
@@ -393,7 +394,7 @@ def test_swarm_rehearsal_accepts_the_real_guard_refusal(request, tmp_path: Path)
         'exec "$(dirname "$0")/docker-stub" "$@"\n'
     )
     docker.chmod(0o755)
-    database_url = str(engine.url)
+    database_url = engine.url.render_as_string(hide_password=False)
     env = {
         "STUB_NETWORK": "1",
         "GUARD_PYTHON": sys.executable,

@@ -268,3 +268,42 @@ def test_begin_waits_until_authorized_transport_transaction_finishes(rollout_eng
         with Session(rollout_engine) as session, session.begin():
             session.query(DeploymentContract).delete()
             session.add(DeploymentContract(id=1, minimum_contract=1, phase="blocked"))
+
+
+def test_cli_commits_attestation_and_new_process_reads_persisted_state(rollout_engine):
+    import json
+    import os
+    import subprocess
+    import sys
+    from uuid import uuid4
+
+    from app.deployment_contract import assert_participant_contract, begin_rollout
+
+    epoch = str(uuid4())
+    environment = {
+        "PATH": os.environ["PATH"],
+        "DATABASE_URL": rollout_engine.url.render_as_string(hide_password=False),
+    }
+
+    def run(action, document=None):
+        result = subprocess.run(
+            [sys.executable, "-m", "app.deployment_contract", action],
+            env=environment,
+            input=json.dumps(document) if document is not None else None,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        return json.loads(result.stdout)
+
+    try:
+        assert run("begin", {"epoch": epoch}) == {"ok": True}
+        assert run("status") == {"minimum_contract": 1, "phase": "blocked", "epoch": epoch}
+        assert run("attest", {"epoch": epoch, "evidence": evidence()}) == {"ok": True}
+        assert run("status") == {"minimum_contract": 1, "phase": "verified", "epoch": epoch}
+        with Session(rollout_engine) as session, session.begin():
+            assert_participant_contract(session)
+    finally:
+        with Session(rollout_engine) as session, session.begin():
+            begin_rollout(session, epoch=uuid4())
