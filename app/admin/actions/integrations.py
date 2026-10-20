@@ -28,12 +28,14 @@ from __future__ import annotations
 import logging
 import uuid
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from app import destinations
 from app.admin import launching
 from app.admin.queries import forms as form_queries
 from app.admin.queries import integrations as queries
+from app.capture_deliveries import Counts
+from app.capture_deliveries import counts as capture_counts
 from app.deps import Deps
 from app.errors import RetryableError, TerminalError
 from app.integrations import config as integration_config
@@ -167,6 +169,7 @@ class Removed:
 
     integration: integration_config.StoredIntegration
     sync_counts: integration_syncs.SyncCounts
+    capture_counts: Counts = field(default_factory=Counts)
 
 
 @dataclass(frozen=True)
@@ -370,6 +373,7 @@ def read_detail(
         from app.capture_deliveries import listing as capture_deliveries
 
         deliveries = tuple(capture_deliveries(db, integration_id=stored.id)) if stored else ()
+        captures = capture_counts(db, integration_id=stored.id) if stored else Counts()
     return queries.IntegrationDetail(
         slug=form_slug,
         title=title,
@@ -384,6 +388,7 @@ def read_detail(
         failures=failures,
         profile=profile,
         capture_deliveries=deliveries,
+        capture_counts=captures,
     )
 
 
@@ -543,10 +548,14 @@ def remove(deps: Deps, form_slug: str, *, expected_version: int, actor: str) -> 
     Levanta `integration_config.Conflict` (a integração mudou desde que a pessoa a viu, ou já não
     existe): nada é removido."""
     with deps.sessions.begin() as db:
+        from app.integration_readiness import configuration_lock
+
+        configuration_lock(db)
         before = integration_config.load(db, form_slug)
         if before is None:
             raise integration_config.Conflict(None)
         counts = integration_syncs.counts(db, before.id)
+        captures = capture_counts(db, integration_id=before.id)
         integration_config.remove(
             db, form_slug=form_slug, actor=actor, expected_version=expected_version
         )
@@ -556,7 +565,7 @@ def remove(deps: Deps, form_slug: str, *, expected_version: int, actor: str) -> 
         counts.pending + counts.succeeded + counts.failed,
         actor,
     )
-    return Removed(integration=before, sync_counts=counts)
+    return Removed(integration=before, sync_counts=counts, capture_counts=captures)
 
 
 def send_test(

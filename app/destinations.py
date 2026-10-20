@@ -117,6 +117,14 @@ class UnsupportedEvent(Exception):
     """O receptor não declarou aceitar o contrato solicitado no teste."""
 
 
+class InvalidEvents(ValueError):
+    """Os eventos declarados precisam ser corrigidos, independentemente da URL."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.message = message
+
+
 class InvalidUrl(ValueError):
     """A URL não serve para um destino. A mensagem é para a tela; `needs_confirmation` diz que
     falta só confirmar um endereço http em produção."""
@@ -361,7 +369,9 @@ def save(
         or len(set(events)) != len(events)
         or set(events) - {"plano.concluido", "submissao.persistida"}
     ):
-        raise InvalidUrl("Selecione os eventos aceitos: plano.concluido e/ou submissao.persistida.")
+        raise InvalidEvents(
+            "Selecione os eventos aceitos: plano.concluido e/ou submissao.persistida."
+        )
     from app.integration_readiness import configuration_lock
 
     configuration_lock(session)

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import insert
 
@@ -380,3 +382,35 @@ def state(row, current_config_version):
         "outcome": row.outcome,
         "delivered_at": row.delivered_at,
     }
+
+
+@dataclass(frozen=True)
+class Counts:
+    """Intenções locais por estado, sem ler respostas da captura."""
+
+    pending: int = 0
+    succeeded: int = 0
+    failed: int = 0
+
+    @property
+    def total(self):
+        return self.pending + self.succeeded + self.failed
+
+
+def counts(session, *, integration_id=None, webhook_destination_id=None):
+    """Inventário de uma conexão antes de removê-la; a ação serializa com novos aceites."""
+    if integration_id is None and webhook_destination_id is None:
+        return Counts()
+    column, identifier = (
+        (CaptureDelivery.integration_id, integration_id)
+        if integration_id
+        else (CaptureDelivery.webhook_destination_id, webhook_destination_id)
+    )
+    values = dict(
+        session.execute(
+            sa.select(CaptureDelivery.status, sa.func.count())
+            .where(column == identifier)
+            .group_by(CaptureDelivery.status)
+        ).all()
+    )
+    return Counts(**values)

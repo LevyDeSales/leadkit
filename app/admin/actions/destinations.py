@@ -21,6 +21,8 @@ from sqlalchemy.orm import Session
 
 from app import destinations
 from app.admin.queries import forms as form_queries
+from app.capture_deliveries import Counts
+from app.capture_deliveries import counts as capture_counts
 from app.deps import Deps
 
 BODY_START_CHARS = 500  # do corpo da resposta ao evento de teste, o que a tela e a API mostram
@@ -100,7 +102,7 @@ def save(
         from app.integration_readiness import webhook_problems
 
         if issues := webhook_problems(db, form_slug):
-            raise destinations.InvalidUrl(issues[0].message)
+            raise destinations.InvalidEvents(issues[0].message)
         return result
 
 
@@ -132,6 +134,7 @@ class Removed:
     destination: destinations.StoredDestination
     serving: str
     serving_host: str | None
+    capture_counts: Counts = field(default_factory=Counts)
 
 
 def remove(deps: Deps, form_slug: str | None, *, actor: str, expected_version: int) -> Removed:
@@ -139,6 +142,11 @@ def remove(deps: Deps, form_slug: str | None, *, actor: str, expected_version: i
     deixam de ser entregues. Devolve o destino como estava e quem entrega agora. Levanta
     `Conflict`."""
     with deps.sessions.begin() as db:
+        from app.integration_readiness import configuration_lock
+
+        configuration_lock(db)
+        current = destinations.listing(db).get(form_slug)
+        counts = capture_counts(db, webhook_destination_id=current.id) if current else Counts()
         removed = destinations.remove(
             db, form_slug=form_slug, actor=actor, expected_version=expected_version
         )
@@ -153,6 +161,7 @@ def remove(deps: Deps, form_slug: str | None, *, actor: str, expected_version: i
         destination=removed,
         serving="default" if serving else "none",
         serving_host=serving.host if serving else None,
+        capture_counts=counts,
     )
 
 

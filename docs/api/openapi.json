@@ -973,6 +973,10 @@
             "title": "Capture Deliveries",
             "type": "array"
           },
+          "capture_delivery_counts": {
+            "$ref": "#/components/schemas/CaptureDeliveryCounts",
+            "description": "Intenções locais de captura por estado. Remover a configuração apaga esse histórico; pendentes não mudam de destino e não serão enviadas."
+          },
           "capture_mapping": {
             "description": "Perfil de captura preservado independentemente do PDF.",
             "items": {
@@ -1160,7 +1164,7 @@
                 "type": "null"
               }
             ],
-            "description": "O campo da tabela que guarda o código do pedido (a chave da sincronização).",
+            "description": "Campo da chave do perfil selecionado: job.public_id no PDF ou submission.id na captura.",
             "title": "Key Field Id"
           },
           "profile": {
@@ -1433,6 +1437,28 @@
           "suggested_source"
         ],
         "title": "BaserowTableField",
+        "type": "object"
+      },
+      "CaptureDeliveryCounts": {
+        "description": "Intenções de captura por estado; remover configuração apaga esse histórico local.",
+        "properties": {
+          "failed": {
+            "default": 0,
+            "title": "Failed",
+            "type": "integer"
+          },
+          "pending": {
+            "default": 0,
+            "title": "Pending",
+            "type": "integer"
+          },
+          "succeeded": {
+            "default": 0,
+            "title": "Succeeded",
+            "type": "integer"
+          }
+        },
+        "title": "CaptureDeliveryCounts",
         "type": "object"
       },
       "CaptureDeliveryState": {
@@ -2614,7 +2640,7 @@
             "type": "string"
           },
           "url": {
-            "description": "O endereço do receptor, para onde vai o evento `plano.concluido`. **A chave `total` o recebe inteiro; a `leitura`, só com o esquema e o host** (`https://host`, e a porta se houver; `url_redacted` diz qual foi o caso), porque o caminho de uma URL de webhook costuma valer como senha.",
+            "description": "O endereço do receptor, para onde vão os eventos declarados em `events`. **A chave `total` o recebe inteiro; a `leitura`, só com o esquema e o host** (`https://host`, e a porta se houver; `url_redacted` diz qual foi o caso), porque o caminho de uma URL de webhook costuma valer como senha.",
             "examples": [
               "https://receptor.example.test/planos"
             ],
@@ -2654,6 +2680,10 @@
       "DestinationDetail": {
         "description": "O destino de um escopo e quem entrega os eventos dele.",
         "properties": {
+          "capture_delivery_counts": {
+            "$ref": "#/components/schemas/CaptureDeliveryCounts",
+            "description": "Intenções locais de captura por estado. Remover a configuração apaga esse histórico; pendentes não mudam de destino e não serão enviadas."
+          },
           "destination": {
             "anyOf": [
               {
@@ -2912,7 +2942,7 @@
             "title": "Error"
           },
           "outcome": {
-            "description": "O que um `plano.concluido` faria com essa resposta: `delivered` (2xx: conta como entregue), `retry` (408, 425, 429 ou 5xx: seria repetido por cerca de 3,5 h e depois marcado como falho), `rejected` (outro status, 3xx inclusive: redirecionamentos não são seguidos; seria recusado de vez) ou `no_response` (o receptor não respondeu: `error` diz o tipo da falha, e o evento seria repetido).",
+            "description": "O que a entrega do evento selecionado faria com essa resposta: `delivered` (2xx: conta como entregue), `retry` (408, 425, 429 ou 5xx: seria repetido por cerca de 3,5 h e depois marcado como falho), `rejected` (outro status, 3xx inclusive: redirecionamentos não são seguidos; seria recusado de vez) ou `no_response` (o receptor não respondeu: `error` diz o tipo da falha, e o evento seria repetido).",
             "enum": [
               "delivered",
               "retry",
@@ -7527,6 +7557,10 @@
       "RemovedDestination": {
         "description": "O destino que saiu e quem entrega os eventos do escopo agora.",
         "properties": {
+          "capture_delivery_counts": {
+            "$ref": "#/components/schemas/CaptureDeliveryCounts",
+            "description": "Intenções locais de captura por estado. Remover a configuração apaga esse histórico; pendentes não mudam de destino e não serão enviadas."
+          },
           "removed": {
             "$ref": "#/components/schemas/Destination",
             "description": "O destino que saiu, como estava antes de ser removido."
@@ -7578,6 +7612,10 @@
       "RemovedFormIntegration": {
         "description": "A integração que saiu, como estava, e o estado das sincronizações que saíram com ela. O token\nnunca vem. As linhas que já estavam na tabela do Baserow ficam lá.",
         "properties": {
+          "capture_delivery_counts": {
+            "$ref": "#/components/schemas/CaptureDeliveryCounts",
+            "description": "Intenções locais de captura por estado. Remover a configuração apaga esse histórico; pendentes não mudam de destino e não serão enviadas."
+          },
           "form_slug": {
             "description": "O endereço do formulário.",
             "examples": [
@@ -8581,7 +8619,7 @@
             "type": "string"
           },
           "url": {
-            "description": "O endereço do receptor, para onde vai o evento `plano.concluido`. **A chave `total` o recebe inteiro; a `leitura`, só com o esquema e o host** (`https://host`, e a porta se houver; `url_redacted` diz qual foi o caso), porque o caminho de uma URL de webhook costuma valer como senha.",
+            "description": "O endereço do receptor, para onde vão os eventos declarados em `events`. **A chave `total` o recebe inteiro; a `leitura`, só com o esquema e o host** (`https://host`, e a porta se houver; `url_redacted` diz qual foi o caso), porque o caminho de uma URL de webhook costuma valer como senha.",
             "examples": [
               "https://receptor.example.test/planos"
             ],
@@ -8787,12 +8825,17 @@
             "additionalProperties": {
               "type": "string"
             },
-            "description": "A fonte que preenche cada campo da tabela, pelo **id do campo no Baserow** (o `id` de cada item de `fields` em `get_form_integration`): `{\"101\": \"lead.name\"}`. Só entram os campos que a integração vai preencher; um campo ausente (ou com a fonte em branco) fica sem mapeamento, e **um id que a tabela não tem é ignorado**. As chaves são números inteiros positivos na forma canônica (`101`, e não `0101`), com no máximo 10 algarismos. As fontes que servem a cada campo estão em `sources` de `fields`. **Precisa de um campo, e só um, com `job.public_id`** (o código do pedido, de texto ou texto longo): é por ele que a sincronização acha a linha de volta. O mapeamento é conferido contra a tabela de agora e contra as perguntas da versão publicada.",
+            "description": "A fonte que preenche cada campo da tabela, pelo **id do campo no Baserow** (o `id` de cada item de `fields` em `get_form_integration`): `{\"101\": \"lead.name\"}`. Só entram os campos que a integração vai preencher; um campo ausente (ou com a fonte em branco) fica sem mapeamento, e **um id que a tabela não tem é ignorado**. As chaves são números inteiros positivos na forma canônica (`101`, e não `0101`), com no máximo 10 algarismos. As fontes que servem a cada campo estão em `sources` de `fields`. **Precisa de um campo, e só um, com a chave do perfil**: `job.public_id` no PDF ou `submission.id` na captura (texto ou texto longo). É por ele que a sincronização acha a linha de volta. O mapeamento é conferido contra a tabela de agora e contra as perguntas da versão publicada.",
             "examples": [
               {
                 "101": "lead.name",
                 "104": "job.public_id",
                 "108": "answer:tamanho_equipe"
+              },
+              {
+                "101": "lead.name",
+                "104": "submission.id",
+                "108": "answer:equipe"
               }
             ],
             "propertyNames": {
@@ -8976,7 +9019,7 @@
             "type": "string"
           },
           "url": {
-            "description": "O endereço do receptor, para onde vai o evento `plano.concluido`. **A chave `total` o recebe inteiro; a `leitura`, só com o esquema e o host** (`https://host`, e a porta se houver; `url_redacted` diz qual foi o caso), porque o caminho de uma URL de webhook costuma valer como senha.",
+            "description": "O endereço do receptor, para onde vão os eventos declarados em `events`. **A chave `total` o recebe inteiro; a `leitura`, só com o esquema e o host** (`https://host`, e a porta se houver; `url_redacted` diz qual foi o caso), porque o caminho de uma URL de webhook costuma valer como senha.",
             "examples": [
               "https://receptor.example.test/planos"
             ],
@@ -11642,7 +11685,7 @@
     },
     "/destinations/{scope}": {
       "delete": {
-        "description": "Apaga o destino do escopo `scope` (`default` ou o endereço de um formulário), com o segredo. **Os formulários que dependiam dele deixam de ser entregues ali**: ao remover o destino de um formulário, ele passa a usar o destino padrão, se houver; ao remover o padrão, os formulários sem destino próprio **deixam de entregar** (os planos ficam sem destino até alguém criar outro). A resposta diz quem entrega o escopo agora (`serving`: `default` ou `none`) e traz o destino que saiu (`removed`), como estava. Não tem volta: para ter o destino de novo, crie-o com `save_destination` (e um segredo novo). Por isso a operação é marcada e exige `confirm=true` na query (sem ele, `422 confirmation_required` e nada acontece). `expected_version` é a `version` que `get_destination` devolveu, também na query; se o destino mudou ou já foi removido, `409 version_conflict` e nada é removido. A remoção fica na auditoria em nome da chave (`webhook_destination.remove`), com o host, sem o segredo nem o caminho da URL. Remove também o destino guardado de um formulário que saiu do código.",
+        "description": "Apaga o destino do escopo `scope` (`default` ou o endereço de um formulário), com o segredo. **Os formulários que dependiam dele deixam de ser entregues ali**: ao remover o destino de um formulário, ele passa a usar o destino padrão, se houver; ao remover o padrão, os formulários sem destino próprio **deixam de entregar** (os planos ficam sem destino até alguém criar outro). A resposta diz quem entrega o escopo agora (`serving`: `default` ou `none`) e traz o destino que saiu (`removed`), como estava. Não tem volta: para ter o destino de novo, crie-o com `save_destination` (e um segredo novo). Por isso a operação é marcada e exige `confirm=true` na query (sem ele, `422 confirmation_required` e nada acontece). `expected_version` é a `version` que `get_destination` devolveu, também na query; se o destino mudou ou já foi removido, `409 version_conflict` e nada é removido. A remoção fica na auditoria em nome da chave (`webhook_destination.remove`), com o host, sem o segredo nem o caminho da URL. Intenções de captura vinculadas são apagadas por cascade; a resposta informa as contagens, e pendentes não são enviadas nem transferidas ao padrão. Remove também o destino guardado de um formulário que saiu do código.",
         "operationId": "remove_destination",
         "parameters": [
           {
@@ -11690,7 +11733,7 @@
                 }
               }
             },
-            "description": "O destino que saiu, como estava, e quem entrega os eventos do escopo agora."
+            "description": "O destino removido, o fallback para novos eventos/PDF e as intenções de captura apagadas por estado; capturas antigas não são redirecionadas."
           },
           "401": {
             "content": {

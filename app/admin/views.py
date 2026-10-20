@@ -9,7 +9,7 @@ import json
 import math
 import uuid
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 from urllib.parse import quote, urlencode
@@ -27,6 +27,7 @@ from app.admin.queries import destinations as destination_queries
 from app.admin.queries import forms as form_queries
 from app.admin.queries import jobs as job_queries
 from app.admin.reading import FormReading, reading_of
+from app.capture_deliveries import Counts
 from app.errors import FailureCode
 from app.forms import (
     FormRegistry,
@@ -1332,9 +1333,14 @@ UNREADABLE_PROBE = ProbeView(
 )
 
 
-def probe_view(probe: Probe) -> ProbeView:
+def probe_view(probe: Probe, *, event: str = "plano.concluido") -> ProbeView:
     """O que o receptor respondeu e o que uma entrega faria com essa resposta (as mesmas regras
     do `plano.concluido`, em `app.adapters.webhook.outcome`)."""
+    event_name = (
+        "evento de captura (submissao.persistida)"
+        if event == "submissao.persistida"
+        else "plano.concluido"
+    )
     if probe.status is None:
         return ProbeView(
             ok=False,
@@ -1342,8 +1348,10 @@ def probe_view(probe: Probe) -> ProbeView:
                 f"Não deu para falar com o receptor ({probe.error}) depois de "
                 f"{probe.elapsed_ms} ms."
             ),
-            note="Confira a URL, a porta e se o receptor está no ar. Um plano.concluido nessa "
-            "situação seria repetido por cerca de 3,5 h.",
+            note=(
+                "Confira a URL, a porta e se o receptor está no ar. Um plano.concluido nessa "
+                "situação seria repetido por cerca de 3,5 h."
+            ).replace("plano.concluido", event_name),
             body=None,
         )
     verdict = outcome(probe.status)
@@ -1367,7 +1375,12 @@ def probe_view(probe: Probe) -> ProbeView:
     return ProbeView(
         ok=verdict == "delivered",
         headline=f"O receptor respondeu HTTP {probe.status} em {probe.elapsed_ms} ms.",
-        note=note,
+        note=note.replace("plano.concluido", event_name)
+        + (
+            " A confirmação é do transporte, sem comprovar leitura."
+            if event == "submissao.persistida"
+            else ""
+        ),
         body=probe.body_start[:BODY_START_CHARS] or None,
     )
 
@@ -1381,6 +1394,7 @@ class DestinationPage:
     stored: DestinationView | None
     fallback: str | None  # sem destino próprio: o que vale para o formulário
     unreadable: bool  # o segredo guardado não abre com a chave atual
+    capture_counts: Counts = field(default_factory=Counts)
 
 
 def destination_page(
@@ -1425,4 +1439,5 @@ def destination_page(
         stored=_destination_view(own) if own else None,
         fallback=fallback,
         unreadable=found.unreadable,
+        capture_counts=found.capture_counts,
     )

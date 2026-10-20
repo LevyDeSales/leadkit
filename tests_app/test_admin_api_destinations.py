@@ -282,6 +282,7 @@ def test_get_destination_of_the_default_with_none_says_to_create_it(api_client: 
         "serving": "none",
         "serving_host": None,
         "serving_events": [],
+        "capture_delivery_counts": {"pending": 0, "succeeded": 0, "failed": 0},
     }
 
 

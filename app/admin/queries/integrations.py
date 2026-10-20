@@ -14,9 +14,11 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 
 from sqlalchemy.orm import Session
 
+from app.capture_deliveries import Counts
 from app.errors import FailureCode
 from app.integrations import mapping, syncs
 from app.integrations.baserow import BaserowField
@@ -110,6 +112,7 @@ class IntegrationDetail:
     failures: list[syncs.SyncRow]
     profile: str = "pdf"
     capture_deliveries: tuple[dict, ...] = ()
+    capture_counts: Counts = dataclass_field(default_factory=Counts)
 
 
 _CODE = re.compile(r"^\[([a-z_]+)\]")

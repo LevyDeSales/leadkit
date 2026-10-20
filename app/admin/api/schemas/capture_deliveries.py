@@ -30,3 +30,15 @@ class RetryCaptureDeliveryRequest(ConfirmedInput):
     expected_config_version: int = Field(
         ge=1, description="Revisão atual do mesmo destino que a operadora autoriza explicitamente."
     )
+
+
+class CaptureDeliveryCounts(BaseModel):
+    """Intenções de captura por estado; remover configuração apaga esse histórico local."""
+
+    pending: int = 0
+    succeeded: int = 0
+    failed: int = 0
+
+    @classmethod
+    def of(cls, counts):
+        return cls(pending=counts.pending, succeeded=counts.succeeded, failed=counts.failed)

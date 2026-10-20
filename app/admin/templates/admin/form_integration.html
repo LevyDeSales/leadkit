@@ -167,7 +167,8 @@
 <section class="box" id="teste" aria-labelledby="teste-titulo">
   <h2 id="teste-titulo">Enviar teste</h2>
   <p>Manda para a tabela uma linha de mentira, pelo mesmo caminho de um pedido de verdade: a lead de exemplo, no domínio <span class="mono">exemplo</span>, com respostas inventadas e o código <span class="mono">teste-{{ page.form_slug }}</span>. Nenhum dado de lead sai. A linha <strong>fica na tabela</strong>, para você conferi-la; testar de novo atualiza a mesma, e o app não a apaga.</p>
-  <form method="post" action="{{ page.url }}/test" hx-post="{{ page.url }}/test" hx-target="#resultado-teste" hx-select="#resultado-teste" hx-swap="outerHTML" hx-sync="this:drop" hx-disabled-elt="find button">
+  <form method="post" action="{{ page.url }}/test?profile={{ page.profile }}" hx-post="{{ page.url }}/test?profile={{ page.profile }}" hx-target="#resultado-teste" hx-select="#resultado-teste" hx-swap="outerHTML" hx-sync="this:drop" hx-disabled-elt="find button">
+    <input type="hidden" name="profile" value="{{ page.profile }}">
     <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
     <button class="btn btn--secondary" type="submit">{{ m.icon('send') }}Enviar a linha de teste</button>
   </form>
@@ -244,7 +245,8 @@
       <input type="hidden" name="version" value="{{ page.stored.version }}">
       <h3 id="rem-form-titulo">Remover esta integração</h3>
       <div class="note">{{ m.icon('alert-triangle') }}<p>O app para de sincronizar este formulário e apaga o token e o estado das sincronizações. As linhas que já estão no Baserow ficam lá: o app nunca apaga linhas da tabela.</p></div>
-      <label class="choice choice--check"><input type="checkbox" name="confirm" value="on" required{% if errors.get("remove") %} aria-invalid="true" aria-describedby="rem-erro"{% endif %}><span class="choice__body"><span class="choice__mark">{{ m.icon('check') }}</span><span>Entendo o que acontece com as linhas e com o estado das sincronizações.</span></span></label>
+      <p>Registros de entrega de respostas que serão apagados: {{ page.capture_counts.total }} no total ({{ page.capture_counts.pending }} pendentes, {{ page.capture_counts.succeeded }} com transporte confirmado e {{ page.capture_counts.failed }} com falha). As entregas pendentes não serão enviadas; as respostas salvas e as linhas já recebidas no Baserow permanecem.</p>
+      <label class="choice choice--check"><input type="checkbox" name="confirm" value="on" required{% if errors.get("remove") %} aria-invalid="true" aria-describedby="rem-erro"{% endif %}><span class="choice__body"><span class="choice__mark">{{ m.icon('check') }}</span><span>Entendo a exclusão dos registros de entrega de respostas e o que acontece com as linhas e sincronizações.</span></span></label>
       {% if errors.get("remove") %}<p class="error" id="rem-erro">{{ m.icon('alert-circle') }}{{ errors["remove"] }}</p>{% endif %}
       <div class="btns"><button class="btn btn--primary" type="submit">Remover a integração</button></div>
     </form>

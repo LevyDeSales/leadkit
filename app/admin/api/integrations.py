@@ -425,7 +425,7 @@ def deactivate_form_integration(
 
 REMOVE_TEXT = (
     "Remover a integração apaga o token do Baserow e o estado das sincronizações (as que falharam "
-    "deixam de poder ser reenviadas). As linhas que já estão na tabela ficam. Não tem volta: para "
+    "deixam de poder ser reenviadas) e as intenções de captura vinculadas. A resposta informa as contagens; capturas salvas e linhas já recebidas permanecem. Pendentes não serão enviadas. Não tem volta: para "
     "sincronizar de novo é preciso conectar, mapear e ativar outra vez."
 )
 

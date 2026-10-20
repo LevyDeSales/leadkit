@@ -691,3 +691,157 @@ def test_activation_revalidates_the_new_purpose_when_publication_changes_during_
     with deps.sessions() as session:
         assert session.get(Integration, stored.id).active is False
     assert len(fake.rows) == 0
+
+
+def test_html_integration_test_sends_the_profile_shown_in_the_page(deps):
+    import re
+
+    from admin_api_support import api_client, url_of
+    from conftest import BASEROW_TABLE, BASEROW_TOKEN, BASEROW_URL, FakeBaserow
+    from test_admin_destinations import admin_client, post
+
+    _, integration_id = configured(deps)
+    fake = FakeBaserow().install(deps)
+    with deps.sessions.begin() as session:
+        row = session.get(Integration, integration_id)
+        row.base_url, row.table_id, row.token_sealed = (
+            BASEROW_URL,
+            BASEROW_TABLE,
+            deps.cipher.seal(BASEROW_TOKEN),
+        )
+        row.mapping = [
+            {"field_id": 104, "name": "Código", "type": "text", "source": "job.public_id"},
+            {"field_id": 101, "name": "Nome", "type": "text", "source": "lead.email"},
+        ]
+        row.key_field_id = 104
+        row.capture_mapping = [
+            {"field_id": 104, "name": "Código", "type": "text", "source": "submission.id"},
+            {"field_id": 101, "name": "Nome", "type": "text", "source": "lead.name"},
+        ]
+        row.capture_key_field_id = 104
+    with admin_client(deps) as client:
+        page = client.get("/admin/forms/capture-test/baserow?profile=pdf")
+        assert page.status_code == 200
+        test_section = re.search(
+            r'<section[^>]+id="teste".*?</section>', page.text, re.DOTALL
+        ).group()
+        assert 'name="profile" value="pdf"' in test_section
+        response = post(
+            client,
+            "/admin/forms/capture-test/baserow/test?profile=pdf",
+            profile="pdf",
+            headers={"HX-Request": "true"},
+        )
+        assert response.status_code == 200
+        assert fake.row_where(104, "teste-capture-test")["field_101"] == "teste@example.test"
+    with api_client(deps) as client:
+        response = client.post(
+            url_of("send_form_integration_test", slug="capture-test"),
+            json={"profile": "pdf", "confirm": True},
+        )
+        assert response.status_code == 200 and response.json()["ok"]
+        assert fake.row_where(104, "teste-capture-test")["field_101"] == "teste@example.test"
+
+
+def test_removing_destinations_reports_capture_intents_and_does_not_move_them_to_default(deps):
+    from admin_api_support import api_client, url_of
+
+    from app import capture_deliveries
+    from app.models import CaptureDelivery, Submission
+
+    destination_id, _ = configured(deps)
+    submission_id = capture(deps)
+    capture(deps, key="second-capture")
+    with deps.sessions.begin() as session:
+        session.execute(
+            sa.update(CaptureDelivery)
+            .where(CaptureDelivery.submission_id == submission_id)
+            .values(status="succeeded")
+        )
+        session.add(
+            WebhookDestination(
+                form_slug=None,
+                url="https://example.test/default",
+                secret_sealed=deps.cipher.seal("synthetic"),
+                events=["submissao.persistida"],
+                created_by="operadora",
+                updated_by="operadora",
+            )
+        )
+        delivery_id = session.scalar(
+            sa.select(CaptureDelivery.id).where(
+                CaptureDelivery.webhook_destination_id == destination_id,
+                CaptureDelivery.submission_id == submission_id,
+            )
+        )
+    with api_client(deps) as client:
+        webhook = client.delete(
+            url_of("remove_destination", scope="capture-test"),
+            params={"expected_version": "1", "confirm": "true"},
+        )
+        assert webhook.status_code == 200, webhook.text
+        assert webhook.json()["capture_delivery_counts"] == {
+            "pending": 1,
+            "succeeded": 1,
+            "failed": 0,
+        }
+        assert webhook.json()["serving"] == "default"
+        baserow = client.delete(
+            url_of("remove_form_integration", slug="capture-test"),
+            params={"expected_version": "1", "confirm": "true"},
+        )
+        assert baserow.status_code == 200, baserow.text
+        assert baserow.json()["capture_delivery_counts"] == {
+            "pending": 1,
+            "succeeded": 1,
+            "failed": 0,
+        }
+    with deps.sessions() as session:
+        assert session.get(Submission, submission_id) is not None
+        assert session.scalar(sa.select(sa.func.count()).select_from(CaptureDelivery)) == 0
+    assert capture_deliveries.dispatch(deps, delivery_id, 1) == "already_succeeded"
+
+
+def test_html_events_error_is_associated_with_event_controls_instead_of_url(deps):
+    import re
+
+    from test_admin_destinations import admin_client, post
+
+    configured(deps)
+    with admin_client(deps) as client:
+        response = post(
+            client,
+            "/admin/destinations/forms/capture-test/url",
+            url="https://example.test/capture",
+            version="1",
+            events_present="1",
+        )
+    assert response.status_code == 422
+    url_input = re.search(r'<input[^>]*id="url"[^>]*>', response.text).group()
+    assert 'aria-invalid="true"' not in url_input
+    assert 'id="eventos-erro"' in response.text
+    assert 'aria-describedby="eventos-ajuda eventos-erro"' in response.text
+
+
+def test_capture_webhook_test_note_describes_the_contract_actually_sent(deps):
+    from test_admin_destinations import admin_client, post
+
+    from app.adapters.webhook import Probe
+
+    configured(deps)
+    events = []
+
+    class Transport:
+        def probe(self, url, secret, event, event_id, payload):
+            events.append(event)
+            return Probe(status=204, elapsed_ms=1)
+
+    deps.webhook = Transport()
+    with admin_client(deps) as client:
+        response = post(
+            client, "/admin/destinations/forms/capture-test/test", event="submissao.persistida"
+        )
+    assert response.status_code == 200
+    assert events == ["submissao.persistida"]
+    assert "evento de captura (submissao.persistida) conta como entregue" in response.text
+    assert "um plano.concluido conta como entregue" not in response.text

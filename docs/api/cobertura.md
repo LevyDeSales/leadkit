@@ -523,3 +523,11 @@ Entregas de captura aparecem em `get_capture`, `list_captures` e `get_form_integ
 fato e destino e não gera PDF. Os perfis Baserow `pdf`/`capture` têm mapeamentos e chaves separados,
 com uma ativação da conexão; o perfil consultado pode ser escolhido explicitamente. O webhook
 expõe `events`; omitir na criação usa `plano.concluido`, e omitir na atualização conserva a lista.
+
+
+As operações de leitura de destino/integração e de remoção expõem `capture_delivery_counts`
+(pending/succeeded/failed). A confirmação HTML mostra o inventário que será apagado; o retorno da
+remoção informa o inventário efetivamente removido. Intenções de captura não passam ao padrão nem
+esperam novo destino: são apagadas por cascade, preservando as submissões. O fallback/retry PDF
+legado segue a regra existente. O teste HTML transporta o perfil selecionado como a API/MCP;
+erros na seleção de `events` são associados ao grupo de eventos e retornam esse campo na API.

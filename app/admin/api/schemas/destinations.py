@@ -23,6 +23,7 @@ from app.adapters.webhook import Probe
 from app.adapters.webhook import outcome as verdict_of
 from app.admin.actions import destinations as actions
 from app.admin.api.common import ConfirmedInput, Page, VersionedInput, utc
+from app.admin.api.schemas.capture_deliveries import CaptureDeliveryCounts
 from app.admin.queries import destinations as queries
 
 Serving = Literal["form", "default", "none"]
@@ -57,7 +58,7 @@ class Destination(BaseModel):
     )
     scope: str = Field(description=SCOPE_TEXT, examples=["default", "diagnostico-rapido"])
     url: str = Field(
-        description="O endereço do receptor, para onde vai o evento `plano.concluido`. **A chave "
+        description="O endereço do receptor, para onde vão os eventos declarados em `events`. **A chave "
         "`total` o recebe inteiro; a `leitura`, só com o esquema e o host** (`https://host`, e a porta "
         "se houver; `url_redacted` diz qual foi o caso), porque o caminho de uma URL de webhook costuma "
         "valer como senha.",
@@ -197,6 +198,11 @@ class DestinationPage(Page[DestinationSummary]):
 class DestinationDetail(BaseModel):
     """O destino de um escopo e quem entrega os eventos dele."""
 
+    capture_delivery_counts: CaptureDeliveryCounts = Field(
+        default_factory=CaptureDeliveryCounts,
+        description="Intenções locais de captura por estado. Remover a configuração apaga esse histórico; pendentes não mudam de destino e não serão enviadas.",
+    )
+
     serving_events: list[str] = Field(
         default_factory=list,
         description="Eventos aceitos pelo destino efetivo, inclusive quando herdado do padrão.",
@@ -222,6 +228,7 @@ class DestinationDetail(BaseModel):
     def of(cls, found: queries.Detail, *, full_url: bool) -> DestinationDetail:
         own = found.stored
         return cls(
+            capture_delivery_counts=CaptureDeliveryCounts.of(found.capture_counts),
             scope=_scope(found.form_slug),
             title=found.form_title,
             version=str(own.version) if own else "0",
@@ -316,6 +323,11 @@ class RotatedDestination(Destination):
 class RemovedDestination(BaseModel):
     """O destino que saiu e quem entrega os eventos do escopo agora."""
 
+    capture_delivery_counts: CaptureDeliveryCounts = Field(
+        default_factory=CaptureDeliveryCounts,
+        description="Intenções locais de captura por estado. Remover a configuração apaga esse histórico; pendentes não mudam de destino e não serão enviadas.",
+    )
+
     scope: str = Field(description=SCOPE_TEXT, examples=["default", "diagnostico-rapido"])
     removed: Destination = Field(
         description="O destino que saiu, como estava antes de ser removido."
@@ -333,6 +345,7 @@ class RemovedDestination(BaseModel):
     @classmethod
     def of_removed(cls, removed: actions.Removed) -> RemovedDestination:
         return cls(
+            capture_delivery_counts=CaptureDeliveryCounts.of(removed.capture_counts),
             scope=_scope(removed.destination.form_slug),
             removed=Destination.of(removed.destination, unreadable=False, full_url=True),
             serving=removed.serving,  # type: ignore[arg-type]
@@ -357,7 +370,7 @@ class DestinationTestResult(BaseModel):
 
     scope: str = Field(description=SCOPE_TEXT, examples=["default", "diagnostico-rapido"])
     outcome: Outcome = Field(
-        description="O que um `plano.concluido` faria com essa resposta: `delivered` (2xx: conta como "
+        description="O que a entrega do evento selecionado faria com essa resposta: `delivered` (2xx: conta como "
         "entregue), `retry` (408, 425, 429 ou 5xx: seria repetido por cerca de 3,5 h e depois "
         "marcado como falho), `rejected` (outro status, 3xx inclusive: redirecionamentos não são "
         "seguidos; seria recusado de vez) ou `no_response` (o receptor não respondeu: `error` diz o "

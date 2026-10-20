@@ -10,11 +10,12 @@ banco. O token não passa por aqui; a tela só diz se o guardado abre.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from urllib.parse import quote
 
 from app.admin.queries.integrations import FieldChoice, IntegrationDetail
 from app.admin.views import FORMS_URL, Badge, Moment, SyncView, moment, sync_view
+from app.capture_deliveries import Counts
 from app.integrations import mapping, push, syncs
 from app.integrations.config import StoredIntegration
 from app.integrations.mapping import Report, Source
@@ -174,6 +175,7 @@ class IntegrationPage:
     capture_mapped: int = 0
     pdf_mapped: int = 0
     capture_deliveries: tuple[dict, ...] = ()
+    capture_counts: Counts = field(default_factory=Counts)
 
 
 def connection_view(stored: StoredIntegration, *, token_unreadable: bool) -> ConnectionView:
@@ -214,6 +216,7 @@ def integration_page(detail: IntegrationDetail) -> IntegrationPage:
         else 0,
         profile=detail.profile,
         capture_deliveries=detail.capture_deliveries,
+        capture_counts=detail.capture_counts,
         capture_mapped=len(stored.capture_entries) if stored else 0,
         pdf_mapped=len(stored.entries) if stored else 0,
         counts=detail.counts,

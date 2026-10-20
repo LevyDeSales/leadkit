@@ -13,7 +13,7 @@ import math
 import uuid
 from collections.abc import Callable, Coroutine, Sequence
 from datetime import datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from urllib.parse import urlencode, urlsplit
 
 from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile
@@ -676,6 +676,14 @@ def save_destination(
             http_confirmed=bool(confirm_http),
             events=(events or []) if events_present else events,
         )
+    except destinations.InvalidEvents as exc:
+        return _destination_page(
+            request,
+            status_code=422,
+            errors={"events": exc.message},
+            url=url,
+            selected_events=(events or []) if events_present else events,
+        )
     except destinations.InvalidUrl as exc:
         return _destination_page(
             request,
@@ -741,13 +749,17 @@ def remove_destination(
     if not confirm:
         return _destination_page(request, status_code=422, errors={"remove": CONFIRM_REMOVE})
     try:
-        destination_actions.remove(
+        removed = destination_actions.remove(
             get_deps(), form_slug, actor=session.username, expected_version=_version(version)
         )
     except destinations.Conflict:
         return _back(session, form_slug, DESTINATION_CHANGED)
     logger.info("admin: destino do webhook removido formulario=%s", _scope_label(form_slug))
-    session.flash = ("ok", DESTINATION_REMOVED)
+    session.flash = (
+        "ok",
+        DESTINATION_REMOVED
+        + f" Registros de entrega de respostas apagados: {removed.capture_counts.total}; pendentes não foram redirecionadas.",
+    )
     return RedirectResponse(views.DESTINATIONS_URL, status_code=303)
 
 
@@ -776,7 +788,7 @@ def send_test_event(
         probe.status,
         probe.error,
     )
-    return _destination_page(request, test=views.probe_view(probe))
+    return _destination_page(request, test=views.probe_view(probe, event=event))
 
 
 # --- formulários ------------------------------------------------------------------------------
@@ -1952,6 +1964,7 @@ def _integration_page(
     slug: str,
     *,
     status_code: int = 200,
+    profile: str | None = None,
     errors: dict[str, str] | None = None,
     problems: Sequence[str] = (),
     typed: dict[str, str] | None = None,
@@ -1963,7 +1976,7 @@ def _integration_page(
     digitar e escolher, devolvidos numa recusa (o token nunca volta). Num pedido do HTMX, uma recusa
     sai com 200, para o HTMX trocar o trecho."""
     deps = get_deps()
-    profile = request.query_params.get("profile")
+    profile = profile or request.query_params.get("profile")
     if profile not in (None, "pdf", "capture"):
         return _error(request, 422, "Selecione o perfil pdf ou capture.")
     detail = integration_actions.read_detail(deps, slug, typed=selected, profile=profile)
@@ -2167,7 +2180,7 @@ def remove_integration(
             request, slug, status_code=422, errors={"remove": CONFIRM_REMOVE_INTEGRATION}
         )
     try:
-        integration_actions.remove(
+        removed = integration_actions.remove(
             get_deps(),
             slug,
             expected_version=integration_actions.version_number(version),
@@ -2175,7 +2188,11 @@ def remove_integration(
         )
     except integration_config.Conflict:
         return _integration_back(session, slug, INTEGRATION_CHANGED)
-    session.flash = ("ok", INTEGRATION_REMOVED)
+    session.flash = (
+        "ok",
+        INTEGRATION_REMOVED
+        + f" Registros de entrega de respostas apagados: {removed.capture_counts.total}; pendentes não serão enviadas.",
+    )
     return RedirectResponse(views.form_url(slug), status_code=303)
 
 
@@ -2184,18 +2201,26 @@ def send_integration_test(
     request: Request,
     slug: IntegrationSlug,
     session: Annotated[AdminSession, Depends(require_session)],
+    profile: Annotated[Literal["pdf", "capture"] | None, Form()] = None,
 ) -> Response:
     """Manda uma linha sintética (a lead de exemplo, no domínio `exemplo`) para a tabela, pelo mesmo
     caminho de um pedido de verdade, e mostra o que aconteceu. Sai da API, sem passar pelo Hatchet, e
     não toca dado de lead. A linha fica na tabela; testar de novo atualiza a mesma. O envio é da ação
     (`app.admin.actions.integrations.send_test`), que a API também usa."""
+    profile = profile or request.query_params.get("profile")
+    if profile not in (None, "pdf", "capture"):
+        return _error(request, 422, "Selecione o perfil pdf ou capture.")
     try:
-        result = integration_actions.send_test(get_deps(), slug, actor=session.username)
+        result = integration_actions.send_test(
+            get_deps(), slug, actor=session.username, profile=profile
+        )
     except integration_actions.TokenUnreadable:
         return _integration_page(request, slug, status_code=409, sample=UNREADABLE_SAMPLE)
     except integration_actions.IntegrationMissing:
         return _integration_back(session, slug, INTEGRATION_MISSING)
-    return _integration_page(request, slug, sample=integration_views.sample_view(result))
+    return _integration_page(
+        request, slug, profile=profile, sample=integration_views.sample_view(result)
+    )
 
 
 @protected.post("/forms/{slug}/baserow/resend-failed")
