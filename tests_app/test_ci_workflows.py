@@ -376,7 +376,11 @@ def test_swarm_rehearsal_accepts_the_real_guard_refusal(request, tmp_path: Path)
     Só o transporte Docker é substituído: o deploy.sh e o Alembic/guard usam código real
     e PostgreSQL 16. Não há Swarm local; versões e disponibilidade ficam no ensaio remoto.
     """
+    from uuid import uuid4
+
     from test_swarm_scripts import Server, Staging
+
+    from app.models import DeploymentContract
 
     engine = request.getfixturevalue("rollout_engine")
 
@@ -391,6 +395,10 @@ def test_swarm_rehearsal_accepts_the_real_guard_refusal(request, tmp_path: Path)
         '  echo "$*" >> "$STUB_CALLS"\n'
         '  exec "$GUARD_PYTHON" -m alembic -c "$GUARD_ROOT/app/alembic.ini" upgrade head\n'
         "fi\n"
+        'if [[ "$1" == run && "$*" == *app.deployment_contract* ]]; then\n'
+        '  echo "$*" >> "$STUB_CALLS"\n'
+        '  exec "$GUARD_PYTHON" -m app.deployment_contract "${@: -1}"\n'
+        "fi\n"
         'exec "$(dirname "$0")/docker-stub" "$@"\n'
     )
     docker.chmod(0o755)
@@ -404,15 +412,36 @@ def test_swarm_rehearsal_accepts_the_real_guard_refusal(request, tmp_path: Path)
         "IMAGE": "gerador-planos:ci",
     }
     with engine.begin() as connection:
+        original_contract = dict(
+            connection.execute(sa.select(DeploymentContract.__table__)).mappings().one()
+        )
         original = connection.exec_driver_sql(
             "SELECT version_num FROM alembic_version"
         ).scalar_one()
         connection.exec_driver_sql("UPDATE alembic_version SET version_num = 'ci_futura'")
+        connection.execute(
+            DeploymentContract.__table__.update().values(
+                phase="verified", epoch=uuid4(), attested_at=sa.func.now()
+            )
+        )
     try:
         refused = server.run("deploy.sh", **env)
         assert refused.returncode != 0
         assert "revisão incompatível" in refused.stderr
-        assert not any(call.startswith("stack deploy") for call in server.calls)
+        assert "deploy.sh: migrations com " in refused.stdout
+        assert any(call.startswith("run ") and call.endswith(" migrate") for call in server.calls)
+        assert any(call.startswith("run ") and call.endswith(" begin") for call in server.calls)
+        assert not any(
+            call.startswith(("stack deploy", "service scale", "service update"))
+            for call in server.calls
+        )
+        with engine.connect() as connection:
+            assert (
+                connection.exec_driver_sql(
+                    "select minimum_contract || ':' || phase from deployment_contract where id=1"
+                ).scalar_one()
+                == "1:blocked"
+            )
         log = tmp_path / "back-sem-rollback.log"
         log.write_text(refused.stdout + refused.stderr)
         rehearsal = next(
@@ -453,6 +482,7 @@ def test_swarm_rehearsal_accepts_the_real_guard_refusal(request, tmp_path: Path)
                 sa.text("UPDATE alembic_version SET version_num = :revision"),
                 {"revision": original},
             )
+            connection.execute(DeploymentContract.__table__.update().values(**original_contract))
 
 
 @pytest.mark.parametrize(
@@ -1184,3 +1214,123 @@ elif a[:2]==['inspect','--type']:
 else: raise SystemExit(2)
 p.write_text(json.dumps(state))
 """
+
+
+@pytest.mark.parametrize(
+    "case,fault,expected",
+    [
+        (4, "valid", 0),
+        (4, "missing_migration", 1),
+        (4, "verified", 1),
+        (4, "wrong_floor", 1),
+        (4, "changed_service", 1),
+        (5, "valid", 0),
+        (5, "unexpected_migration", 1),
+        (5, "uncontrolled", 1),
+        (5, "changed_service", 1),
+    ],
+)
+def test_preflight_and_migration_evidence_require_distinct_proofs(
+    tmp_path: Path, case: int, fault: str, expected: int
+) -> None:
+    full = next(
+        step["run"]
+        for step in steps_of("swarm")
+        if step.get("name", "").startswith("Update, break and go back")
+    )
+    segment = full[
+        full.index(f'echo "::group::{case}.') : full.index(f'echo "::group::{case + 1}.')
+    ]
+    filename = (
+        "back-sem-rollback.log"
+        if case == 4
+        else re.findall(r'cat "\$RUNNER_TEMP/([^"\n]+)"', segment)[-1]
+    )
+    marker = "deploy.sh: migrations com gerador-planos:ci\n"
+    if case == 4:
+        content = (
+            "" if fault == "missing_migration" else marker
+        ) + "revisão incompatível; a imagem não foi atualizada.\n"
+        assertions = segment.rsplit(f'cat "$RUNNER_TEMP/{filename}"\n', 1)[1].split(
+            "ROLLBACK=1 IMAGE="
+        )[0]
+    else:
+        content = (
+            "a stack não foi mexida.\n"
+            if fault == "uncontrolled"
+            else "O banco não confirmou o contrato; a stack não foi mexida.\n"
+        )
+        if fault == "unexpected_migration":
+            content += marker
+        assertions = segment.rsplit(f'cat "$RUNNER_TEMP/{filename}"\n', 1)[1].split(
+            'cp "$RUNNER_TEMP/app.env.ok"'
+        )[0]
+    (tmp_path / filename).write_text(content)
+    prefix = 'versions() { echo "$OBSERVED_VERSION"; }; psql_db() { echo "$OBSERVED_CONTRACT"; }; before=original;\n'
+    result = subprocess.run(
+        ["bash", "-e", "-c", prefix + assertions],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={
+            **os.environ,
+            "RUNNER_TEMP": str(tmp_path),
+            "OBSERVED_VERSION": "changed" if fault == "changed_service" else "original",
+            "OBSERVED_CONTRACT": "1:verified"
+            if fault == "verified"
+            else "0:blocked"
+            if fault == "wrong_floor"
+            else "1:blocked",
+        },
+    )
+    assert result.returncode == expected, result.stdout + result.stderr
+
+
+def test_preflight_unavailable_database_never_calls_begin_or_migrate(tmp_path: Path) -> None:
+    import shutil
+
+    from test_swarm_scripts import Server, Staging
+
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    server = Server(tmp_path, Staging(stage))
+    if gnu_sed := shutil.which("gsed"):
+        (server.bin_dir / "sed").symlink_to(gnu_sed)
+    docker = server.bin_dir / "docker"
+    docker.rename(server.bin_dir / "docker-stub")
+    docker.write_text(
+        '#!/usr/bin/env bash\nif [[ "$1" == run && "${@: -1}" == status ]]; then\n  echo "$*" >> "$STUB_CALLS"\n  exit 1\nfi\nexec "$(dirname "$0")/docker-stub" "$@"\n'
+    )
+    docker.chmod(0o700)
+    server.write_app_env(
+        "DATABASE_URL=postgresql+psycopg://synthetic@gerador-planos_db:5432/synthetic_test"
+    )
+    shutil.copyfile(server.folder / "app.env", tmp_path / "app.env.ok")
+    full = next(
+        step["run"]
+        for step in steps_of("swarm")
+        if step.get("name", "").startswith("Update, break and go back")
+    )
+    segment = full[full.index('echo "::group::5.') : full.index('echo "::group::6.')]
+    launcher = server.folder / "preflight.sh"
+    launcher.write_text(
+        "#!/usr/bin/env bash\nset -euo pipefail\nversions() { echo synthetic-services; }\n"
+        + segment
+    )
+    launcher.chmod(0o700)
+    result = server.run(
+        "preflight.sh",
+        RUNNER_TEMP=str(tmp_path),
+        STUB_NETWORK="1",
+        STUB_CONTRACT_FLOOR="1",
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "O banco não confirmou o contrato" in result.stdout
+    assert not any(
+        call.startswith("run ") and call.endswith((" begin", " migrate", " attest"))
+        for call in server.calls
+    )
+    assert not any(
+        call.startswith(("stack deploy", "service scale", "service update"))
+        for call in server.calls
+    )

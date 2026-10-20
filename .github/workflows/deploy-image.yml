@@ -1167,9 +1167,8 @@ jobs:
           echo "::endgroup::"
 
           echo "::group::4. volta para a versão anterior com o banco à frente da imagem"
-          # Uma migration que a imagem anterior não conhece, como depois de um deploy com migration
-          # nova. Sem ROLLBACK=1, o deploy.sh para sem mexer na stack, porque o banco também podia
-          # ser de outra linha de migrations; com ele, troca a versão sem migrar.
+          # Status/begin aceitam o piso compatível, mas migrate recusa a revisão desconhecida.
+          # Os serviços não mudam e o gate fica bloqueado; o retorno explícito não roda migration.
           head=$(psql_db 'select version_num from alembic_version')
           psql_db "update alembic_version set version_num = 'ci_futura'"
           before=$(versions)
@@ -1179,9 +1178,11 @@ jobs:
             exit 1
           fi
           cat "$RUNNER_TEMP/back-sem-rollback.log"
+          grep -F 'deploy.sh: migrations com ' "$RUNNER_TEMP/back-sem-rollback.log"
           grep -F 'revisão incompatível' "$RUNNER_TEMP/back-sem-rollback.log"
           grep -F 'a imagem não foi atualizada' "$RUNNER_TEMP/back-sem-rollback.log"
           test "$(versions)" = "$before"
+          test "$(psql_db "select minimum_contract || ':' || phase from deployment_contract where id=1")" = 1:blocked
           ROLLBACK=1 IMAGE=gerador-planos:ci ./deploy.sh > "$RUNNER_TEMP/back.log" 2>&1 || { cat "$RUNNER_TEMP/back.log"; exit 1; }
           cat "$RUNNER_TEMP/back.log"
           grep -F 'sem migrations' "$RUNNER_TEMP/back.log"
@@ -1198,16 +1199,21 @@ jobs:
           done
           echo "::endgroup::"
 
-          echo "::group::5. migration que falha: a stack não é mexida"
+          echo "::group::5. banco indisponível no preflight: serviços preservados e nenhuma migration"
+          # A conexão falha em contract(status), antes de begin/migrate ou atualização de serviços.
           before=$(versions)
           sed -i 's|@gerador-planos_db:|@gerador-planos_sem-banco:|' app.env
-          if IMAGE=gerador-planos:ci ./deploy.sh > "$RUNNER_TEMP/migrate.log" 2>&1; then
-            cat "$RUNNER_TEMP/migrate.log"
-            echo "o deploy.sh devia ter parado nas migrations"
+          if IMAGE=gerador-planos:ci ./deploy.sh > "$RUNNER_TEMP/preflight-db.log" 2>&1; then
+            cat "$RUNNER_TEMP/preflight-db.log"
+            echo "o deploy.sh devia ter recusado o banco indisponível no preflight"
             exit 1
           fi
-          cat "$RUNNER_TEMP/migrate.log"
-          grep -F 'a stack não foi mexida' "$RUNNER_TEMP/migrate.log"
+          cat "$RUNNER_TEMP/preflight-db.log"
+          grep -F 'O banco não confirmou o contrato; a stack não foi mexida.' "$RUNNER_TEMP/preflight-db.log"
+          if grep -F 'deploy.sh: migrations com ' "$RUNNER_TEMP/preflight-db.log"; then
+            echo "o preflight indisponível não devia chamar migrations"
+            exit 1
+          fi
           test "$(versions)" = "$before"
           cp "$RUNNER_TEMP/app.env.ok" app.env
           echo "::endgroup::"
