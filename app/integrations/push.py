@@ -28,6 +28,7 @@ códigos do Baserow e os nomes de campos e perguntas, que são configuração.
 from __future__ import annotations
 
 import uuid
+from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Any
 
@@ -168,10 +169,14 @@ def upsert(
     data: RowData | CaptureRowData,
     record_key: str | None = None,
     profile: MappingProfile = "pdf",
+    session: Session | None = None,
 ) -> Written:
     """Monta a linha com os campos da tabela como estão agora e a grava: atualiza a que tem o
     registro, ou cria. Captura exige `record_key` igual ao id da submissão; PDF conserva
     a chave e a trava antigas quando a chave explícita é omitida.
+    Com `session`, a chamadora controla a transação: deve mantê-la aberta durante o envio
+    e encerrá-la para liberar a trava. Esta função não confirma, desfaz ou fecha a sessão
+    recebida; rollback local não desfaz a escrita remota. Sem sessão, mantém a transação própria.
     Levanta `RetryableError` ou `TerminalError`."""
     live = deps.baserow.fields(connection)
     try:
@@ -209,8 +214,8 @@ def upsert(
         raise TerminalError(FailureCode.INTEGRATION_MAPPING, str(exc)) from None
     lock = f"integration:{integration_id}:{record_key}"
     # A transação segura a trava até o fim do achar-e-escrever; sem tabela mexida, ela só espera.
-    with deps.sessions.begin() as session:
-        session.execute(
+    with nullcontext(session) if session is not None else deps.sessions.begin() as write_session:
+        write_session.execute(
             sa.text("select pg_advisory_xact_lock(hashtextextended(:key, 0))"), {"key": lock}
         )
         found = deps.baserow.find_rows(connection, key_field_id, record_key)
