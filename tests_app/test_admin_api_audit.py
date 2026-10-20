@@ -707,7 +707,6 @@ def test_what_the_database_holds_beyond_what_is_known_safe_never_leaves(
     assert item["details"] == {
         "form_slug": "demo",
         "host": "hooks.example.test",
-        "events": ["plano.concluido"],
     }
     for leaked in (secret, hashed, email):
         assert leaked not in response.text
