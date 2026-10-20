@@ -48,6 +48,8 @@ TYPE_LABELS = {
 }
 
 KEY_SOURCE = "job.public_id"
+CAPTURE_KEY_SOURCE = "submission.id"
+MappingProfile = Literal["pdf", "capture"]
 ANSWER_PREFIX = "answer:"
 SourceKind = Literal["text", "json", "flag", "choice", "choices"]
 SAMPLE_EMAIL = "teste@example.test"
@@ -97,6 +99,33 @@ STATIC_SOURCES: tuple[Source, ...] = (
 )
 
 
+CAPTURE_SOURCES: tuple[Source, ...] = tuple(
+    Source(
+        CAPTURE_KEY_SOURCE
+        if source.key == KEY_SOURCE
+        else source.key.replace("job.", "submission.", 1),
+        "Código da submissão (a chave da sincronização)"
+        if source.key == KEY_SOURCE
+        else source.label,
+        source.group,
+        source.kind,
+        ("codigo da submissao", "submission", "id da submissao")
+        if source.key == KEY_SOURCE
+        else source.aliases,
+    )
+    for source in STATIC_SOURCES
+    if source.key not in ("job.pdf_url", "job.page_url")
+)
+
+
+def _static_sources(profile: MappingProfile) -> tuple[Source, ...]:
+    if profile == "pdf":
+        return STATIC_SOURCES
+    if profile == "capture":
+        return CAPTURE_SOURCES
+    raise ValueError("Perfil de mapeamento desconhecido.")
+
+
 def normalize(text: str) -> str:
     """O texto sem acentos, em minúsculas, com os travessões como hífen e os espaços colapsados:
     a forma em que o rótulo de uma opção e o de uma opção do Baserow se comparam."""
@@ -130,9 +159,9 @@ def answer_source(question: Question) -> Source:
     )
 
 
-def catalog(spec: FormSpec | None) -> dict[str, Source]:
-    """Todas as fontes que a versão do formulário oferece, pela chave."""
-    sources = {source.key: source for source in STATIC_SOURCES}
+def catalog(spec: FormSpec | None, *, profile: MappingProfile = "pdf") -> dict[str, Source]:
+    """As fontes disponíveis na versão e no perfil; o default conserva as fontes PDF."""
+    sources = {source.key: source for source in _static_sources(profile)}
     for question in questions_of(spec):
         source = answer_source(question)
         sources[source.key] = source
@@ -244,9 +273,11 @@ def entries_of(stored: Sequence[Mapping[str, Any]]) -> list[Entry]:
     return entries
 
 
-def key_entry(entries: Sequence[Entry]) -> Entry | None:
-    """A entrada que guarda o código do pedido: por ela a sincronização acha a linha de volta."""
-    return next((entry for entry in entries if entry.source == KEY_SOURCE), None)
+def key_entry(entries: Sequence[Entry], *, profile: MappingProfile = "pdf") -> Entry | None:
+    """A entrada da chave do perfil: por ela a sincronização acha a linha de volta."""
+    key = CAPTURE_KEY_SOURCE if profile == "capture" else KEY_SOURCE
+    _static_sources(profile)
+    return next((entry for entry in entries if entry.source == key), None)
 
 
 class MappingError(Exception):
@@ -267,14 +298,27 @@ class InvalidMapping(ValueError):
 
 
 def check_entries(
-    entries: Sequence[Entry], live: Sequence[BaserowField], sources: Mapping[str, Source]
+    entries: Sequence[Entry],
+    live: Sequence[BaserowField],
+    sources: Mapping[str, Source],
+    *,
+    profile: MappingProfile = "pdf",
 ) -> None:
     """Confere um mapeamento novo antes de guardá-lo; levanta `InvalidMapping` com o que corrigir.
     Cada campo existe na tabela, é preenchível e recebe uma fonte que o formulário oferece e que
-    serve ao tipo dele, e um campo de texto recebe o código do pedido, que é a chave da
-    sincronização."""
+    serve ao tipo dele, e um campo de texto recebe a chave do perfil (pedido ou submissão)."""
+    allowed = {source.key for source in _static_sources(profile)}
+    sources = {
+        key: value
+        for key, value in sources.items()
+        if key in allowed or key.startswith(ANSWER_PREFIX)
+    }
+    key_source = CAPTURE_KEY_SOURCE if profile == "capture" else KEY_SOURCE
+    key_label = "código da submissão" if profile == "capture" else "código do pedido"
     by_id = {item.id: item for item in live}
     problems: list[str] = []
+    if profile == "capture" and len({entry.field_id for entry in entries}) != len(entries):
+        problems.append("Escolha somente uma fonte para cada campo da captura.")
     for entry in entries:
         found = by_id.get(entry.field_id)
         if found is None:
@@ -292,15 +336,15 @@ def check_entries(
                 f"«{found.name}» é um campo de {TYPE_LABELS[found.type]} e não recebe "
                 f"«{source.label}»."
             )
-    keys = [entry for entry in entries if entry.source == KEY_SOURCE]
+    keys = [entry for entry in entries if entry.source == key_source]
     if len(keys) != 1:
         problems.append(
-            "Escolha um campo, e só um, para o código do pedido: é por ele que a sincronização acha "
+            f"Escolha um campo, e só um, para o {key_label}: é por ele que a sincronização acha "
             "a linha de volta."
         )
     elif (found := by_id.get(keys[0].field_id)) is not None and found.type not in KEY_TYPES:
         problems.append(
-            f"O campo do código do pedido («{found.name}») precisa ser de texto ou de texto longo."
+            f"O campo do {key_label} («{found.name}») precisa ser de texto ou de texto longo."
         )
     if problems:
         raise InvalidMapping(problems)
@@ -381,19 +425,34 @@ class Report:
 
 
 def build_report(
-    entries: Sequence[Entry], live: Sequence[BaserowField], spec: FormSpec | None
+    entries: Sequence[Entry],
+    live: Sequence[BaserowField],
+    spec: FormSpec | None,
+    *,
+    profile: MappingProfile = "pdf",
 ) -> Report:
     """O relatório do mapeamento contra a tabela como ela está agora e a versão atual do
     formulário."""
-    sources = catalog(spec)
+    sources = catalog(spec, profile=profile)
     questions = {question.name: question for question in questions_of(spec)}
     by_id = {item.id: item for item in live}
     problems: list[str] = []
     fields: list[FieldReport] = []
+    if profile == "capture" and len({entry.field_id for entry in entries}) != len(entries):
+        problems.append("Escolha somente uma fonte para cada campo da captura.")
     if not entries:
         problems.append("Nenhum campo está mapeado: escolha o que preenche cada campo da tabela.")
-    elif key_entry(entries) is None:
-        problems.append("O código do pedido não está mapeado a nenhum campo.")
+    elif key_entry(entries, profile=profile) is None:
+        key_label = "código da submissão" if profile == "capture" else "código do pedido"
+        problems.append(f"O {key_label} não está mapeado a nenhum campo.")
+    else:
+        key = key_entry(entries, profile=profile)
+        if sum(entry.source == key.source for entry in entries) != 1:
+            problems.append("Escolha somente um campo para a chave da sincronização.")
+        if key.type not in KEY_TYPES:
+            problems.append(
+                "O campo da chave da sincronização precisa ser de texto ou de texto longo."
+            )
     for entry in entries:
         found = by_id.get(entry.field_id)
         source = sources.get(entry.source)
@@ -405,6 +464,10 @@ def build_report(
                 f"O campo «{found.name}» mudou de tipo na tabela (era {entry.type}, agora "
                 f"{found.type}): salve o mapeamento de novo."
             )
+            continue
+        reason = unsupported_reason(found)
+        if reason is not None:
+            problems.append(f"O campo «{found.name}» não pode ser preenchido: {reason}.")
             continue
         if source is None:
             problems.append(
@@ -448,30 +511,62 @@ class RowData:
     questions: dict[str, Question] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class CaptureRowData:
+    """Os dados históricos de uma captura, sem pedido ou capacidades de PDF inventados."""
+
+    submission_id: str
+    form_version: str
+    lead_name: str | None
+    lead_email: str
+    lead_phone: str | None
+    priority: str | None
+    persona: str | None
+    answers: dict[str, Any]
+    consent: dict[str, Any]
+    tracking: dict[str, Any]
+    scores: dict[str, Any]
+    questions: dict[str, Question] = field(default_factory=dict)
+
+
 def _json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
-def raw_value(source: str, data: RowData) -> Any:
-    """O valor cru de uma fonte neste envio: texto, None, sim ou não, ou o que a lead respondeu."""
+def raw_value(
+    source: str, data: RowData | CaptureRowData, *, profile: MappingProfile = "pdf"
+) -> Any:
+    """O valor de uma fonte disponível; recusa fontes estranhas antes de converter ausências."""
+    sources = {item.key for item in _static_sources(profile)}
+    sources.update(f"{ANSWER_PREFIX}{name}" for name in data.questions)
+    if source not in sources:
+        raise MappingError("A fonte não está disponível nesta versão e perfil do formulário.")
+    if profile == "capture" and not isinstance(data, CaptureRowData):
+        raise MappingError("O perfil de captura exige dados de uma submissão.")
+    if profile == "pdf" and not isinstance(data, RowData):
+        raise MappingError("O perfil PDF exige dados de um pedido.")
+    prefix = "submission" if profile == "capture" else "job"
     simple: dict[str, Any] = {
         "lead.name": data.lead_name,
         "lead.email": data.lead_email,
         "lead.phone": data.lead_phone,
-        KEY_SOURCE: data.public_id,
-        "job.form_version": data.form_version,
-        "job.pdf_url": data.pdf_url,
-        "job.page_url": data.page_url,
-        "job.priority": data.priority,
-        "job.persona": data.persona,
-        "job.answers_json": _json(data.answers),
-        "job.consent_json": _json(data.consent),
-        "job.tracking_json": _json(data.tracking),
-        "job.scores_json": _json(data.scores),
+        f"{prefix}.form_version": data.form_version,
+        f"{prefix}.priority": data.priority,
+        f"{prefix}.persona": data.persona,
+        f"{prefix}.answers_json": _json(data.answers),
+        f"{prefix}.consent_json": _json(data.consent),
+        f"{prefix}.tracking_json": _json(data.tracking),
+        f"{prefix}.scores_json": _json(data.scores),
         "consent.privacy": bool(data.consent.get("privacy_at") or data.consent.get("processing")),
         "consent.marketing_email": bool(data.consent.get("marketing_email")),
         "consent.marketing_whatsapp": bool(data.consent.get("marketing_whatsapp")),
     }
+    if isinstance(data, CaptureRowData):
+        simple[CAPTURE_KEY_SOURCE] = data.submission_id
+    else:
+        simple.update(
+            {KEY_SOURCE: data.public_id, "job.pdf_url": data.pdf_url, "job.page_url": data.page_url}
+        )
     if source in simple:
         return simple[source]
     return data.answers.get(source.removeprefix(ANSWER_PREFIX))
@@ -514,14 +609,20 @@ def _as_options(
 
 
 def build_row(
-    entries: Sequence[Entry], live: Sequence[BaserowField], data: RowData
+    entries: Sequence[Entry],
+    live: Sequence[BaserowField],
+    data: RowData | CaptureRowData,
+    *,
+    profile: MappingProfile = "pdf",
 ) -> dict[str, Any]:
     """Os valores da linha, pela chave `field_<id>` da API. Levanta `MappingError` se um campo
     mapeado não existe mais, mudou de tipo ou não recebe a fonte, e `UnmatchedOption` se uma
     resposta traz uma opção que o campo de seleção não tem."""
     by_id = {item.id: item for item in live}
-    sources = {source.key: source for source in STATIC_SOURCES}
+    sources = {source.key: source for source in _static_sources(profile)}
     row: dict[str, Any] = {}
+    if profile == "capture" and len({entry.field_id for entry in entries}) != len(entries):
+        raise MappingError("Escolha somente uma fonte para cada campo da captura.")
     for entry in entries:
         found = by_id.get(entry.field_id)
         if found is None:
@@ -533,15 +634,19 @@ def build_row(
             if entry.source.startswith(ANSWER_PREFIX)
             else None
         )
-        source = sources.get(entry.source) or Source(
-            entry.source,
-            question.label if question else entry.source,
-            ANSWERS,
-            _answer_kind(question),
-        )
+        source = sources.get(entry.source)
+        if source is None and question is not None:
+            source = answer_source(question)
+        if source is None:
+            raise MappingError(
+                f"O campo «{found.name}» recebe uma fonte indisponível nesta versão e perfil."
+            )
+        reason = unsupported_reason(found)
+        if reason is not None:
+            raise MappingError(f"O campo «{found.name}» não pode ser preenchido: {reason}.")
         if not compatible(source, found.type):
             raise MappingError(f"O campo «{found.name}» não recebe «{source.label}».")
-        raw = raw_value(entry.source, data)
+        raw = raw_value(entry.source, data, profile=profile)
         key = f"field_{found.id}"
         if found.type in TEXT_TYPES:
             row[key] = _as_text(source, raw, question)
@@ -553,12 +658,6 @@ def build_row(
         else:
             row[key] = _as_options(raw, question, found.options, found.name)
     return row
-
-
-def _answer_kind(question: Question | None) -> SourceKind:
-    if question is None:
-        return "text"
-    return answer_source(question).kind
 
 
 # --- o envio de teste ------------------------------------------------------------------------
@@ -578,28 +677,37 @@ def sample_answer(question: Question) -> Any:
     return SAMPLE_TEXT
 
 
-def sample_data(spec: FormSpec, public_id: str) -> RowData:
+def sample_data(
+    spec: FormSpec, public_id: str, *, profile: MappingProfile = "pdf"
+) -> RowData | CaptureRowData:
     """Um envio sintético do formulário, com a lead de exemplo no domínio `exemplo`: nenhum dado de
     lead de verdade."""
     questions = {question.name: question for question in questions_of(spec)}
-    return RowData(
-        public_id=public_id,
-        form_version=spec.version,
-        lead_name="Contadora Exemplo",
-        lead_email=SAMPLE_EMAIL,
-        lead_phone="11999990000",
-        pdf_url="https://example.test/plano-de-teste.pdf",
-        page_url="https://example.test/plano-de-teste",
-        priority=None,
-        persona=None,
-        answers={name: sample_answer(question) for name, question in questions.items()},
-        consent={
+    _static_sources(profile)
+    values = {
+        "form_version": spec.version,
+        "lead_name": "Contadora Exemplo",
+        "lead_email": SAMPLE_EMAIL,
+        "lead_phone": "11999990000",
+        "priority": None,
+        "persona": None,
+        "answers": {name: sample_answer(question) for name, question in questions.items()},
+        "consent": {
             "privacy_at": "2026-01-01T00:00:00+00:00",
             "text_version": spec.consent_text_version,
             "marketing_email": False,
             "marketing_whatsapp": False,
         },
-        tracking={"utm_source": "teste"},
-        scores={},
-        questions=questions,
+        "tracking": {"utm_source": "teste"},
+        "scores": {},
+        "questions": questions,
+    }
+
+    if profile == "capture":
+        return CaptureRowData(submission_id=public_id, **values)
+    return RowData(
+        public_id=public_id,
+        pdf_url="https://example.test/plano-de-teste.pdf",
+        page_url="https://example.test/plano-de-teste",
+        **values,
     )

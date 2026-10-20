@@ -40,7 +40,7 @@ from app.destinations import UnreadableSecret
 from app.errors import FailureCode, RetryableError, TerminalError
 from app.integrations import config, mapping
 from app.integrations.baserow import Connection
-from app.integrations.mapping import Entry, RowData
+from app.integrations.mapping import CaptureRowData, Entry, MappingProfile, RowData
 from app.models import Integration, IntegrationSync, Job, Submission, utcnow
 from app.submission_identity import identity_from_answers, submission_form
 
@@ -165,22 +165,55 @@ def upsert(
     integration_id: uuid.UUID,
     key_field_id: int,
     entries: list[Entry],
-    data: RowData,
+    data: RowData | CaptureRowData,
+    record_key: str | None = None,
+    profile: MappingProfile = "pdf",
 ) -> Written:
     """Monta a linha com os campos da tabela como estão agora e a grava: atualiza a que tem o
-    código do pedido, ou cria. Levanta `RetryableError` ou `TerminalError`."""
+    registro, ou cria. Captura exige `record_key` igual ao id da submissão; PDF conserva
+    a chave e a trava antigas quando a chave explícita é omitida.
+    Levanta `RetryableError` ou `TerminalError`."""
     live = deps.baserow.fields(connection)
     try:
-        row = mapping.build_row(entries, live, data)
-    except mapping.MappingError as exc:
+        row = mapping.build_row(entries, live, data, profile=profile)
+        if record_key is None:
+            if not isinstance(data, RowData) or profile != "pdf":
+                raise mapping.MappingError("A captura exige a chave explícita da submissão.")
+            record_key = data.public_id
+        key_source = mapping.CAPTURE_KEY_SOURCE if profile == "capture" else mapping.KEY_SOURCE
+        if not record_key or record_key != mapping.raw_value(key_source, data, profile=profile):
+            raise mapping.MappingError("A chave explícita não corresponde ao registro enviado.")
+        if profile == "capture":
+            mapping.check_entries(
+                entries,
+                live,
+                {
+                    **{source.key: source for source in mapping.CAPTURE_SOURCES},
+                    **{
+                        f"answer:{name}": mapping.answer_source(question)
+                        for name, question in data.questions.items()
+                    },
+                },
+                profile=profile,
+            )
+            key = mapping.key_entry(entries, profile=profile)
+            if (
+                key is None
+                or key.field_id != key_field_id
+                or row.get(f"field_{key_field_id}") != record_key
+            ):
+                raise mapping.MappingError(
+                    "O campo-chave não corresponde ao mapeamento da captura."
+                )
+    except (mapping.MappingError, mapping.InvalidMapping) as exc:
         raise TerminalError(FailureCode.INTEGRATION_MAPPING, str(exc)) from None
-    lock = f"integration:{integration_id}:{data.public_id}"
+    lock = f"integration:{integration_id}:{record_key}"
     # A transação segura a trava até o fim do achar-e-escrever; sem tabela mexida, ela só espera.
     with deps.sessions.begin() as session:
         session.execute(
             sa.text("select pg_advisory_xact_lock(hashtextextended(:key, 0))"), {"key": lock}
         )
-        found = deps.baserow.find_rows(connection, key_field_id, data.public_id)
+        found = deps.baserow.find_rows(connection, key_field_id, record_key)
         if found:
             return Written("updated", deps.baserow.update_row(connection, found[0], row))
         return Written("created", deps.baserow.create_row(connection, row))
