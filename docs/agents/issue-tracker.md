@@ -15,6 +15,9 @@ bloqueios. Relacione tickets à spec por links; dependências técnicas continua
 Uma instrução de skill para “buscar o ticket” significa ler a issue; “publicar no tracker”
 significa escrever uma issue somente dentro da autorização da tarefa. Criação, comentário,
 classificação e fechamento precisam estar no escopo autorizado; a skill não concede permissão.
+Autorizações existentes na conversa permanecem válidas para esse escopo e não devem ser pedidas
+novamente. Pedidos de criar ou organizar tickets já autorizam as escritas correspondentes no
+GitHub. Decisões de setup confirmadas não exigem nova rodada de confirmação.
 Para corpos multilinha via `gh`, prefira arquivo temporário e `--body-file`, após conferir o
 `--help` da versão instalada.
 
@@ -27,5 +30,5 @@ públicas. Resumos públicos usam dados sintéticos e referências públicas seg
 
 Use o vocabulário de [triage-labels.md](triage-labels.md). **PRs as a request surface: no.**
 PRs são entregas vinculadas a issues, não uma fila paralela de solicitações. Uma skill que proponha
-labels próprias deve primeiro verificar o vocabulário e a autorização; não crie labels
-automaticamente. Este setup é documental e não cria nem altera issues ou labels.
+labels próprias deve primeiro verificar o vocabulário e o escopo autorizado, sem inventar
+taxonomia. A coordenadora cria as labels canônicas ausentes como parte do setup já autorizado.

@@ -1,8 +1,8 @@
 # Instruções para agentes — Leadkit
 
-A instrução atual da usuária prevalece sobre estes documentos e sobre skills. Fale com a usuária
-no feminino e escreva interface e documentação em pt-BR. Commits: `tipo: assunto` em inglês,
-no imperativo, com o motivo no corpo.
+A instrução atual de quem solicita prevalece sobre estes documentos e sobre skills. Fale em
+pt-BR com quem solicita. Interface e documentação do produto se dirigem ao público feminino
+(operadora/contadora). Commits: `tipo: assunto` em inglês, no imperativo, com o motivo no corpo.
 
 - **Produto ou testes:** leia [CONTRIBUTING.md](CONTRIBUTING.md). Preserve contratos HTTP/MCP,
   versões imutáveis de formulário, macros de templates e identificadores persistidos.

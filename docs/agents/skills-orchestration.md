@@ -5,7 +5,7 @@
 O conjunto aprovado contém 38 cópias oficiais de
 [mattpocock/skills](https://github.com/mattpocock/skills), fixadas no commit
 [`5beb35b040e3de97e54fa9e386d7e42d15c295c2`](https://github.com/mattpocock/skills/tree/5beb35b040e3de97e54fa9e386d7e42d15c295c2).
-O destino compartilhado é `.agents/skills` no HOME da usuária (`~/.agents/skills`), compatível com
+O destino compartilhado é `.agents/skills` no HOME de quem usa Codex (`~/.agents/skills`), compatível com
 as contas Codex usadas no Orca. A instalação global é separada deste setup documental por repo:
 esta árvore não instala, atualiza nem comprova o estado de cada conta.
 
@@ -24,16 +24,16 @@ todas nem refatoração de arquitetura automática.
 
 | Situação | Skills e resultado esperado |
 | --- | --- |
-| Decisão de produto genuinamente aberta | `grill-with-docs` / `grilling`: investigar documentos e código primeiro, depois formular perguntas claras sobre as alternativas ainda abertas. Não reabrir decisões tomadas nem transferir investigação técnica à usuária. |
+| Decisão de produto genuinamente aberta | `grill-with-docs` / `grilling`: investigar documentos e código primeiro, depois formular perguntas claras sobre as alternativas ainda abertas. Não reabrir decisões tomadas nem transferir investigação técnica a quem solicita. |
 | Contexto pronto para especificação ou decomposição | `to-spec` / `to-tickets`: produzir spec e tickets no [tracker real](issue-tracker.md), com aceites e dependências. |
 | Relato de comportamento inesperado | `triage`: reunir fatos antes de chamar de bug; seguir o [vocabulário público](triage-labels.md). |
 | Mudança delimitada ou spec aprovada | `implement` / `implement-spec`, conforme o escopo; preservar contratos e validar os comportamentos principais. |
 | Entrega pronta para avaliação | `code-review`: revisão independente da implementação, com achados e evidências para a coordenadora. |
-| A usuária não entendeu a explicação ou o rumo | `wait-what`: explicar em linguagem clara e restabelecer o entendimento antes de continuar a parte dependente. |
+| Quem solicita não entendeu a explicação ou o rumo | `wait-what`: explicar em linguagem clara e restabelecer o entendimento antes de continuar a parte dependente. |
 
 Priorize UX/UI e regras de negócio. Teste comportamentos principais e checks existentes;
 não imponha metas de cobertura, mutação, complexidade, tamanho ou quantidade de dependências.
-Skills orientam o método: a instrução da usuária e o escopo autorizado governam a ação.
+Skills orientam o método: a instrução de quem solicita e o escopo autorizado governam a ação.
 
 ## Papéis no Orca
 
@@ -59,7 +59,7 @@ worktree principal em `main`. Confira modelo e esforço efetivos no recibo antes
 
 Workers seguem o preâmbulo ativo para mensagens, perguntas bloqueantes, heartbeat e entrega.
 A coordenadora valida resultado e evidências da Task/Dispatch ativos e decide reutilizar, reter
-por pedido da usuária ou liberar o terminal antes do reconhecimento da entrega.
+por pedido de quem solicita ou liberar o terminal antes do reconhecimento da entrega.
 Silêncio não prova encerramento; recuperação segue a skill atual. Ao terminar, todas as workers
 precisam de destino explícito e os terminais devem ser liberados pelo ciclo Orca após o aceite.
 
@@ -81,8 +81,13 @@ na conversa atual.
 O publisher permanece OFF; este setup não ativa variáveis, bootstrap, automações ou configuração
 externa. A existência de um plano de release não comprova publicação nem permite deploy.
 
-Escritas em serviços externos, publicação de formulário ou página, mensagens externas, deploy e
-ativação de automação exigem autorização explícita de Levy. Billing liberado ou comandos sugeridos por skills não a substituem.
+A autorização existente na conversa permanece válida para o escopo concedido: prossiga sem
+pedi-la novamente. Pedidos de criar ou organizar tickets autorizam as escritas correspondentes
+no GitHub; decisões de setup confirmadas dispensam nova rodada de confirmação.
+
+Escritas em serviços externos precisam estar no escopo autorizado. Deploy, publicação de
+formulário ou página, mensagens externas e ativação de automação continuam exigindo ok explícito
+de Levy para essas ações. Billing liberado ou comandos sugeridos por skills não o substituem.
 Formulários e conteúdo cabem à operadora; código e segurança cabem à equipe, conforme
 [domain.md](domain.md). Use dados sintéticos nos ensaios e mantenha segredos e material de
 instalação fora do chat, logs, argumentos de comandos e repositório público. Carregue segredos
