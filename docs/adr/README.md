@@ -21,7 +21,6 @@ e as consequências; o detalhe fica nos relatórios e no código citados em cada
 | [0013](0013-formularios-no-banco-com-versoes.md) | Formulários no banco, em versões que não mudam depois de publicadas, criados no admin | 2026-10-09 |
 | [0014](0014-integracao-de-planilha-por-formulario.md) | Uma integração de planilha (Baserow) por formulário, ao lado do webhook | 2026-10-15 |
 | [0015](0015-api-de-admin.md) | API de admin com cobertura total do painel, chaves com papel, referência Scalar e um MCP derivado do OpenAPI | 2026-10-15 |
-
 | [0016](0016-entregas-de-captura.md) | Entregas de captura preservam fato, finalidade e destino sem fabricar PDF | 2026-10-20 |
 
 Todas estão com status **aceita**, menos a 0004, **substituída** pela 0013.
