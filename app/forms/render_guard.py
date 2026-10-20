@@ -1,30 +1,21 @@
-"""Prazo, e quando se pede teto de memória, para renderizar um template ou um PDF.
+"""Prazo e teto opcional de memória de um trecho Python, usado pelos templates Jinja.
 
-O Jinja e o WeasyPrint rodam na thread de quem pede (uma requisição, uma task do worker) e, sozinhos,
-não têm prazo nem teto: um template feito para pesar (laços aninhados sem saída, um texto que dobra a
-cada volta) ou um HTML de 800 bytes que vira cem mil parágrafos prende a thread, e a do PDF ainda segura
-o lock de renderização, então todo PDF do processo espera.
+O Jinja roda na thread de quem pede (requisição ou task). Uma thread vigia relógio e memória;
+passando do limite, agenda `RenderAborted` com `PyThreadState_SetAsyncExc`. O guarda traduz a
+interrupção em `RenderLimit`, com mensagem fixa, e encerra a vigia antes de devolver o controle.
+Uma chamada longa de C só recebe a interrupção ao retornar ao interpretador.
 
-`run_within_limits` roda um trecho com o prazo e, se pedido, o teto de memória. Uma thread vigia o
-relógio e a memória do processo e, passando de um dos dois, interrompe a thread que renderiza
-(`PyThreadState_SetAsyncExc`): o trecho termina com `RenderLimit`, de mensagem fixa, sem nenhum dado da
-lead. A interrupção chega entre dois bytecodes, e o Jinja e quase todo o WeasyPrint são Python, então
-ela pega o laço sem fim e a renderização lenta; uma única chamada de C longa (a multiplicação de dois
-números enormes, uma linha de texto que o Pango demora a quebrar) termina antes da interrupção chegar.
+A interrupção assíncrona também pode atingir callbacks de limpeza que não propagam exceções.
+Por isso o motor PDF não usa este guarda: `app.adapters.pdf_process` o executa num processo
+exec descartável e corta o processo inteiro, preservando a thread solicitante e o próximo PDF.
 
-O teto de memória é o **crescimento** da memória residente do processo desde o começo do trecho, não o
-que o trecho aloca sozinho: outra thread que alocar muito ao mesmo tempo (o otimizador de imagens, com
-até 40 MP) também conta, e a tiraria de uma renderização inocente. Por isso só quem roda sozinho, com o
-lock de renderização, o pede (o PDF); o template, que roda em qualquer thread do servidor, fica só com
-o prazo. No Linux a leitura é a memória residente de agora (`/proc/self/statm`); no macOS e nos outros,
-o pico dela, que só sobe, e então só se vê crescimento acima do maior pico anterior do processo. O teto
-não impede uma alocação enorme de uma vez só (ela já aconteceu quando a thread vigia): corta a que cresce
-aos poucos, que é a que satura o servidor.
+O teto opcional mede crescimento residente do processo inteiro, incluindo outras threads.
+No Linux lê `/proc/self/statm`; no macOS usa o pico residente, que não diminui. Templates pedem
+apenas prazo, para alocações de outras requisições não interromperem uma renderização inocente.
 
-A interrupção pode chegar tarde, até no meio da limpeza do próprio guarda, e a thread vigia nunca pode
-sobrar: ela tiraria o prazo de uma renderização de outra pessoa, porque o guarda roda em threads de um
-pool. Por isso a parada dela começa por uma atribuição só (`stop[0] = True`), sem chamada nem salto,
-onde o interpretador não entrega interrupções, e o resto da limpeza se repete até terminar.
+A parada da vigia começa por uma atribuição só (`stop[0] = True`), sem chamada nem salto, e a
+limpeza se repete se chegar uma interrupção tardia. Uma vigia não pode sobreviver ao guarda:
+as threads solicitantes pertencem a pools e depois atendem outra pessoa.
 """
 
 from __future__ import annotations

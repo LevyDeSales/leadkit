@@ -22,8 +22,9 @@ from test_admin_drafts import Fields, ScriptedLlm, TestTrigger, editor, hidden, 
 from test_admin_forms import import_form, section_of
 from test_admin_scoring import DEFINITION, SCORING, SLUG, scoring_fields
 from test_public import form_fields, tags, text
-from test_weasyprint_pdf import squash, text_of
+from test_weasyprint_pdf import fonts_of, squash, text_of
 
+from app.adapters import weasyprint_pdf
 from app.adapters.weasyprint_pdf import WeasyPrintRenderer
 from app.admin.views import DRAFT_REF
 from app.api.main import create_app
@@ -442,6 +443,25 @@ def test_the_pdf_preview_renders_the_text_on_the_page_without_saving_it(
     pdf = squash(text_of(response.content))
     assert "Rascunhodeteste" in pdf and squash(PUBLISHED["examples"]["plan"]["titulo"]) in pdf
     assert stored(deps)["pdf"]["html"] == PUBLISHED["pdf"]["html"]  # a prévia não grava
+
+
+def test_a_slow_pdf_preview_shows_a_controlled_error_and_the_next_keeps_text_and_fonts(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(weasyprint_pdf, "PDF_SECONDS", 1.0)
+    many = "{% for i in range(100000) %}<p>x</p>{% endfor %}"
+
+    slow = preview(client, with_html(many))
+
+    assert slow.status_code == 422
+    assert "O PDF não foi gerado: o PDF passou do prazo de 1 s." in text(slow.text)
+    assert "Traceback" not in slow.text
+    monkeypatch.setattr(weasyprint_pdf, "PDF_SECONDS", 30.0)
+    following = preview(client)
+    assert following.status_code == 200
+    assert squash(PUBLISHED["examples"]["plan"]["titulo"]) in squash(text_of(following.content))
+    assert fonts_of(following.content) and all(fonts_of(following.content).values())
 
 
 def test_the_pdf_preview_can_be_framed_by_the_admin_only(client: TestClient) -> None:
