@@ -130,6 +130,7 @@ def test_the_address_changes_before_the_first_publication_and_takes_the_destinat
                 secret_sealed="lacrado",
                 created_by="testes",
                 updated_by="testes",
+                purpose="internal",
             )
         )
     moved = {**scratch.document, "slug": "gestao-2027"}

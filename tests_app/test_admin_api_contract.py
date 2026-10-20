@@ -145,6 +145,11 @@ LEAD_STATE: dict[str, frozenset[str]] = {
     ),
     "get_job": frozenset(
         {
+            "deliveries.audience",
+            "deliveries.authorization_origin",
+            "deliveries.config_version",
+            "deliveries.current_config_version",
+            "deliveries.dispatch_no",
             "current_pdf",
             "current_pdf.accessible",
             "current_pdf.attempt",
@@ -207,6 +212,9 @@ LEAD_STATE: dict[str, frozenset[str]] = {
         }
     ),
     "download_job_pdf": frozenset(),
+    "get_job_plan_projection": frozenset(
+        {"public_id", "form_slug", "form_version", "form_version_number", "attempt", "audience"}
+    ),
 }
 
 

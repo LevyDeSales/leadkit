@@ -50,3 +50,15 @@ Sucesso significa confirmação do transporte, sem comprovar leitura pela partic
 ou geração de PDF. A ativação da conexão se aplica à finalidade do formulário publicado.
 
 **Retenção:** prazos para expirar links, remover PDFs e excluir dados do pedido.
+
+**Audiência do plano:** destinatária da representação do plano: participante recebe os campos
+públicos; interna recebe o documento integral autorizado.
+
+**Projeção do plano:** representação do documento para uma audiência, conforme a classificação
+na versão do formulário que gerou o plano. Não altera o plano original nem concede acesso a ele.
+
+**Finalidade do receptor:** escolha entre uso interno e participante para os dados enviados a uma
+integração. É distinta da finalidade de geração do formulário e do destino de conclusão.
+
+**Autorização da entrega:** vínculo entre o fato a entregar, sua tentativa, a audiência e a revisão
+do mesmo receptor. Repetir uma entrega não muda sua audiência nem a redireciona.

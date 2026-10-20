@@ -50,6 +50,7 @@ jobs:
               - 'app/migrations/**'
               - 'app/settings.py'
               - 'app/db.py'
+              - 'app/deployment_contract.py'
               - 'app/hatchet_client.py'
               - 'app/worker.py'
               - 'app/api/main.py'
@@ -331,14 +332,14 @@ jobs:
 
       - name: Write the config folder like the server's
         run: |
-          # Como ~/gerador-de-planos/swarm: cópias do stack.yaml e do deploy.sh, e o app.env e o
+          # Como ~/gerador-de-planos/swarm: stack.yaml, deploy.sh, rollout.py, app.env e
           # db.env feitos dos modelos. Escritos dentro da imagem, que tem o argon2. Os segredos são
           # sorteados a cada execução, então nada com cara de segredo entra no repositório; o hash
           # do admin entra sem aspas, como o guia pede.
           conf="$RUNNER_TEMP/swarm"
           echo "CONF=$conf" >> "$GITHUB_ENV"
           mkdir -p "$conf"
-          cp deploy/swarm/stack.yaml deploy/swarm/deploy.sh "$conf/"
+          cp deploy/swarm/stack.yaml deploy/swarm/deploy.sh deploy/swarm/rollout.py "$conf/"
           docker run --rm -i --user "$(id -u):$(id -g)" --env DOMAIN --env CI_STACK_NAME \
             -v "$PWD/deploy/swarm:/modelos:ro" -v "$conf:/conf" -v "$RUNNER_TEMP:/out" \
             gerador-planos:ci python - /modelos /conf /out <<'PY'
@@ -402,6 +403,312 @@ jobs:
           grep -qx "STACK_NAME=$CI_STACK_NAME" "$conf/app.env"
           chmod 600 "$conf/app.env" "$conf/db.env"
           ls -l "$conf"
+
+      - name: Rehearse real pre-projection bootstrap and forward recovery
+        run: |
+          umask 077
+          bootstrap_role=none
+          bootstrap_error() {
+            local failure_status="$1" failure_line="$2" failure_role=none
+            case "${bootstrap_role:-}" in api|worker) failure_role="$bootstrap_role" ;; esac
+            printf '{"stage":"bootstrap_error","line":%d,"exit_code":%d,"role":"%s"}\n' \
+              "$failure_line" "$failure_status" "$failure_role" || true
+            exit "$failure_status"
+          }
+          trap 'bootstrap_error "$?" "$LINENO"' ERR
+          old_sha=7e199a5f0e2a6cf538f99d486cef0cd9f21bc783
+          old_image=leadkit:compat-old-7e
+          compat=leadkit-compat
+          folder="$RUNNER_TEMP/swarm-compat"
+          source="$RUNNER_TEMP/source-compat-old"
+          mkdir -p "$folder/bin" "$source"
+          # Fonte pública fixada, sem credenciais nem configuração de instalação.
+          curl --fail --silent --show-error --location --retry 3 \
+            "https://github.com/LevyDeSales/leadkit/archive/$old_sha.tar.gz" \
+            --output "$RUNNER_TEMP/compat-old.tar.gz"
+          tar -xzf "$RUNNER_TEMP/compat-old.tar.gz" --strip-components=1 -C "$source"
+          # Só a fonte pública: COPY preserva modos e a imagem termina em USER app.
+          # O umask077 deve proteger a configuração, sem tornar o código ilegível ao UID10001.
+          find "$source" -type d -exec chmod 755 {} +
+          find "$source" -type f -exec chmod 644 {} +
+          docker build --quiet --tag "$old_image" "$source"
+          cp "$CONF/stack.yaml" "$CONF/deploy.sh" "$CONF/rollout.py" "$CONF/app.env" "$CONF/db.env" "$folder/"
+          python3 - "$folder/app.env" "$compat" <<'PY'
+          import re
+          import sys
+          from pathlib import Path
+          from urllib.parse import urlsplit, urlunsplit
+          path = Path(sys.argv[1])
+          stack = sys.argv[2]
+          text = path.read_text()
+          values = dict(line.split("=", 1) for line in text.splitlines() if line and not line.startswith("#") and "=" in line)
+          url = urlsplit(values["DATABASE_URL"])
+          credentials = url.netloc.rsplit("@", 1)[0]
+          changes = {
+              "STACK_NAME": stack,
+              "PUBLIC_BASE_URL": "https://compat.ci.test",
+              "DATABASE_URL": urlunsplit((url.scheme, f"{credentials}@{stack}_db:{url.port or 5432}", url.path, url.query, url.fragment)),
+              "HATCHET_CLIENT_NAMESPACE": "ci-compat-",
+          }
+          for name, value in changes.items():
+              if re.search(rf"^{name}=", text, flags=re.M):
+                  text = re.sub(rf"^{name}=.*$", lambda _: f"{name}={value}", text, flags=re.M)
+              else:
+                  text += f"\n{name}={value}\n"
+          path.write_text(text)
+          PY
+          chmod 600 "$folder/app.env" "$folder/db.env"
+          cleanup_compat() {
+            docker stack rm "$compat" >/dev/null 2>&1 || true
+            for _ in $(seq 1 60); do
+              if ! docker network inspect "${compat}_internal" >/dev/null 2>&1; then break; fi
+              sleep 2
+            done
+            docker volume rm "${compat}_pgdata" >/dev/null 2>&1 || true
+          }
+          trap cleanup_compat EXIT
+          cd "$folder"
+          printf 'services:\n  api:\n    deploy:\n      replicas: 0\n  worker:\n    deploy:\n      replicas: 0\n' > paused.yaml
+          IMAGE="$old_image" STACK="$compat" DOMAIN=compat.ci.test \
+            docker stack deploy --detach=false --resolve-image never -c stack.yaml -c paused.yaml "$compat"
+          for _ in $(seq 1 60); do
+            db=$(docker ps -q -f "label=com.docker.swarm.service.name=${compat}_db" | head -n 1)
+            if [ -n "$db" ] && [ "$(docker inspect --format '{{.State.Health.Status}}' "$db")" = healthy ]; then break; fi
+            sleep 2
+           done
+          test -n "$db"
+          test "$(docker inspect --format '{{.State.Health.Status}}' "$db")" = healthy
+          psql_compat() { docker exec "$db" sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "$1"' sh "$1"; }
+          if docker run --rm --network "${compat}_internal" --env-file app.env "$old_image" migrate \
+            > "$RUNNER_TEMP/compat-old-migrate.log" 2>&1; then
+            :
+          else
+            migration_exit=$?
+            # O log bruto pode conter DSN, parâmetros SQL ou credenciais: nunca o publique.
+            # Só categorias fixas distinguem a próxima investigação; a falha continua fatal.
+            python3 - "$RUNNER_TEMP/compat-old-migrate.log" "$migration_exit" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          text = Path(sys.argv[1]).read_text(errors="replace").lower()
+          exit_code = int(sys.argv[2])
+          categories = (
+              ("database_authentication", ("password authentication failed", "no pg_hba.conf entry")),
+              ("database_dns", ("could not translate host name", "name or service not known", "temporary failure in name resolution")),
+              ("database_unavailable", ("connection refused", "server closed the connection unexpectedly", "database system is starting up")),
+              ("module_missing", ("modulenotfounderror:", "importerror:")),
+              ("schema_guard", ("revisão incompatível", "estrutura incompatível", "banco ocupado sem marcador", "a ponte exige postgresql 16")),
+          )
+          category = "docker_run" if exit_code in (125, 126, 127) else next(
+              (name for name, markers in categories if any(marker in text for marker in markers)),
+              "unclassified",
+          )
+          print(json.dumps({"stage": "historical_migration", "exit_code": exit_code, "category": category}))
+          PY
+            exit "$migration_exit"
+          fi
+          test "$(psql_compat 'select version_num from alembic_version')" = 0015_capture_delivery
+          IMAGE="$old_image" STACK="$compat" DOMAIN=compat.ci.test \
+            docker stack deploy --detach=false --resolve-image never -c stack.yaml "$compat"
+          : > old-containers
+          # API e worker históricos reais, ligados somente ao Hatchet Lite local do runner.
+          # Não se criam pedidos, nem chamadas LLM/S3/webhook ou tasks com dados de lead.
+          for role in api worker; do
+            bootstrap_role="$role"
+            task=$(docker service ps -q --filter desired-state=running "${compat}_$role" | head -n 1)
+            test -n "$task"
+            container=$(docker inspect --type task --format '{{.Status.ContainerStatus.ContainerID}}' "$task")
+            test -n "$container"
+            for _ in $(seq 1 90); do
+              [ "$(docker inspect --format '{{.State.Health.Status}}' "$container")" = healthy ] && break
+              sleep 2
+            done
+            test "$(docker inspect --format '{{.State.Health.Status}}' "$container")" = healthy
+            test "$(docker inspect --format '{{.State.Running}}' "$container")" = true
+            echo "$container" >> old-containers
+            printf '{"stage":"historical_service_ready","role":"%s"}\n' "$role"
+          done
+          bootstrap_role=none
+          # Baseline privada só com IDs/estado/imagem imutável; a janela antecede a observação.
+          python3 - "$folder" "$compat" <<'PYBASE'
+          import json
+          import sys
+          from pathlib import Path
+          from rollout import Rollout
+          rollout = Rollout(sys.argv[1], "", sys.argv[2], False)
+          rollout.node = rollout.docker("info", "--format", "{{.Swarm.NodeID}}").stdout.strip()
+          roles = {role: rollout.observe(role) for role in ("api", "worker")}
+          Path("exit-baseline.json").write_text(json.dumps({"node": rollout.node, "since": rollout.observed_since, "roles": roles}))
+          PYBASE
+          export CI_REAL_DOCKER="$(command -v docker)" CI_COMPAT_STACK="$compat" CI_COMPAT_FOLDER="$folder"
+          cat > bin/docker <<'SH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          record_operation() {
+            local operation=other
+            case "$1 ${2:-}" in
+              "image inspect") operation=image.inspect ;;
+              "image tag") operation=image.tag ;;
+              "service inspect") operation=service.inspect ;;
+              "service ls") operation=service.ls ;;
+              "service ps") operation=service.ps ;;
+              "service scale") operation=service.scale ;;
+              "service update") operation=service.update ;;
+              "container wait") operation=container.wait ;;
+              "network inspect") operation=network.inspect ;;
+              "node inspect") operation=node.inspect ;;
+              "stack deploy") operation=stack.deploy ;;
+              "inspect --type")
+                case "${3:-}" in container) operation=container.inspect ;; task) operation=task.inspect ;; esac ;;
+              "inspect --format") operation=container.inspect ;;
+              "info "*) operation=info ;;
+              "ps "*) operation=container.ls ;;
+              "events "*) operation=container.events ;;
+              "run "*)
+                case "${@: -1}" in
+                  capability|status|begin|attest|migrate) operation="run.${@: -1}" ;;
+                esac ;;
+            esac
+            # Uma falha do checkpoint não substitui a operação ou seu exit code.
+            { printf '%s\n' "$operation" > "$CI_COMPAT_FOLDER/last-docker-operation"; } 2>/dev/null || true
+          }
+          observed_docker() {
+            record_operation "$@"
+            "$CI_REAL_DOCKER" "$@"
+          }
+          container_stopped() {
+            # Reusa o helper e sua prova positiva; nenhum stderr/objeto do daemon sai no job.
+            python3 - "$CI_COMPAT_FOLDER" "$CI_COMPAT_STACK" "$1" <<'PYEXIT'
+          import json
+          import sys
+          from pathlib import Path
+          sys.path.insert(0, sys.argv[1])
+          from rollout import Rollout, TERMINAL
+          try:
+              baseline = json.loads((Path(sys.argv[1]) / "exit-baseline.json").read_text())
+              rollout = Rollout(sys.argv[1], "", sys.argv[2], False)
+              rollout.node, rollout.observed_since = baseline["node"], baseline["since"]
+              if type(rollout.observed_since) is not int or rollout.observed_since <= 0: raise ValueError
+              if rollout.docker("info", "--format", "{{.Swarm.NodeID}}").stdout.strip() != rollout.node: raise ValueError
+              node = rollout.decoded("node", "inspect", rollout.node)[0]
+              if node["Status"]["State"] != "ready" or node.get("ManagerStatus", {}).get("Reachability") != "reachable": raise ValueError
+              rollout.exit_proofs = baseline.get("proofs", {})
+              selected = None
+              for role, rows in baseline["roles"].items():
+                  for row in rows:
+                      cid = row["container_id"]
+                      rollout.observed_images[cid] = row["image"]
+                      rollout.tracked[role][row["id"]] = {"ID": row["id"], "NodeID": row["node_id"],
+                          "DesiredState": "running", "Status": {"State": row["state"], "ContainerStatus": {"ContainerID": cid}}}
+                      if cid == sys.argv[3]: selected = role
+              if selected is None: raise ValueError
+              row = next(row for row in rollout.observe(selected) if row["container_id"] == sys.argv[3])
+              if row["running"] or row["state"] not in TERMINAL: raise ValueError
+              baseline["proofs"] = rollout.exit_proofs
+              (Path(sys.argv[1]) / "exit-baseline.json").write_text(json.dumps(baseline))
+          except Exception:
+              raise SystemExit(1) from None
+          PYEXIT
+          }
+          record_operation "$@"
+          if [[ "$1" == ci-prove-stopped ]]; then
+            container_stopped "$2"
+            exit 0
+          fi
+          if [[ "$1" == run && "${@: -1}" == migrate ]]; then
+            : > "$CI_COMPAT_FOLDER/before-ddl"
+            for role in api worker; do
+              service="${CI_COMPAT_STACK}_$role"
+              test "$(observed_docker service inspect --format '{{.Spec.Mode.Replicated.Replicas}}' "$service")" = 0
+              test "$(observed_docker service inspect --format '{{.PreviousSpec.Mode.Replicated.Replicas}}' "$service")" = 0
+              observed_docker service inspect --format '{{.ID}} {{.Version.Index}} {{.Spec.Mode.Replicated.Replicas}} {{.PreviousSpec.Mode.Replicated.Replicas}}' "$service" >> "$CI_COMPAT_FOLDER/before-ddl"
+            done
+            while read -r container; do
+              container_stopped "$container"
+              echo "$container stopped" >> "$CI_COMPAT_FOLDER/before-ddl"
+            done < "$CI_COMPAT_FOLDER/old-containers"
+            observed_docker "$@"
+            touch "$CI_COMPAT_FOLDER/ddl-committed-launcher-failed"
+            exit 42
+          fi
+          exec "$CI_REAL_DOCKER" "$@"
+          SH
+          chmod 700 bin/docker
+          if env -u DOMAIN -u STACK PATH="$folder/bin:$PATH" IMAGE=gerador-planos:ci ./deploy.sh > first-adoption.log 2>&1; then
+            echo 'A falha controlada após DDL deveria interromper a primeira adoção'; exit 1
+          else
+            adoption_exit=$?
+          fi
+          # A recusa anterior ao DDL também é falha: diagnostique sem publicar o log privado.
+          python3 - "$adoption_exit" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          text = Path("first-adoption.log").read_text(errors="replace")
+          reasons = (
+              ("inventory_changed", "O inventário de tasks mudou durante a coleta"),
+              ("old_process_alive", "Um processo antigo ainda está em saída"),
+              ("container_unidentified", "Há container sem task identificável"),
+              ("container_unobserved", "Uma task não tem container observável"),
+              ("remote_task", "Há task em outro nó ou nó desconhecido"),
+              ("docker_operation", "Docker recusou uma operação"),
+              ("docker_unavailable", "Docker indisponível ou operação sem conclusão"),
+              ("image_contract", "A imagem não comprova contrato1"),
+              ("database_contract", "O banco não confirmou o contrato"),
+              ("pause_unconfirmed", "não ficou pausado; não execute a migration"),
+              ("migration_failure", "as migrations falharam"),
+          )
+          reason = next((code for code, marker in reasons if marker in text), "unclassified")
+          operations = {"image.inspect", "image.tag", "service.inspect", "service.ls", "service.ps",
+                        "service.scale", "service.update", "container.inspect", "container.wait", "container.ls",
+                        "task.inspect", "network.inspect", "node.inspect", "stack.deploy", "info", "other",
+                        "run.capability", "run.status", "run.begin", "run.attest", "run.migrate", "container.events"}
+          checkpoint = Path("last-docker-operation")
+          operation = checkpoint.read_text().strip() if checkpoint.is_file() else "unknown"
+          if operation not in operations:
+              operation = "unknown"
+          print(json.dumps({"stage": "first_adoption", "exit_code": int(sys.argv[1]), "reason": reason,
+                            "last_operation": operation,
+                            "before_ddl": Path("before-ddl").is_file(),
+                            "ddl_committed": Path("ddl-committed-launcher-failed").is_file()}))
+          PY
+          test -s before-ddl
+          test -e ddl-committed-launcher-failed
+          cat before-ddl
+          test "$(psql_compat 'select version_num from alembic_version')" = 0016_plan_audiences
+          test "$(psql_compat "select minimum_contract || ':' || phase from deployment_contract where id=1")" = 1:blocked
+          for role in api worker; do
+            bootstrap_role="$role"
+            test "$(docker service inspect --format '{{.Spec.Mode.Replicated.Replicas}}' "${compat}_$role")" = 0
+            test "$(docker service inspect --format '{{.PreviousSpec.Mode.Replicated.Replicas}}' "${compat}_$role")" = 0
+          done
+          bootstrap_role=none
+          versions() { docker service inspect --format '{{.ID}} {{.Version.Index}}' "${compat}_api" "${compat}_worker"; }
+          before=$(versions)
+          if env -u DOMAIN -u STACK IMAGE="$old_image" ./deploy.sh > refuse-old.log 2>&1; then
+            echo 'Imagem antiga não pode voltar após0016'; exit 1
+          fi
+          test "$(versions)" = "$before"
+          test "$(psql_compat "select minimum_contract || ':' || phase from deployment_contract where id=1")" = 1:blocked
+          env -u DOMAIN -u STACK IMAGE=gerador-planos:ci ./deploy.sh
+          test "$(psql_compat "select minimum_contract || ':' || phase from deployment_contract where id=1")" = 1:verified
+          candidate=$(docker image inspect --format '{{.Id}}' gerador-planos:ci)
+          for role in api worker; do
+            bootstrap_role="$role"
+            current=$(docker service inspect --format '{{.Spec.TaskTemplate.ContainerSpec.Image}}' "${compat}_$role")
+            previous=$(docker service inspect --format '{{.PreviousSpec.TaskTemplate.ContainerSpec.Image}}' "${compat}_$role")
+            test "$(docker image inspect --format '{{.Id}}' "$current")" = "$candidate"
+            test "$(docker image inspect --format '{{.Id}}' "$previous")" = "$candidate"
+            test "$(docker service inspect --format '{{.Spec.Mode.Replicated.Replicas}}' "${compat}_$role")" = 1
+            test "$(docker service inspect --format '{{.PreviousSpec.Mode.Replicated.Replicas}}' "${compat}_$role")" = 1
+          done
+          bootstrap_role=none
+          while read -r container; do
+            "$folder/bin/docker" ci-prove-stopped "$container"
+          done < old-containers
+          echo 'Bootstrap real: saída antesDDL, falha apósDDL, recusaold0 e retomadacap1 comprovadas'
 
       - name: Check that two stack names never share a Traefik name
         run: |
@@ -711,21 +1018,72 @@ jobs:
 
       - name: Run deploy.sh on the stack deployed by hand
         run: |
-          # A primeira vez do deploy.sh no servidor, sem nada novo: nenhuma réplica é trocada, nem a
-          # do Postgres.
+          # A adoção pode fixar a referência da imagem; o DB e o código binário não mudam.
+          # Só depois da adoção a chamada idêntica deve preservar todas as tasks.
           cd "$CONF"
           running() {
-            docker service ps --filter desired-state=running --format '{{.Name}} {{.ID}}' \
+            docker service ps --no-trunc --filter desired-state=running --format '{{.Name}} {{.ID}}' \
               gerador-planos_db gerador-planos_api gerador-planos_worker | sort
           }
+          expected=$(docker image inspect --format '{{.Id}}' gerador-planos:ci)
+          runtime() {
+            python3 - "$expected" "${1:-initial}" <<'PY'
+          import json
+          import re
+          import subprocess
+          import sys
+
+          def docker(*args):
+              result = subprocess.run(["docker", *args], capture_output=True, text=True, timeout=30)
+              if result.returncode: raise ValueError
+              return result.stdout.strip()
+
+          try:
+              target, mode = sys.argv[1:]
+              if not re.fullmatch(r"sha256:[a-f0-9]{64}", target): raise ValueError
+              db = None
+              fleet = []
+              metadata = '{"id":{{json .Id}},"image":{{json .Image}},"running":{{json .State.Running}},"health":{{json .State.Health.Status}},"started":{{json .State.StartedAt}},"restarts":{{json .RestartCount}}}'
+              for role in ("db", "api", "worker"):
+                  service = f"gerador-planos_{role}"
+                  replicas = int(docker("service", "inspect", "--format", "{{.Spec.Mode.Replicated.Replicas}}", service))
+                  ids = docker("service", "ps", "-q", "--no-trunc", "--filter", "desired-state=running", service).split()
+                  if replicas < 1 or len(ids) != replicas or len(set(ids)) != replicas: raise ValueError
+                  if role == "db" and replicas != 1: raise ValueError
+                  for task in ids:
+                      cid = docker("inspect", "--type", "task", "--format", "{{.Status.ContainerStatus.ContainerID}}", task)
+                      if not re.fullmatch(r"[a-f0-9]{64}", cid): raise ValueError
+                      item = json.loads(docker("inspect", "--type", "container", "--format", metadata, cid))
+                      if item["id"] != cid or item["running"] is not True or item["health"] != "healthy": raise ValueError
+                      if role != "db" and item["image"] != target: raise ValueError
+                      if not isinstance(item["started"], str) or not item["started"]: raise ValueError
+                      if type(item["restarts"]) is not int or item["restarts"] < 0: raise ValueError
+                      fleet.append({"role": role, "task": task, "container": cid, "started": item["started"], "restarts": item["restarts"]})
+                      if role == "db":
+                          db = {"task": task, "container": cid, "started": item["started"], "restarts": item["restarts"]}
+              if mode in {"verified", "snapshot"}:
+                  query = "select minimum_contract || ':' || phase from deployment_contract where id=1"
+                  if docker("exec", db["container"], "sh", "-c", 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "$1"', "sh", query) != "1:verified": raise ValueError
+              print(json.dumps(sorted(fleet, key=lambda row: (row["role"], row["task"])) if mode == "snapshot" else db, sort_keys=True))
+          except Exception:
+              print("A frota não confirmou identidade, saúde ou contrato do ensaio.", file=sys.stderr)
+              raise SystemExit(1) from None
+          PY
+          }
+          db_before=$(runtime)
+          IMAGE=gerador-planos:ci ./deploy.sh
+          test "$(runtime verified)" = "$db_before"
+          stable=$(runtime snapshot)
           before=$(running)
           IMAGE=gerador-planos:ci ./deploy.sh
           after=$(running)
           if [ "$after" != "$before" ]; then
-            echo "réplicas trocadas:"
+            echo "réplicas trocadas na chamada idêntica:"
             diff <(echo "$before") <(echo "$after") || true
             exit 1
           fi
+          test "$(runtime verified)" = "$db_before"
+          test "$(runtime snapshot)" = "$stable"
 
       - name: Update, break and go back with deploy.sh without dropping requests
         run: |
@@ -745,15 +1103,38 @@ jobs:
           }
           db() { docker ps -q -f label=com.docker.swarm.service.name=gerador-planos_db | head -n 1; }
           psql_db() { docker exec "$(db)" sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "$1"' sh "$1"; }
+          role_tasks() { docker service ps -q --no-trunc --filter desired-state=running "gerador-planos_$1" | sort; }
+          assert_image() {
+            expected=$(docker image inspect --format '{{.Id}}' "$1")
+            for role in api worker; do
+              tasks=$(role_tasks "$role")
+              test -n "$tasks"
+              for task in $tasks; do
+                container=$(docker inspect --type task --format '{{.Status.ContainerStatus.ContainerID}}' "$task")
+                test -n "$container"
+                test "$(docker inspect --type container --format '{{.Image}}' "$container")" = "$expected"
+                test "$(docker inspect --type container --format '{{.State.Health.Status}}' "$container")" = healthy
+              done
+            done
+          }
           versions() { docker service inspect --format '{{.Spec.Name}} {{.Version.Index}}' gerador-planos_api gerador-planos_worker; }
 
           echo "::group::1. versão nova: troca sem queda"
-          docker tag gerador-planos:ci gerador-planos:ci-novo
+          # Outra tag do mesmo conteúdo vira o mesmo pin; o ensaio precisa de uma imagem distinta.
+          printf 'FROM gerador-planos:ci\nLABEL ci.build=atualizacao\n' | docker build --quiet --tag gerador-planos:ci-novo - > /dev/null
+          test "$(docker image inspect --format '{{.Id}}' gerador-planos:ci-novo)" != "$(docker image inspect --format '{{.Id}}' gerador-planos:ci)"
+          api_before=$(role_tasks api)
+          worker_before=$(role_tasks worker)
+          db_before=$(role_tasks db)
+          test -n "$api_before" && test -n "$worker_before" && test -n "$db_before"
           IMAGE=gerador-planos:ci-novo ./deploy.sh
+          test "$(role_tasks api)" != "$api_before"
+          test "$(role_tasks worker)" != "$worker_before"
+          test "$(role_tasks db)" = "$db_before"
           for service in api worker; do
             echo "$service: $(state "$service"), $(image "$service")"
             test "$(state "$service")" = completed
-            case "$(image "$service")" in gerador-planos:ci-novo*) ;; *) exit 1 ;; esac
+            assert_image gerador-planos:ci-novo
           done
           echo "::endgroup::"
 
@@ -786,9 +1167,8 @@ jobs:
           echo "::endgroup::"
 
           echo "::group::4. volta para a versão anterior com o banco à frente da imagem"
-          # Uma migration que a imagem anterior não conhece, como depois de um deploy com migration
-          # nova. Sem ROLLBACK=1, o deploy.sh para sem mexer na stack, porque o banco também podia
-          # ser de outra linha de migrations; com ele, troca a versão sem migrar.
+          # Status/begin aceitam o piso compatível, mas migrate recusa a revisão desconhecida.
+          # Os serviços não mudam e o gate fica bloqueado; o retorno explícito não roda migration.
           head=$(psql_db 'select version_num from alembic_version')
           psql_db "update alembic_version set version_num = 'ci_futura'"
           before=$(versions)
@@ -798,9 +1178,11 @@ jobs:
             exit 1
           fi
           cat "$RUNNER_TEMP/back-sem-rollback.log"
+          grep -F 'deploy.sh: migrations com ' "$RUNNER_TEMP/back-sem-rollback.log"
           grep -F 'revisão incompatível' "$RUNNER_TEMP/back-sem-rollback.log"
-          grep -F 'a stack não foi mexida' "$RUNNER_TEMP/back-sem-rollback.log"
+          grep -F 'a imagem não foi atualizada' "$RUNNER_TEMP/back-sem-rollback.log"
           test "$(versions)" = "$before"
+          test "$(psql_db "select minimum_contract || ':' || phase from deployment_contract where id=1")" = 1:blocked
           ROLLBACK=1 IMAGE=gerador-planos:ci ./deploy.sh > "$RUNNER_TEMP/back.log" 2>&1 || { cat "$RUNNER_TEMP/back.log"; exit 1; }
           cat "$RUNNER_TEMP/back.log"
           grep -F 'sem migrations' "$RUNNER_TEMP/back.log"
@@ -813,20 +1195,25 @@ jobs:
           for service in api worker; do
             echo "$service: $(state "$service"), $(image "$service")"
             test "$(state "$service")" = completed
-            case "$(image "$service")" in gerador-planos:ci@*|gerador-planos:ci) ;; *) exit 1 ;; esac
+            assert_image gerador-planos:ci
           done
           echo "::endgroup::"
 
-          echo "::group::5. migration que falha: a stack não é mexida"
+          echo "::group::5. banco indisponível no preflight: serviços preservados e nenhuma migration"
+          # A conexão falha em contract(status), antes de begin/migrate ou atualização de serviços.
           before=$(versions)
           sed -i 's|@gerador-planos_db:|@gerador-planos_sem-banco:|' app.env
-          if IMAGE=gerador-planos:ci ./deploy.sh > "$RUNNER_TEMP/migrate.log" 2>&1; then
-            cat "$RUNNER_TEMP/migrate.log"
-            echo "o deploy.sh devia ter parado nas migrations"
+          if IMAGE=gerador-planos:ci ./deploy.sh > "$RUNNER_TEMP/preflight-db.log" 2>&1; then
+            cat "$RUNNER_TEMP/preflight-db.log"
+            echo "o deploy.sh devia ter recusado o banco indisponível no preflight"
             exit 1
           fi
-          cat "$RUNNER_TEMP/migrate.log"
-          grep -F 'a stack não foi mexida' "$RUNNER_TEMP/migrate.log"
+          cat "$RUNNER_TEMP/preflight-db.log"
+          grep -F 'O banco não confirmou o contrato; a stack não foi mexida.' "$RUNNER_TEMP/preflight-db.log"
+          if grep -F 'deploy.sh: migrations com ' "$RUNNER_TEMP/preflight-db.log"; then
+            echo "o preflight indisponível não devia chamar migrations"
+            exit 1
+          fi
           test "$(versions)" = "$before"
           cp "$RUNNER_TEMP/app.env.ok" app.env
           echo "::endgroup::"
@@ -843,16 +1230,15 @@ jobs:
           test "$(versions)" = "$before"
           echo "::endgroup::"
 
-          echo "::group::7. tag reaproveitada para outra imagem: o Swarm não troca, e o deploy.sh acusa"
-          # Mesmo nome, imagem nova: com --resolve-image changed o Swarm fica com a que já tinha.
+          echo "::group::7. tag reaproveitada: o conteúdo verificado fica fixado por identidade"
+          # Mesmo nome e imagem nova: o helper usa referência de conteúdo e confere o ID real.
+          previous=$(docker image inspect --format '{{.Id}}' gerador-planos:ci)
           printf 'FROM gerador-planos:ci\nLABEL ci.build=reaproveitada\n' | docker build --quiet --tag gerador-planos:ci - > /dev/null
-          if IMAGE=gerador-planos:ci ./deploy.sh > "$RUNNER_TEMP/stale.log" 2>&1; then
-            cat "$RUNNER_TEMP/stale.log"
-            echo "o deploy.sh devia ter acusado a réplica com a imagem antiga"
-            exit 1
-          fi
+          test "$(docker image inspect --format '{{.Id}}' gerador-planos:ci)" != "$previous"
+          IMAGE=gerador-planos:ci ./deploy.sh > "$RUNNER_TEMP/stale.log" 2>&1 || { cat "$RUNNER_TEMP/stale.log"; exit 1; }
           cat "$RUNNER_TEMP/stale.log"
-          grep -F 'continua com outra imagem' "$RUNNER_TEMP/stale.log"
+          assert_image gerador-planos:ci
+          grep -F 'contrato participante verificado' "$RUNNER_TEMP/stale.log"
           echo "::endgroup::"
 
           touch "$RUNNER_TEMP/stop-probe"
@@ -877,16 +1263,36 @@ jobs:
       - name: Remove the stack, keep the volume and deploy again with deploy.sh
         run: |
           docker stack rm gerador-planos
+          stack_removed() {
+            local containers services networks
+            cleanup_state=containers_unavailable
+            containers=$(docker ps -aq --no-trunc -f label=com.docker.stack.namespace=gerador-planos 2>/dev/null) || return 1
+            cleanup_state=services_unavailable
+            services=$(docker service ls --filter label=com.docker.stack.namespace=gerador-planos --format '{{.Name}}' 2>/dev/null) || return 1
+            cleanup_state=networks_unavailable
+            networks=$(docker network ls --format '{{.Name}}' 2>/dev/null) || return 1
+            cleanup_state=containers_pending
+            test -z "$containers" || return 1
+            cleanup_state=services_pending
+            test -z "$services" || return 1
+            cleanup_state=network_pending
+            if grep -Fxq gerador-planos_internal <<< "$networks"; then return 1; fi
+            cleanup_state=removed
+            return 0
+          }
           for _ in $(seq 1 60); do
-            if [ -z "$(docker ps -q -f label=com.docker.stack.namespace=gerador-planos)" ] \
-              && ! docker network inspect gerador-planos_internal >/dev/null 2>&1; then
-              break
-            fi
+            if stack_removed; then break; fi
             sleep 2
           done
+          if ! stack_removed; then
+            printf '{"stage":"stack_removal","reason":"%s"}\n' "$cleanup_state"
+            echo 'A remoção da stack não foi comprovada; não recrie os serviços.'
+            exit 1
+          fi
+          printf '{"stage":"stack_removal","reason":"removed"}\n'
           docker volume inspect --format '{{.Name}} continua' gerador-planos_pgdata
-          # Primeiro deploy pelo deploy.sh: sem a rede interna, ele sobe a stack e só depois roda as
-          # migrations, aqui sem nada a fazer, porque o banco do volume já está migrado.
+          # O volume mantém piso1. Sem rede, o helper cria API/worker pausados, aguarda DB/migration
+          # e só depois sobe os runtimes compatíveis; a limpeza anterior não ignora órfãos parados.
           cd "$CONF"
           IMAGE=gerador-planos:ci ./deploy.sh
           for _ in $(seq 1 30); do
@@ -903,7 +1309,7 @@ jobs:
           conf_b="$RUNNER_TEMP/swarm-b"
           echo "CONF_B=$conf_b" >> "$GITHUB_ENV"
           mkdir -p "$conf_b"
-          cp "$CONF/stack.yaml" "$CONF/deploy.sh" "$CONF/app.env" "$CONF/db.env" "$conf_b/"
+          cp "$CONF/stack.yaml" "$CONF/deploy.sh" "$CONF/rollout.py" "$CONF/app.env" "$CONF/db.env" "$conf_b/"
           python3 - "$conf_b/app.env" "$DOMAIN_B" gerador-planos-b <<'PY'
           import re
           import sys

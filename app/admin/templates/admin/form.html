@@ -8,7 +8,7 @@
 <ul class="plan-tree">
   {%- for field in fields %}
   <li>
-    <p class="plan-tree__head"><span class="mono">{{ field.name }}</span><span class="muted">{{ field.kind }}{% if field.optional %} · opcional{% endif %}</span>{% if field.internal %}<span class="badge badge--neutral">{{ m.icon('lock') }}interno</span>{% endif %}</p>
+    <p class="plan-tree__head"><span class="mono">{{ field.name }}</span><span class="muted">{{ field.kind }}{% if field.optional %} · opcional{% endif %}</span>{% if field.internal or field.inherited_internal %}<span class="badge badge--neutral">{{ m.icon('lock') }}{{ "interno" if field.internal else "interno por herança" }}</span>{% endif %}</p>
     {%- if field.description %}<p class="plan-tree__text">{{ field.description }}</p>{% endif %}
     {%- for limit in field.limits %}<p class="muted">{{ limit }}</p>{% endfor %}
     {%- if field.values %}<p class="muted">Valores: {% for value in field.values %}<span class="mono">{{ value }}</span>{{ ", " if not loop.last }}{% endfor %}</p>{% endif %}

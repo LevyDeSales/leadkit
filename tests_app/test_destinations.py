@@ -14,7 +14,7 @@ from cryptography.fernet import Fernet
 from test_admin_destinations import app_logs
 from test_pipeline import run_until_finalize
 
-from app import destinations, pipeline
+from app import destinations, jobs, pipeline
 from app.db import make_engine, make_session_factory
 from app.deps import Deps
 from app.destinations import SecretCipher
@@ -35,6 +35,7 @@ def configure(deps: Deps, form_slug: str | None, url: str) -> str:
             expected_version=0,
             production=False,
             http_confirmed=False,
+            purpose="internal",
         )
     assert saved.secret is not None
     return saved.secret
@@ -92,7 +93,7 @@ def test_a_delivery_being_retried_goes_out_with_the_corrected_url_and_the_curren
     deps: Deps, receiver: Receiver
 ) -> None:
     old_secret = configure(deps, None, receiver.url("/antigo"))
-    _, deliveries = run_until_finalize(deps)
+    job_id, deliveries = run_until_finalize(deps)
     receiver.status = 503
     with pytest.raises(RetryableError):
         pipeline.deliver(deps, deliveries[0])
@@ -107,13 +108,26 @@ def test_a_delivery_being_retried_goes_out_with_the_corrected_url_and_the_curren
             expected_version=1,
             production=False,
             http_confirmed=False,
+            purpose="internal",
         )
     with deps.sessions.begin() as session:
         new_secret = destinations.rotate(
             session, deps.cipher, form_slug=None, actor="operadora", expected_version=2
         )
+    with pytest.raises(RetryableError):
+        pipeline.deliver(deps, deliveries[0])
+    pipeline.mark_delivery_failed(deps, deliveries[0], "delivery_unconfigured")
+    with deps.sessions.begin() as session:
+        assert jobs.resend_delivery(
+            session,
+            job_id,
+            deliveries[0],
+            actor="operadora",
+            expected_config_version=3,
+            expected_attempt=1,
+        )
     receiver.status = 204
-    assert pipeline.deliver(deps, deliveries[0]) == "succeeded"  # a repetição seguinte do Hatchet
+    assert pipeline.deliver(deps, deliveries[0], dispatch_no=2) == "succeeded"
 
     first, second = receiver.requests
     assert (first.path, second.path) == ("/antigo", "/novo")
@@ -121,7 +135,7 @@ def test_a_delivery_being_retried_goes_out_with_the_corrected_url_and_the_curren
     assert second.signed_with(new_secret) and not second.signed_with(old_secret)
 
 
-def test_a_delivery_left_without_destination_waits_for_one_in_its_retries(
+def test_new_delivery_never_falls_back_after_its_pinned_destination_was_removed(
     deps: Deps, receiver: Receiver
 ) -> None:
     configure(deps, None, receiver.url("/padrao"))
@@ -136,13 +150,13 @@ def test_a_delivery_left_without_destination_waits_for_one_in_its_retries(
     with deps.sessions() as session:
         waiting = session.get_one(Delivery, deliveries[0])
     assert (waiting.status, waiting.attempts) == ("pending", 0)
-    assert waiting.last_error == "[delivery_unconfigured] o formulário está sem destino do webhook"
+    assert "destino, revisão ou finalidade não autorizados" in waiting.last_error
     assert receiver.requests == []
 
-    secret = configure(deps, None, receiver.url("/novo"))
-    assert pipeline.deliver(deps, deliveries[0]) == "succeeded"
-    (request,) = receiver.requests
-    assert request.path == "/novo" and request.signed_with(secret)
+    configure(deps, None, receiver.url("/novo"))
+    with pytest.raises(RetryableError):
+        pipeline.deliver(deps, deliveries[0])
+    assert receiver.requests == []
 
 
 def test_a_secret_that_the_key_cannot_open_stops_the_send(deps: Deps, receiver: Receiver) -> None:
@@ -210,7 +224,11 @@ ENV_SECRET = "segredo-falso-que-o-receptor-ja-conhece"
 def with_env_webhook(deps: Deps, url: str, **env: str) -> None:
     """O ambiente de antes do destino no admin: WEBHOOK_URL e WEBHOOK_SECRET no app.env."""
     deps.settings = Settings(  # type: ignore[call-arg]
-        _env_file=None, WEBHOOK_URL=url, WEBHOOK_SECRET=ENV_SECRET, **env
+        _env_file=None,
+        WEBHOOK_URL=url,
+        WEBHOOK_SECRET=ENV_SECRET,
+        WEBHOOK_PURPOSE="internal",
+        **env,
     )
 
 

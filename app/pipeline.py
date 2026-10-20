@@ -7,8 +7,8 @@ pode rodar de novo depois de já ter gravado o resultado.
 from __future__ import annotations
 
 import hashlib
+import re
 import uuid
-from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -22,7 +22,7 @@ from app.deps import Deps
 from app.errors import FailureCode, RetryableError, TerminalError
 from app.forms import FormSpec
 from app.integrations import syncs
-from app.models import Artifact, Delivery, Job, Plan, Submission, utcnow
+from app.models import Artifact, Delivery, Job, Plan, Submission, WebhookDestination, utcnow
 from app.pdf_availability import current_pdf, verify_completion
 from app.pdf_validation import validate_pdf
 from app.submission_identity import identity_from_answers, resolve_identity, submission_form
@@ -144,6 +144,23 @@ def finalize(
     ou sem destino do webhook: são outra saída do pedido, e `pending_syncs` devolve as que a task
     dispara."""
     with deps.sessions.begin() as session:
+        from app.integration_readiness import configuration_lock
+
+        configuration_lock(session, shared=True)
+        metadata = session.execute(
+            sa.select(Submission.form_slug, Job.status, Job.attempt)
+            .join(Job, Job.submission_id == Submission.id)
+            .where(Job.id == job_id)
+        ).first()
+        replay = (
+            metadata is not None and metadata.status == "completed" and metadata.attempt == attempt
+        )
+        if metadata is not None and not replay:
+            configured = destinations.serving(destinations.listing(session), metadata.form_slug)
+            if configured is not None and configured.purpose == "participant":
+                from app.destination_purposes import require_participant_capability
+
+                require_participant_capability(session)
         job = session.scalar(sa.select(Job).where(Job.id == job_id).with_for_update())
         if job is None or job.attempt != attempt or job.status not in ("running", "completed"):
             return []
@@ -159,33 +176,54 @@ def finalize(
             or plan.version != attempt
         ):
             raise TerminalError(FailureCode.RENDER_FAILED, "artefato incompatível com a tentativa")
-        if job.status == "running":
-            verify_completion(session, deps.storage, job, attempt, artifact_id)
+        if job.status == "completed":
+            # A conclusão e suas intenções originais são atômicas; ausência também é definitiva.
+            return _pending_delivery_ids(session, artifact_id)
+        verify_completion(session, deps.storage, job, attempt, artifact_id)
         jobs.complete(session, job_id, attempt)
         session.refresh(job)
         if job.status != "completed" or job.attempt != attempt:
             return []
         submission = session.get_one(Submission, job.submission_id)
         syncs.enqueue(session, submission.form_slug, job_id, artifact_id)
-        if not destinations.configured(session, submission.form_slug):
+        destination = session.scalar(
+            sa.select(WebhookDestination)
+            .where(destinations._serving(submission.form_slug))
+            .order_by(WebhookDestination.form_slug.is_(None))
+            .limit(1)
+        )
+        if destination is None:
             return []
+        if destination.purpose == "participant":
+            from app.destination_purposes import require_participant_capability
+
+            require_participant_capability(session)
         session.execute(
             insert(Delivery)
             .values(
                 job_id=job_id,
                 artifact_id=artifact_id,
+                webhook_destination_id=destination.id,
+                config_version=destination.version,
+                audience=destination.purpose,
+                authorization_origin="explicit",
+                authorized_attempt=attempt,
                 destination=WEBHOOK_DESTINATION,
                 event=PLAN_COMPLETED_EVENT,
             )
             .on_conflict_do_nothing(constraint="uq_deliveries_artifact_destination")
         )
-        return list(
-            session.scalars(
-                sa.select(Delivery.id).where(
-                    Delivery.artifact_id == artifact_id, Delivery.status == "pending"
-                )
+        return _pending_delivery_ids(session, artifact_id)
+
+
+def _pending_delivery_ids(session: Any, artifact_id: uuid.UUID) -> list[uuid.UUID]:
+    return list(
+        session.scalars(
+            sa.select(Delivery.id).where(
+                Delivery.artifact_id == artifact_id, Delivery.status == "pending"
             )
         )
+    )
 
 
 def pending_syncs(deps: Deps, artifact_id: uuid.UUID) -> list[uuid.UUID]:
@@ -194,105 +232,167 @@ def pending_syncs(deps: Deps, artifact_id: uuid.UUID) -> list[uuid.UUID]:
         return syncs.pending_for_artifact(session, artifact_id)
 
 
-def deliver(deps: Deps, delivery_id: uuid.UUID) -> str:
-    """Envia uma entrega ao destino do webhook, resolvido agora (o do formulário, senão o padrão)
-    e com o segredo vigente. Devolve "succeeded" ou "already_succeeded". Sem destino, ou com um
-    segredo que não abre, a entrega espera nas repetições do Hatchet, com o motivo registrado."""
-    try:
-        outgoing = _outgoing(deps, delivery_id)
-    except (RetryableError, TerminalError) as exc:
-        _record_error(deps, delivery_id, exc)
-        raise
-    if outgoing is None:
-        return "already_succeeded"
+def deliver(deps: Deps, delivery_id: uuid.UUID, dispatch_no: int = 1) -> str:
+    """Revalida sob trava e mantém autorização estável até o transporte limitado concluir."""
+    from app.integration_readiness import configuration_lock
 
-    destination = outgoing.destination
-    try:
-        status = deps.webhook.send(
-            destination.url, destination.secret, outgoing.event, outgoing.event_id, outgoing.payload
-        )
-    except Exception as exc:
-        _record_error(deps, delivery_id, exc)
-        raise
-
+    failure = None
     with deps.sessions.begin() as session:
-        session.execute(
-            sa.update(Delivery)
-            .where(Delivery.id == delivery_id)
-            .values(
-                status="succeeded", response_status=status, delivered_at=utcnow(), last_error=None
+        configuration_lock(session, shared=True)
+        metadata = session.execute(
+            sa.select(Delivery.audience, Delivery.status, Delivery.dispatch_no).where(
+                Delivery.id == delivery_id
             )
+        ).first()
+        if metadata is None or metadata.status == "succeeded":
+            return "already_succeeded"
+        if metadata.dispatch_no != dispatch_no or metadata.status != "pending":
+            return "obsolete"
+        if metadata.audience == "participant":
+            from app.destination_purposes import InvalidPurpose, require_participant_capability
+
+            try:
+                require_participant_capability(session)
+            except InvalidPurpose:
+                raise RetryableError(
+                    FailureCode.DELIVERY_UNCONFIGURED,
+                    "finalidade participante indisponível por compatibilidade",
+                ) from None
+        job_id = session.scalar(sa.select(Delivery.job_id).where(Delivery.id == delivery_id))
+        if job_id is None:
+            return "already_succeeded"
+        job = session.scalar(sa.select(Job).where(Job.id == job_id).with_for_update())
+        delivery = session.scalar(
+            sa.select(Delivery).where(Delivery.id == delivery_id).with_for_update()
         )
+        if job is None or delivery is None or delivery.status == "succeeded":
+            return "already_succeeded"
+        if delivery.dispatch_no != dispatch_no or delivery.status != "pending":
+            return "obsolete"
+        try:
+            if jobs.delivery_retention_expired(session, job, deps.settings.retention_days):
+                raise TerminalError(
+                    FailureCode.DELIVERY_REJECTED, "prazo de retenção do pedido encerrado"
+                )
+            destination = _destination_of(session, deps, delivery)
+            payload = build_payload(session, deps, delivery)
+            delivery.attempts += 1
+            delivery.destination_scope = destination.scope
+            delivery.destination_host = destination.host
+            status = deps.webhook.send(
+                destination.url, destination.secret, delivery.event, str(delivery.id), payload
+            )
+            if not isinstance(status, int) or not 200 <= status < 300:
+                raise TerminalError(
+                    FailureCode.DELIVERY_REJECTED, "transporte sem evidência de entrega"
+                )
+            delivery.status, delivery.response_status = "succeeded", status
+            delivery.delivered_at, delivery.last_error = utcnow(), None
+        except Exception as exc:  # noqa: BLE001 - registra somente código e relança após commit
+            delivery.last_error = _delivery_error(exc)
+            failure = exc
+    if failure is not None:
+        raise failure
     return "succeeded"
 
 
-@dataclass(frozen=True)
-class _Outgoing:
-    destination: destinations.Destination
-    event: str
-    event_id: str
-    payload: dict[str, Any]
-
-
-def _outgoing(deps: Deps, delivery_id: uuid.UUID) -> _Outgoing | None:
-    """O envio desta tentativa, com o destino registrado na entrega; None se já foi entregue."""
-    with deps.sessions.begin() as session:
-        delivery = session.get_one(Delivery, delivery_id)
-        if delivery.status == "succeeded":
-            return None
-        destination = _destination_of(session, deps, delivery)
-        payload = build_payload(session, deps, delivery)
-        delivery.attempts += 1
-        delivery.destination_scope = destination.scope
-        delivery.destination_host = destination.host
-        return _Outgoing(destination, delivery.event, str(delivery.id), payload)
+def _delivery_error(exc: Exception) -> str:
+    """Persiste só códigos, status HTTP e descrições fixas do domínio; nunca detalhe do provedor."""
+    if not isinstance(exc, RetryableError | TerminalError) or not isinstance(exc.code, FailureCode):
+        return "[internal] falha inesperada na entrega PDF"
+    safe = {
+        "o segredo do destino não abre com WEBHOOK_ENCRYPTION_KEY",
+        "destino, revisão ou finalidade não autorizados; confira a configuração e solicite repetição explícita",
+        "finalidade participante indisponível por compatibilidade",
+        "prazo de retenção do pedido encerrado",
+        "transporte sem evidência de entrega",
+        "entrega de tentativa anterior não é atual",
+        "projeção participante indisponível para a versão histórica",
+    }
+    detail = exc.detail
+    if not isinstance(detail, str) or (
+        detail not in safe and re.fullmatch(r"HTTP [1-5][0-9]{2}", detail) is None
+    ):
+        detail = "falha no transporte da entrega PDF"
+    return f"[{exc.code.value}] {detail}"
 
 
 def _destination_of(session: Any, deps: Deps, delivery: Delivery) -> destinations.Destination:
-    """Sem destino, ou com um segredo que não abre, a falha é retentável: corrigir o destino no
-    admin salva as entregas que ainda estão em repetição."""
-    submission = _submission_of(session, delivery.job_id)
+    """Legados só resolvem internos; fatos novos nunca adotam outro receptor ou revisão."""
+    if delivery.authorization_origin == "legacy":
+        submission = _submission_of(session, delivery.job_id)
+        row = session.scalar(
+            sa.select(WebhookDestination)
+            .where(destinations._serving(submission.form_slug))
+            .order_by(WebhookDestination.form_slug.is_(None))
+            .limit(1)
+            .with_for_update()
+        )
+        valid = row is not None and row.purpose == "internal"
+    else:
+        row = session.scalar(
+            sa.select(WebhookDestination)
+            .where(WebhookDestination.id == delivery.webhook_destination_id)
+            .with_for_update()
+        )
+        valid = (
+            row is not None
+            and row.version == delivery.config_version
+            and row.purpose == delivery.audience
+        )
+    if not valid or "plano.concluido" not in row.events:
+        raise RetryableError(
+            FailureCode.DELIVERY_UNCONFIGURED,
+            "destino, revisão ou finalidade não autorizados; confira a configuração e solicite repetição explícita",
+        )
+    if deps.cipher is None:
+        raise RetryableError(
+            FailureCode.DELIVERY_UNCONFIGURED,
+            "o segredo do destino não abre com WEBHOOK_ENCRYPTION_KEY",
+        )
     try:
-        destination = destinations.resolve(session, deps.cipher, submission.form_slug)
+        secret = deps.cipher.open(row.secret_sealed)
     except destinations.UnreadableSecret:
         raise RetryableError(
             FailureCode.DELIVERY_UNCONFIGURED,
             "o segredo do destino não abre com WEBHOOK_ENCRYPTION_KEY",
         ) from None
-    if destination is None:
-        raise RetryableError(
-            FailureCode.DELIVERY_UNCONFIGURED, "o formulário está sem destino do webhook"
-        )
-    return destination
+    return destinations.Destination(
+        scope="default" if row.form_slug is None else "form", url=row.url, secret=secret
+    )
 
 
-def _record_error(deps: Deps, delivery_id: uuid.UUID, exc: Exception) -> None:
-    """O motivo da falha fica na entrega (o admin mostra), sem dados da lead: só códigos."""
-    known = isinstance(exc, RetryableError | TerminalError)
+def set_delivery_run_id(
+    deps: Deps, delivery_id: uuid.UUID, run_id: str, dispatch_no: int = 1
+) -> None:
     with deps.sessions.begin() as session:
         session.execute(
             sa.update(Delivery)
-            .where(Delivery.id == delivery_id)
-            .values(last_error=(str(exc) if known else type(exc).__name__)[:300])
+            .where(
+                Delivery.id == delivery_id,
+                Delivery.dispatch_no == dispatch_no,
+                Delivery.status == "pending",
+            )
+            .values(hatchet_run_id=run_id)
         )
 
 
-def set_delivery_run_id(deps: Deps, delivery_id: uuid.UUID, run_id: str) -> None:
+def mark_delivery_failed(
+    deps: Deps, delivery_id: uuid.UUID, code: str, dispatch_no: int = 1
+) -> int:
+    """Callback antigo nunca altera uma repetição nova nem um sucesso."""
     with deps.sessions.begin() as session:
-        session.execute(
-            sa.update(Delivery).where(Delivery.id == delivery_id).values(hatchet_run_id=run_id)
-        )
-
-
-def mark_delivery_failed(deps: Deps, delivery_id: uuid.UUID, code: str) -> None:
-    """A entrega esgotou as tentativas. O motivo que o último envio registrou ("[código]
-    detalhe", como o segredo que não abre) fica para o admin; sem ele, fica o código."""
-    with deps.sessions.begin() as session:
-        session.execute(
+        result = session.execute(
             sa.update(Delivery)
-            .where(Delivery.id == delivery_id, Delivery.status == "pending")
+            .where(
+                Delivery.id == delivery_id,
+                Delivery.status == "pending",
+                Delivery.dispatch_no == dispatch_no,
+            )
             .values(status="failed", last_error=sa.func.coalesce(Delivery.last_error, code))
         )
+
+        return result.rowcount
 
 
 def lead_links(deps: Deps, job: Job, *, pdf_attempt: int | None = None) -> dict[str, str]:
@@ -310,9 +410,15 @@ def lead_links(deps: Deps, job: Job, *, pdf_attempt: int | None = None) -> dict[
 def build_payload(session: Any, deps: Deps, delivery: Delivery) -> dict[str, Any]:
     job = session.get_one(Job, delivery.job_id)
     submission = session.get_one(Submission, job.submission_id)
-    lead = resolve_identity(deps.forms, submission)
     artifact = session.get_one(Artifact, delivery.artifact_id)
-    if artifact.job_id != job.id or artifact.version != job.attempt:
+    if (
+        artifact.job_id != job.id
+        or artifact.version != job.attempt
+        or (
+            delivery.authorization_origin == "explicit"
+            and artifact.version != delivery.authorized_attempt
+        )
+    ):
         raise TerminalError(
             FailureCode.DELIVERY_REJECTED, "entrega de tentativa anterior não é atual"
         )
@@ -327,7 +433,7 @@ def build_payload(session: Any, deps: Deps, delivery: Delivery) -> dict[str, Any
             filename=f"plano-{job.public_id}.pdf",
         )
     )
-    return {
+    common = {
         "event": delivery.event,
         "event_id": str(delivery.id),
         "occurred_at": utcnow().isoformat(),
@@ -338,14 +444,6 @@ def build_payload(session: Any, deps: Deps, delivery: Delivery) -> dict[str, Any
             "status_url": links["status_url"],
             "page_url": links["page_url"],
         },
-        "lead": {"email": lead.email, "name": lead.name, "phone": lead.phone},
-        "answers": submission.answers,
-        "consent": submission.consent,
-        "tracking": submission.tracking,
-        "scores": submission.scores,
-        "priority": submission.priority,
-        "persona": submission.persona,
-        "plan": plan.document,
         "pdf": {
             "url": links["pdf_url"],
             "expires_at": job.expires_at.isoformat(),
@@ -355,6 +453,35 @@ def build_payload(session: Any, deps: Deps, delivery: Delivery) -> dict[str, Any
             "size_bytes": artifact.byte_size,
         },
     }
+    if delivery.audience == "participant":
+        from app.forms import PlanProjectionError
+
+        try:
+            common["plan"] = _form_of(deps, submission).project_plan(
+                plan.document, audience="participant"
+            )
+        except (PlanProjectionError, TerminalError):
+            raise TerminalError(
+                FailureCode.DELIVERY_REJECTED,
+                "projeção participante indisponível para a versão histórica",
+            ) from None
+        common["audience"] = "participant"
+        common["form"]["version_number"] = submission.form_version_number
+        return common
+    lead = resolve_identity(deps.forms, submission)
+    common.update(
+        {
+            "lead": {"email": lead.email, "name": lead.name, "phone": lead.phone},
+            "answers": submission.answers,
+            "consent": submission.consent,
+            "tracking": submission.tracking,
+            "scores": submission.scores,
+            "priority": submission.priority,
+            "persona": submission.persona,
+            "plan": plan.document,
+        }
+    )
+    return common
 
 
 def _submission_of(session: Any, job_id: uuid.UUID) -> Submission:

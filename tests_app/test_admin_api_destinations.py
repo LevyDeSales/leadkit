@@ -65,6 +65,7 @@ def store(
             expected_version=0,
             production=False,
             http_confirmed=False,
+            purpose="internal",
         )
     assert saved.secret is not None
     return saved.secret
@@ -282,6 +283,7 @@ def test_get_destination_of_the_default_with_none_says_to_create_it(api_client: 
         "serving": "none",
         "serving_host": None,
         "serving_events": [],
+        "serving_purpose": None,
         "capture_delivery_counts": {"pending": 0, "succeeded": 0, "failed": 0},
     }
 
@@ -481,6 +483,7 @@ def opened(deps: Deps, form_slug: str | None) -> str:
 def save_body(**changes: Any) -> dict[str, Any]:
     body: dict[str, Any] = {
         "url": hook(),
+        "purpose": "internal",
         "expected_version": "0",
         "confirm": True,
         **changes,
@@ -677,7 +680,10 @@ def test_save_destination_needs_confirm_true_on_every_call_and_does_nothing_with
 
     for response in (created, changed):
         assert response.status_code == 422 and response.json()["code"] == "confirmation_required"
-        assert "para onde vão os dados das leads" in response.json()["detail"]
+        assert (
+            "Finalidade interna" in response.json()["detail"]
+            and "participante" in response.json()["detail"]
+        )
     assert current(deps, None) is None and current(deps, "mcc") == before
     assert [entry.id for entry in audits(deps)] == trail  # nada gravado nem auditado
 
@@ -860,7 +866,7 @@ def page_post(client: ApiClient, path: str, **form: str) -> Callable[[], httpx.R
 
     def call() -> httpx.Response:
         assert login(client, PAGE_USER).status_code == 303
-        data = {"csrf_token": csrf_token(client), **form}
+        data = {"csrf_token": csrf_token(client), "purpose": "internal", **form}
         return client.post(f"{PAGE}/{path}", data=data, headers=ORIGIN)
 
     return call
@@ -1283,6 +1289,7 @@ def test_a_rotation_with_a_stale_version_leaves_the_same_nothing_on_the_page_and
             expected_version=1,
             production=False,
             http_confirmed=False,
+            purpose="internal",
         )
 
     page, api = assert_same_effect(
@@ -1915,6 +1922,8 @@ def test_sending_the_test_event_leaves_the_same_audit_and_the_same_traffic_as_th
         == api_details
         == {
             "form_slug": slug,
+            "purpose": "internal",
+            "purpose_origin": "explicit",
             "host": receiver.host,
             "status": 202,
             "error": None,
@@ -1974,6 +1983,7 @@ def test_the_repr_of_what_carries_a_secret_never_shows_it(deps: Deps) -> None:
             expected_version=0,
             production=False,
             http_confirmed=False,
+            purpose="internal",
         )
     assert created.secret is not None
     rotated = actions.rotate(deps, "mcc", actor="operadora", expected_version=1)

@@ -205,6 +205,7 @@ class PlanField:
     internal: bool  # o campo não chega ao PDF nem à prévia
     optional: bool
     fields: tuple[PlanField, ...]  # os campos do grupo, ou dos itens de uma lista de grupos
+    inherited_internal: bool = False
 
 
 def _resolved(node: Mapping[str, Any], defs: Mapping[str, Any]) -> dict[str, Any]:
@@ -277,6 +278,7 @@ def _plan_field(
         limits=tuple(limit for limit in limits if limit and limit not in description),
         values=values,
         internal=path in internal,
+        inherited_internal=any(path[:size] in internal for size in range(1, len(path))),
         optional=not required,
         fields=fields,
     )

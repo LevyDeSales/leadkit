@@ -85,10 +85,15 @@
               <td>{% if delivery.last_error %}<span class="mono">{{ delivery.last_error }}</span>{% else %}<span class="muted">—</span>{% endif %}</td>
               <td class="num">{{ m.when(delivery.when) }}</td>
               <td>{% if delivery.state == "failed" %}
-                <form class="inline" method="post" action="/admin/jobs/{{ job.public_id }}/deliveries/{{ delivery.id }}/resend">
+                {% if delivery.job_attempt != job.attempt %}<span class="muted">Tentativa anterior; consulte a entrega atual.</span>
+                {% elif delivery.authorization_origin == "explicit" and not delivery.current_config_version %}<span class="muted">Destino removido; esta entrega não é redirecionada.</span>
+                {% else %}<form class="inline" method="post" action="/admin/jobs/{{ job.public_id }}/deliveries/{{ delivery.id }}/resend">
                   <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
-                  <button class="btn btn--secondary btn--sm" type="submit">{{ m.icon('send') }}Reenviar agora</button>
-                </form>
+                  <input type="hidden" name="expected_attempt" value="{{ job.attempt }}">
+                  {% if delivery.current_config_version %}<input type="hidden" name="expected_config_version" value="{{ delivery.current_config_version }}">{% endif %}
+                  <span>Finalidade {{ "interna" if delivery.audience == "internal" else "participante" }} · revisão {{ delivery.current_config_version or 'indisponível' }} · tentativa {{ delivery.job_attempt }}.</span>
+                  <button class="btn btn--secondary btn--sm" type="submit">{{ m.icon('send') }}Confirmar e reenviar</button>
+                </form>{% endif %}
               {% endif %}</td>
             </tr>
           {% endfor %}
@@ -132,7 +137,8 @@
     {% endif %}
 
     <section class="box" id="plano" aria-labelledby="plano-titulo">
-      <h2 id="plano-titulo">Plano gerado</h2>
+      <h2 id="plano-titulo">Plano gerado · uso interno</h2>
+      <p><a class="btn btn--secondary" href="/admin/jobs/{{ job.public_id }}/participant">Ver como participante</a></p>
       {% if job.plan %}
       <p class="muted">{{ job.plan.note }}</p>
       <dl class="kv kv--stack">{% for label, item in job.plan.fields %}<dt>{{ label }}</dt><dd>{{ m.value(item, job.plan.labels, job.plan.keys[loop.index0] ~ ".") }}</dd>{% endfor %}</dl>

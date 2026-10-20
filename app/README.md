@@ -193,3 +193,14 @@ participante. Estado não inclui respostas ou erro bruto; dados pessoais continu
 total e opt-in na API/MCP. Retenção conta da submissão original, trava com o despacho limitado e
 apaga intenções junto da captura. Tasks tardias não enviam nem recriam dados excluídos. Dados já
 recebidos pelo provedor seguem a retenção operada fora do Leadkit.
+
+### Audiência e finalidade dos receptores
+
+A consulta administrativa [por audiência](../docs/api/projecoes.md) conserva o plano integral para
+uso interno e oferece **Ver como participante** sem serializar conteúdo interno oculto.
+Destinos novos declaram finalidade; captura e Baserow exigem `internal`. Um novo bootstrap do
+webhook por ambiente exige `WEBHOOK_PURPOSE=internal` para autorizar o envelope interno.
+Destinos existentes conservam a origem legada; girar o segredo mantém a finalidade, mudar a URL
+exige escolha explícita. Novas entregas PDF fixam receptor/revisão/audiência/tentativa e o reenvio
+exige confirmar as versões atuais. Habilitação participante e rollback dependem do roteiro de
+compatibilidade operacional, sem alterar o guard estrutural do banco.

@@ -223,6 +223,7 @@ def connect(
     token: str,
     expected_version: int,
     actor: str,
+    purpose: str | None = None,
 ) -> Connected:
     """Conecta o formulário a uma tabela do Baserow, ou muda a conexão que ele tem.
 
@@ -259,6 +260,15 @@ def connect(
     # sob o lock, para o caso de a integração mudar entre uma coisa e outra.
     with deps.sessions() as db:
         current = integration_config.load(db, form_slug)
+    from app.destination_purposes import InvalidPurpose, require_internal, selected
+
+    try:
+        chosen, _ = selected(
+            purpose, current=current, moved=current is not None and current.base_url != address
+        )
+        require_internal(chosen, receiver="O Baserow")
+    except InvalidPurpose as exc:
+        raise InvalidConnection({"purpose": exc.message}) from None
     if (current.version if current is not None else 0) != expected_version:
         raise integration_config.Conflict(current)
     if (
@@ -292,7 +302,10 @@ def connect(
                 actor=actor,
                 expected_version=expected_version,
                 production=production,
+                purpose=purpose,
             )
+    except destinations.InvalidPurpose as exc:
+        raise InvalidConnection({"purpose": exc.message}) from None
     except destinations.NoCipher:
         raise InvalidConnection({"token": NO_CIPHER}) from None
     logger.info(
@@ -319,6 +332,8 @@ def read_fields(deps: Deps, form_slug: str) -> list[BaserowField]:
         if connection is None:
             raise IntegrationMissing
         return deps.baserow.fields(connection)
+    except destinations.InvalidPurpose as exc:
+        raise TableNotRead(exc.message) from None
     except destinations.UnreadableSecret:
         raise TokenUnreadable from None
     except (RetryableError, TerminalError) as exc:
@@ -580,6 +595,8 @@ def send_test(
     Baserow nem é chamado)."""
     try:
         result = integration_push.send_sample(deps, form_slug, actor=actor, profile=profile)
+    except destinations.InvalidPurpose as exc:
+        raise TableNotRead(exc.message) from None
     except destinations.UnreadableSecret:
         raise TokenUnreadable from None
     if result is None:

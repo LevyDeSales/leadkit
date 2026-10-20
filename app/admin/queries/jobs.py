@@ -43,6 +43,7 @@ from app.models import (
     Job,
     Plan,
     Submission,
+    WebhookDestination,
 )
 from app.pdf_availability import PdfAvailability, current_pdf
 from app.submission_identity import resolve_identity
@@ -536,6 +537,12 @@ class DeliveryState:
     scope: str | None  # form | default: qual destino do webhook o último envio usou
     host: str | None  # o host dele (nunca o caminho da URL, que vale como senha)
 
+    audience: str = "internal"
+    authorization_origin: str = "legacy"
+    config_version: int | None = None
+    current_config_version: int | None = None
+    dispatch_no: int = 1
+
 
 @dataclass(frozen=True)
 class SyncState:
@@ -743,6 +750,17 @@ def read_job(
             job_attempt=version_of.get(d.artifact_id, 0),
             delivered_at=d.delivered_at,
             hatchet_run_id=d.hatchet_run_id,
+            audience=d.audience,
+            authorization_origin=d.authorization_origin,
+            config_version=d.config_version,
+            current_config_version=session.scalar(
+                sa.select(WebhookDestination.version).where(
+                    WebhookDestination.id == d.webhook_destination_id
+                )
+            )
+            if d.webhook_destination_id
+            else None,
+            dispatch_no=d.dispatch_no,
             scope=d.destination_scope,
             host=d.destination_host,
         )
@@ -936,3 +954,50 @@ def _delivery_event(delivery: DeliveryState) -> TimelineEvent:
         delivery.status, "delivery_pending"
     )
     return TimelineEvent(kind, at=delivery.delivered_at, delivery_id=delivery.id)
+
+
+class ProjectionUnavailable(ValueError):
+    """A versão histórica não permite obter uma projeção verificável."""
+
+
+@dataclass(frozen=True)
+class PlanProjection:
+    public_id: str
+    form_slug: str
+    form_version: str
+    form_version_number: int
+    attempt: int
+    audience: str
+    document: dict[str, Any]
+
+
+def get_job_plan_projection(
+    session: Session, public_id: str, *, forms: FormRegistry, audience: str = "participant"
+) -> PlanProjection | None:
+    """Consulta somente a tentativa atual e a versão histórica, sem contato nem respostas."""
+    from app.forms import PlanProjectionError
+    from app.submission_identity import submission_form
+
+    job = session.scalar(sa.select(Job).where(Job.public_id == public_id))
+    if job is None:
+        return None
+    plan = session.scalar(sa.select(Plan).where(Plan.job_id == job.id, Plan.version == job.attempt))
+    if plan is None:
+        raise ProjectionUnavailable("O plano da tentativa atual ainda não foi gerado.")
+    submission = session.get_one(Submission, job.submission_id)
+    try:
+        spec = submission_form(forms, submission)
+        document = spec.project_plan(plan.document, audience=audience)
+    except (PlanProjectionError, TerminalError):
+        raise ProjectionUnavailable(
+            "A projeção não está disponível para a versão histórica deste plano. Consulte a configuração do formulário."
+        ) from None
+    return PlanProjection(
+        job.public_id,
+        submission.form_slug,
+        submission.form_version,
+        submission.form_version_number,
+        plan.version,
+        audience,
+        document,
+    )

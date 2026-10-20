@@ -189,6 +189,8 @@ def test_the_hand_written_list_of_the_keys_the_services_write_matches_the_public
     retenção, o `**details` repassado). Uma chave nova desse tipo só entra se alguém editar as duas."""
     written = {
         "app/destinations.py": {
+            "purpose",
+            "purpose_origin",
             "form_slug",
             "host",
             "previous_host",
@@ -198,7 +200,7 @@ def test_the_hand_written_list_of_the_keys_the_services_write_matches_the_public
         },
         "app/admin/actions/captures.py": {"submission_id", "config_version", "dispatch_no"},
         "app/destinations.py (teste)": {"status", "elapsed_ms", "error"},
-        "app/jobs.py": {"attempt", "previous_status", "failure_code", "job_id"},
+        "app/jobs.py": {"attempt", "previous_status", "failure_code", "job_id", "audience"},
         "app/retention.py": {
             "requests_deleted",
             "leads_deleted",

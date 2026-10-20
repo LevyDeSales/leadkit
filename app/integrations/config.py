@@ -25,6 +25,7 @@ from urllib.parse import urlsplit
 import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
+from app.destination_purposes import require_internal, selected
 from app.destinations import NoCipher, SecretCipher, UnreadableSecret, host_of
 from app.forms import FormSpec, UnknownForm
 from app.forms import stored as stored_forms
@@ -78,6 +79,8 @@ class StoredIntegration:
     token_changed_at: datetime
     capture_entries: tuple[Entry, ...] = ()
     capture_key_field_id: int | None = None
+    purpose: str = "participant"
+    purpose_origin: str = "default"
 
     @property
     def host(self) -> str:
@@ -102,6 +105,8 @@ def _stored(row: Integration) -> StoredIntegration:
         token_changed_at=row.token_changed_at,
         capture_entries=tuple(entries_of(row.capture_mapping)),
         capture_key_field_id=row.capture_key_field_id,
+        purpose=row.purpose,
+        purpose_origin=row.purpose_origin,
     )
 
 
@@ -181,6 +186,8 @@ def _audit(
             details={
                 "form_slug": row.form_slug,
                 "kind": row.kind,
+                "purpose": row.purpose,
+                "purpose_origin": row.purpose_origin,
                 "host": host_of(row.base_url),
                 "table_id": row.table_id,
                 **details,
@@ -226,6 +233,7 @@ def open_connection(cipher: SecretCipher | None, row: Integration) -> Connection
     se o token não abre com a chave atual."""
     if cipher is None:
         raise UnreadableSecret
+    require_internal(row.purpose, receiver="O Baserow")
     return Connection(row.base_url, row.table_id, cipher.open(row.token_sealed))
 
 
@@ -262,6 +270,7 @@ def connect(
     actor: str,
     expected_version: int,
     production: bool,
+    purpose: str | None = None,
 ) -> StoredIntegration:
     """Cria a integração (`expected_version` 0; o token é obrigatório) ou muda a conexão da que
     existe. Um `token` vazio, numa que existe, mantém o guardado. Mudar o endereço ou a tabela
@@ -274,12 +283,24 @@ def connect(
 
     configuration_lock(session)
     base_url = check_base_url(base_url, production=production)
+    current = session.scalar(
+        sa.select(Integration)
+        .where(Integration.form_slug == form_slug, Integration.kind == KIND)
+        .with_for_update()
+    )
+    chosen, origin = selected(
+        purpose,
+        current=current if expected_version else None,
+        moved=current is not None and current.base_url != base_url,
+    )
+    require_internal(chosen, receiver="O Baserow")
     token = token.strip()
     if expected_version == 0:
         if not token:
             raise MissingToken
-        return _create(session, cipher, form_slug, base_url, table_id, token, actor)
+        return _create(session, cipher, form_slug, base_url, table_id, token, actor, chosen, origin)
     row = _lock_for_change(session, form_slug, expected_version, actor)
+    row.purpose, row.purpose_origin = chosen, origin
     moved = (row.base_url, row.table_id) != (base_url, table_id)
     previous_host = host_of(row.base_url)
     row.base_url, row.table_id = base_url, table_id
@@ -309,12 +330,16 @@ def _create(
     table_id: int,
     token: str,
     actor: str,
+    purpose: str,
+    purpose_origin: str,
 ) -> StoredIntegration:
     now = utcnow()
     row = Integration(
         id=uuid.uuid4(),
         form_slug=form_slug,
         kind=KIND,
+        purpose=purpose,
+        purpose_origin=purpose_origin,
         base_url=base_url,
         table_id=table_id,
         token_sealed=cipher.seal(token),
@@ -378,6 +403,8 @@ def set_active(
 ) -> StoredIntegration:
     """Liga ou desliga a integração. Quem liga conferiu o relatório antes (`mapping.build_report`)."""
     row = _lock_for_change(session, form_slug, expected_version, actor)
+    if active:
+        require_internal(row.purpose, receiver="O Baserow")
     row.active = active
     _audit(session, actor, "activate" if active else "deactivate", row)
     return _stored(row)

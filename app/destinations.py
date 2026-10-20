@@ -25,6 +25,12 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from app.adapters.webhook import Probe
+from app.destination_purposes import (
+    InvalidPurpose,
+    require_internal,
+    require_participant_capability,
+    selected,
+)
 from app.models import AuditLog, WebhookDestination, WebhookEnvSeed, utcnow
 from app.settings import Settings
 
@@ -219,6 +225,8 @@ class StoredDestination:
     updated_at: datetime
     secret_created_at: datetime
     events: tuple[str, ...] = ("plano.concluido",)
+    purpose: str = "participant"
+    purpose_origin: str = "default"
 
     @property
     def host(self) -> str:
@@ -264,6 +272,8 @@ def _stored(row: WebhookDestination) -> StoredDestination:
         updated_at=row.updated_at,
         secret_created_at=row.secret_created_at,
         events=tuple(row.events),
+        purpose=row.purpose,
+        purpose_origin=row.purpose_origin,
     )
 
 
@@ -291,7 +301,13 @@ def _audit(
             action=f"webhook_destination.{action}",
             target_type="webhook_destination",
             target_id=str(row.id),
-            details={"form_slug": row.form_slug, "host": host_of(row.url), **details},
+            details={
+                "form_slug": row.form_slug,
+                "host": host_of(row.url),
+                "purpose": row.purpose,
+                "purpose_origin": row.purpose_origin,
+                **details,
+            },
         )
     )
 
@@ -326,9 +342,9 @@ def configured(session: Session, form_slug: str) -> bool:
 
 
 def resolve(session: Session, cipher: SecretCipher | None, form_slug: str) -> Destination | None:
-    """O destino de um envio, na hora do envio: o do formulário, senão o padrão, senão None. Usa
-    o segredo vigente, então uma entrega em repetição sai com a URL e o segredo corrigidos.
-    Levanta `UnreadableSecret` se o segredo não abre."""
+    """Resolve a configuração vigente para consulta legada: formulário, padrão ou None.
+    A entrega PDF fixa e revalida sua própria autorização antes da rede; esta resolução isolada
+    não autoriza transportar um documento. Levanta `UnreadableSecret` se o segredo não abre."""
     row = session.scalar(
         sa.select(WebhookDestination)
         .where(_serving(form_slug))
@@ -360,6 +376,7 @@ def save(
     production: bool,
     http_confirmed: bool,
     events: list[str] | None = None,
+    purpose: str | None = None,
 ) -> SaveResult:
     """Cria o destino (com um segredo novo, devolvido uma vez) ou muda a URL do que existe, que
     mantém o segredo. `expected_version` é a versão que a pessoa viu (0 = ainda não havia
@@ -379,6 +396,21 @@ def save(
     # Em produção, um http só passa confirmado: a auditoria guarda quem confirmou.
     insecure = production and urlsplit(url).scheme == "http"
     confirmed = {"http_confirmed": True} if insecure else {}
+    current = session.scalar(
+        sa.select(WebhookDestination).where(_same_scope(form_slug)).with_for_update()
+    )
+    chosen, origin = selected(
+        purpose,
+        current=current if expected_version else None,
+        moved=current is not None and current.url != url,
+    )
+    effective_events = (
+        events if events is not None else (current.events if current else ["plano.concluido"])
+    )
+    if "submissao.persistida" in effective_events:
+        require_internal(chosen, receiver="O webhook de captura")
+    if chosen == "participant":
+        require_participant_capability(session)
     if expected_version == 0:
         if cipher is None:
             raise NoCipher
@@ -386,6 +418,7 @@ def save(
         row = _insert(session, cipher, form_slug=form_slug, url=url, secret=secret, actor=actor)
         if row is None:  # outro pedido criou o destino primeiro
             raise Conflict(_current(session, form_slug))
+        row.purpose, row.purpose_origin = chosen, origin
         if events is not None:
             row.events = events
             session.flush()
@@ -393,6 +426,7 @@ def save(
         return SaveResult(_stored(row), secret)
     row = _lock_for_change(session, form_slug, expected_version, actor)
     previous_host = host_of(row.url)
+    row.purpose, row.purpose_origin = chosen, origin
     row.url = url
     if events is not None:
         row.events = events
@@ -411,8 +445,8 @@ def rotate(
     expected_version: int,
 ) -> str:
     """Troca o segredo do destino e devolve o novo, para mostrar uma vez. O antigo deixa de valer
-    na hora: o envio seguinte, inclusive o de uma entrega em repetição, já sai assinado com o
-    novo."""
+    na hora: novos envios usam o novo. Entregas PDF fixadas antes da troca exigem repetição
+    explícita com a revisão atual, preservando receptor e finalidade."""
     if cipher is None:
         raise NoCipher
     row = _lock_for_change(session, form_slug, expected_version, actor)
@@ -445,38 +479,64 @@ def send_test(
     formulário), assinado com o segredo vigente, e devolve o que o receptor respondeu; None se o
     destino não existe. A auditoria guarda o status e o tempo, não a resposta. Levanta
     `UnreadableSecret` sem mandar nada se o segredo não abre."""
-    with deps.sessions() as session:
-        row = session.scalar(sa.select(WebhookDestination).where(_same_scope(form_slug)))
+    from app.integration_readiness import configuration_lock
+
+    with deps.sessions.begin() as session:
+        configuration_lock(session, shared=True)
+        purpose = session.scalar(
+            sa.select(WebhookDestination.purpose).where(_same_scope(form_slug))
+        )
+        if purpose == "participant":
+            require_participant_capability(session)
+        row = session.scalar(
+            sa.select(WebhookDestination).where(_same_scope(form_slug)).with_for_update()
+        )
         if row is None:
             return None
         stored = _stored(row)
         if deps.cipher is None:
             raise UnreadableSecret
         secret = deps.cipher.open(row.secret_sealed)
-    event_id = str(uuid.uuid4())
-    payload = sample_event(event_id, form_slug)
-    if event == "submissao.persistida" and event not in stored.events:
-        raise UnsupportedEvent
-    if event == "submissao.persistida":
-        payload = {
-            "event": event,
-            "event_id": event_id,
-            "test": True,
-            "occurred_at": utcnow().isoformat(),
-            "form": {"slug": form_slug, "version": "teste", "version_number": 0},
-            "submission": {"id": "teste-sintetico"},
-            "lead": {"name": "Contadora Exemplo", "email": "teste@example.test", "phone": None},
-            "answers": {},
-            "consent": {},
-            "tracking": {},
-            "scores": {},
-            "priority": None,
-            "persona": None,
-        }
-    else:
-        event = TEST_EVENT
-    probe = deps.webhook.probe(stored.url, secret, event, event_id, payload)
-    with deps.sessions.begin() as session:
+        event_id = str(uuid.uuid4())
+        payload = sample_event(event_id, form_slug)
+        if event == "submissao.persistida":
+            require_internal(stored.purpose, receiver="O webhook de captura")
+        if event == "submissao.persistida" and event not in stored.events:
+            raise UnsupportedEvent
+        if event == "submissao.persistida":
+            payload = {
+                "event": event,
+                "event_id": event_id,
+                "test": True,
+                "occurred_at": utcnow().isoformat(),
+                "form": {"slug": form_slug, "version": "teste", "version_number": 0},
+                "submission": {"id": "teste-sintetico"},
+                "lead": {"name": "Contadora Exemplo", "email": "teste@example.test", "phone": None},
+                "answers": {},
+                "consent": {},
+                "tracking": {},
+                "scores": {},
+                "priority": None,
+                "persona": None,
+            }
+        else:
+            event = TEST_EVENT
+        if stored.purpose == "participant":
+            spec = deps.forms.current(form_slug) if form_slug else None
+            if spec is None or spec.example_plan is None:
+                raise InvalidPurpose(
+                    "Para testar participante, abra o destino de um formulário PDF com exemplo de plano válido."
+                )
+            from app.forms import PlanProjectionError
+
+            try:
+                payload["plan"] = spec.project_plan(spec.example_plan, audience="participant")
+            except PlanProjectionError:
+                raise InvalidPurpose(
+                    "O exemplo de plano não permite projeção participante. Corrija o formulário antes de testar."
+                ) from None
+            payload["audience"] = "participant"
+        probe = deps.webhook.probe(stored.url, secret, event, event_id, payload)
         _audit(
             session,
             actor,
@@ -493,8 +553,8 @@ def remove(
     session: Session, *, form_slug: str | None, actor: str, expected_version: int
 ) -> StoredDestination:
     """Apaga o destino e o devolve como estava (com a versão e a autoria da última mudança, não as
-    da remoção). O formulário passa a usar o destino padrão, se houver, e as entregas em repetição
-    vão para ele na tentativa seguinte; sem padrão, elas esperam um destino novo."""
+    da remoção). Envios novos passam a usar o padrão; intenções PDF fixadas não mudam de
+    receptor. Somente fatos internos legados conservam a resolução legada por formulário/padrão."""
     from app.integration_readiness import configuration_lock
 
     configuration_lock(session)
@@ -632,6 +692,14 @@ def _seed_from_env(session: Session, deps: Deps) -> None:
     except InvalidUrl as exc:
         message = f"WEBHOOK_URL não serve como destino do webhook: {exc.message}"
         raise StartupError(message) from None
+    chosen, origin = selected(settings.webhook_purpose)
+    if chosen == "participant":
+        try:
+            require_participant_capability(session)
+        except InvalidPurpose:
+            raise StartupError(
+                "WEBHOOK_PURPOSE=internal exige escolha explícita para uso interno. Para participante, deixe WEBHOOK_URL e WEBHOOK_SECRET vazios no bootstrap, conclua a verificação de compatibilidade e configure o destino no admin."
+            ) from None
     row = _insert(
         session,
         deps.cipher,
@@ -642,6 +710,7 @@ def _seed_from_env(session: Session, deps: Deps) -> None:
     )
     if row is None:  # a API subiu antes da migration e alguém já configurou o padrão no admin
         return
+    row.purpose, row.purpose_origin = chosen, origin
     _audit(session, ENV_ACTOR, "create", row, source="WEBHOOK_URL")
     logger.info("destino do webhook: o WEBHOOK_URL virou o destino padrão host=%s", host_of(url))
 

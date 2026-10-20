@@ -29,6 +29,9 @@ from app.integrations.config import StoredIntegration
 
 
 class BaserowConnection(BaseModel):
+    purpose: Literal["internal", "participant"]
+    purpose_origin: Literal["legacy", "explicit", "default"]
+
     """A conexão do formulário com uma tabela do Baserow, como está guardada. **Nunca traz o token**:
     `token_set` diz que há um e `token_unreadable`, se ele ainda abre."""
 
@@ -84,6 +87,8 @@ class BaserowConnection(BaseModel):
     @classmethod
     def of(cls, stored: StoredIntegration, *, token_unreadable: bool) -> BaserowConnection:
         return cls(
+            purpose=stored.purpose,
+            purpose_origin=stored.purpose_origin,
             base_url=stored.base_url,
             host=stored.host,
             table_id=stored.table_id,
@@ -108,6 +113,10 @@ class ConnectFormIntegrationRequest(ConfirmedInput, VersionedInput):
     endereço ou a outra tabela apaga o mapeamento e desativa a integração, a operação exige
     `confirm: true` em toda chamada."""
 
+    purpose: Literal["internal", "participant"] | None = Field(
+        default=None,
+        description="Baserow exige escolha interna explícita na criação e ao mudar URL. Participante é recusada; omitido nunca autoriza uso interno.",
+    )
     base_url: str = Field(
         description="O endereço do Baserow: `https` (em produção só `https`), sem usuário e senha, "
         "sem `?` nem `#` e sem IP link-local. Barras no fim são ignoradas.",

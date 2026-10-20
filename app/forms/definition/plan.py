@@ -7,7 +7,7 @@
 - A descrição de um grupo vira a descrição do modelo dele no schema (como a docstring de um
   modelo escrito em Python).
 - Campo interno (`internal`) vai ao LLM e fica no plano gravado e no webhook, mas não chega ao PDF
-  nem à prévia (`lead_view`).
+  nem à prévia (`plan_projector`).
 - O rótulo (`label`) é só do admin, que o mostra no lugar do nome do campo (`plan_labels`): não entra
   no schema do LLM, no plano gravado nem no PDF.
 - As validações declarativas viram validadores do próprio modelo, e por isso valem em toda parte
@@ -27,17 +27,18 @@
 
 from __future__ import annotations
 
+import math
 import re
 import unicodedata
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
-from types import SimpleNamespace
 from typing import Annotated, Any, Literal
 
 import regex
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, create_model
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, ValidationError, create_model
 from pydantic_core import PydanticCustomError
 
+from app.forms import PlanProjectionError
 from app.forms.definition.document import (
     ForbiddenDoc,
     ListBlock,
@@ -459,9 +460,12 @@ def plan_model(plan: PlanDoc, data: Mapping[str, Any] | None = None) -> type[Bas
     return group_model(ROOT_MODEL, plan.description, plan.fields, trail=(), build=build)
 
 
-def lead_view(plan: PlanDoc) -> Callable[[Mapping[str, Any]], SimpleNamespace]:
-    """O plano como o PDF e a prévia o recebem: sem os campos internos, com acesso por atributo
-    (`plan.fases[0].nome`) e nada além dos campos."""
+def plan_projector(
+    plan: PlanDoc, model: type[BaseModel]
+) -> Callable[[Mapping[str, Any], str], dict[str, Any]]:
+    """Valida antes de filtrar; a classificação pertence à mesma versão do modelo."""
+    # A árvore compilada não acompanha alterações posteriores do documento da operadora.
+    classified = plan.model_copy(deep=True)
 
     def view(node: PlanNodeDoc, value: Any) -> Any:
         if node.kind == "group":
@@ -470,13 +474,35 @@ def lead_view(plan: PlanDoc) -> Callable[[Mapping[str, Any]], SimpleNamespace]:
             return [view(node.items, item) for item in value]
         return value
 
-    def group(fields: list[PlanNodeDoc], value: Mapping[str, Any]) -> SimpleNamespace:
-        return SimpleNamespace(
-            **{
-                field.name: view(field, value[field.name])
-                for field in fields
-                if field.name is not None and not field.internal
-            }
-        )
+    def group(fields: list[PlanNodeDoc], value: Mapping[str, Any]) -> dict[str, Any]:
+        return {
+            field.name: view(field, value[field.name])
+            for field in fields
+            if field.name is not None and not field.internal
+        }
 
-    return lambda document: group(plan.fields, document)
+    def json_value(value: Any) -> bool:
+        # Instâncias de modelos podem ter sido alteradas após validar e não são documentos JSON.
+        if type(value) in (str, int, bool, type(None)):
+            return True
+        if type(value) is float:
+            return math.isfinite(value)
+        if type(value) is list:
+            return all(json_value(item) for item in value)
+        if type(value) is dict:
+            return all(type(key) is str and json_value(item) for key, item in value.items())
+        return False
+
+    def project(document: Mapping[str, Any], audience: str) -> dict[str, Any]:
+        if audience not in ("internal", "participant") or not isinstance(document, Mapping):
+            raise PlanProjectionError("plan_projection_invalid")
+        try:
+            raw = dict(document)
+            if not json_value(raw):
+                raise PlanProjectionError("plan_projection_invalid")
+            validated = model.model_validate(raw, strict=True).model_dump(mode="json")
+        except (ValidationError, TypeError, ValueError, RecursionError):
+            raise PlanProjectionError("plan_projection_invalid") from None
+        return validated if audience == "internal" else group(classified.fields, validated)
+
+    return project

@@ -20,22 +20,10 @@
 # A API só confia no X-Forwarded-* de quem chega pela rede do Traefik: o script lê a(s) sub-rede(s) da
 # rede traefik-public e passa como FORWARDED_ALLOW_IPS (o app.env pode trazer outro valor).
 #
-# 1. Migrations: `alembic upgrade head` com a imagem de IMAGE, num contêiner avulso na rede
-#    <stack>_internal, com a versão anterior ainda no ar. No primeiro deploy, a rede e o
-#    banco nascem com a stack, e as migrations rodam logo depois dela. Com ROLLBACK=1 não há
-#    migrations: elas só acrescentam, e a versão anterior roda com o banco como está. Sem ele, um
-#    banco com migration que a imagem não conhece para o deploy: além da volta de versão, pode ser
-#    um banco de outra linha de migrations.
-# 2. O `docker stack deploy` do README, com no máximo 10 min de espera. A imagem já está no servidor
-#    (puxada do GHCR ou construída nele). Sem --with-registry-auth de propósito: no primeiro
-#    `docker stack deploy`, o Swarm guardou o digest e as plataformas da imagem do Postgres, e
-#    passar a mandar o login junto faria o Swarm recriar o banco no deploy seguinte.
-# 3. Conferência, saindo com 1:
-#    - se uma atualização deste deploy não terminou em `completed`. Com --detach=false, o
-#      `docker stack deploy` sai com 0 mesmo quando o Swarm desfaz uma versão que não passou no
-#      healthcheck;
-#    - se a API ou o worker não rodam a imagem de IMAGE. Com --resolve-image changed e o mesmo
-#      nome, o Swarm fica com a imagem que já tinha, então uma tag reaproveitada não troca nada.
+# Na primeira adoção do contrato1, o helper pausa API e worker e comprova saída
+# antes das migrations. Depois exige Spec/PreviousSpec compatíveis, réplicas saudáveis
+# e atestação persistida. Atualizações compatíveis mantêm o rolling; rollback não
+# reduz o piso. Copie rollout.py junto e leia README.md antes da operação.
 set -euo pipefail
 
 here="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
@@ -152,125 +140,9 @@ if [[ -n "$live_rule" && "$live_rule" != *"Host(\`$DOMAIN\`)"* ]]; then
   exit 1
 fi
 
-# O nome fixo impede duas migrations ao mesmo tempo; o contêiner não tem mais privilégios que os
-# da stack (cap_drop ALL).
-migrate() {
-  local output status=0
-  echo "deploy.sh: migrations com $IMAGE"
-  output="$(docker run --rm --name "$stack-migrate" --network "${stack}_internal" \
-    --cap-drop ALL --security-opt no-new-privileges=true --env-file "$here/app.env" \
-    "$IMAGE" migrate 2>&1)" || status=$?
-  if ((status == 0)); then
-    if [[ -n "$output" ]]; then
-      printf '%s\n' "$output"
-    fi
-    return 0
-  fi
-  printf '%s\n' "$output" >&2
-  if [[ "$output" == *"Can't locate revision"* ]]; then
-    echo "deploy.sh: o banco tem uma migration que $IMAGE não conhece (a revisão está na linha do alembic acima)" >&2
-    echo "deploy.sh: se é a volta para uma versão anterior, rode de novo com ROLLBACK=1, que não migra" >&2
-  fi
-  return "$status"
-}
-
-# Uma linha por serviço da stack: nome, estado e início da última atualização (vazios se ele nunca
-# foi atualizado).
-update_states() {
-  local ids
-  ids="$(docker stack services -q "$stack" 2>/dev/null || true)"
-  if [[ -z "$ids" ]]; then
-    return 0
-  fi
-  # shellcheck disable=SC2086 # um id de serviço por palavra
-  docker service inspect $ids --format \
-    '{{.Spec.Name}} {{with .UpdateStatus}}{{.State}} {{with .StartedAt}}{{.UnixNano}}{{end}}{{end}}'
-}
-
-first_deploy=false
-if docker network inspect "${stack}_internal" >/dev/null 2>&1; then
-  if ((rollback == 1)); then
-    echo "deploy.sh: ROLLBACK=1, sem migrations: a versão anterior roda com o banco como está"
-  elif ! migrate; then
-    echo "deploy.sh: as migrations falharam; a stack não foi mexida" >&2
-    exit 1
-  fi
-else
-  first_deploy=true
-fi
-
-before="$(update_states)"
-deploy=(docker stack deploy --detach=false --resolve-image changed -c "$here/stack.yaml" "$stack")
-if command -v timeout >/dev/null 2>&1; then
-  # --foreground: o Ctrl-C chega ao docker, em vez de ficar preso no grupo de processos do timeout.
-  deploy=(timeout --foreground 10m "${deploy[@]}")
-fi
-status=0
-"${deploy[@]}" || status=$?
-if ((status == 124)); then
-  echo "deploy.sh: a stack não ficou de pé em 10 min; veja docker stack ps $stack --no-trunc" >&2
-fi
-if ((status != 0)); then
-  exit "$status"
-fi
-
-if [[ "$first_deploy" == true ]] && ((rollback == 0)) && ! migrate; then
-  echo "deploy.sh: a stack subiu, mas as migrations falharam; corrija e rode o deploy.sh de novo" >&2
+# O helper mantém o roteiro de compatibilidade, sem passar acesso Docker ao app.
+if ! command -v python3 >/dev/null 2>&1 || [[ ! -r "$here/rollout.py" ]]; then
+  echo "deploy.sh: instale Python 3 e copie rollout.py ao lado deste script; nada foi mexido" >&2
   exit 1
 fi
-
-# O --detach=false pode voltar um instante antes de o Swarm fechar o estado da atualização.
-for _ in $(seq 15); do
-  after="$(update_states)"
-  if ! grep -qE ' (updating|rollback_started) ' <<<"$after"; then
-    break
-  fi
-  sleep 2
-done
-if [[ -z "$after" ]]; then
-  echo "deploy.sh: não achei os serviços da stack $stack depois do deploy" >&2
-  exit 1
-fi
-
-failed=()
-while read -r service state started; do
-  if [[ -z "$state" || "$state" == completed ]]; then
-    continue
-  fi
-  # A mesma atualização de antes do deploy: não é deste deploy.
-  if grep -qxF "$service $state $started" <<<"$before"; then
-    continue
-  fi
-  failed+=("$service ($state)")
-done <<<"$after"
-
-if ((${#failed[@]} > 0)); then
-  echo "deploy.sh: a versão nova não passou no healthcheck, e o Swarm voltou para a anterior ou parou a troca: ${failed[*]}" >&2
-  echo "deploy.sh: o motivo está em docker service ps --no-trunc <serviço> e docker service logs <serviço>" >&2
-  exit 1
-fi
-
-# A imagem de cada réplica no ar (as que estão saindo ficam de fora) contra a que IMAGE aponta.
-want="$(docker image inspect --format '{{.Id}}' "$IMAGE")"
-stale=()
-for service in api worker; do
-  while read -r task; do
-    if [[ -z "$task" ]]; then
-      continue
-    fi
-    container="$(docker inspect --type task --format '{{.Status.ContainerStatus.ContainerID}}' "$task")"
-    if [[ -z "$container" ]]; then
-      continue
-    fi
-    running="$(docker inspect --type container --format '{{.Image}}' "$container" 2>/dev/null || true)"
-    if [[ -n "$running" && "$running" != "$want" ]]; then
-      stale+=("${stack}_$service")
-    fi
-  done < <(docker service ps -q --no-trunc --filter desired-state=running "${stack}_$service")
-done
-if ((${#stale[@]} > 0)); then
-  echo "deploy.sh: ${stale[*]} continua com outra imagem, não a que $IMAGE aponta agora" >&2
-  echo "deploy.sh: com o mesmo nome o Swarm não troca a imagem; dê um nome novo a cada build (o hash do commit)" >&2
-  exit 1
-fi
-echo "deploy.sh: $stack no ar com $IMAGE"
+exec python3 "$here/rollout.py" --folder "$here" --image "$IMAGE" --stack "$stack" --rollback "$rollback"

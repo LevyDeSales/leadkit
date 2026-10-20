@@ -110,6 +110,11 @@ def _load(deps: Deps, sync_id: uuid.UUID) -> _Loaded | None:
             return None
         sync.attempts += 1
         integration = session.get_one(Integration, sync.integration_id)
+        if integration.purpose != "internal":
+            raise TerminalError(
+                FailureCode.INTEGRATION_UNCONFIGURED,
+                "O Baserow exige finalidade interna; corrija a conexão antes de repetir.",
+            )
         data = _row_data(deps, session, sync)
     if not integration.active:
         raise RetryableError(

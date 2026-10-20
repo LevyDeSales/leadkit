@@ -198,6 +198,7 @@ def test_the_detail_tells_which_destination_serves_the_form(deps: Deps) -> None:
                 expected_version=0,
                 production=False,
                 http_confirmed=False,
+                purpose="internal",
             )
 
     none = detail(deps, "demo")
@@ -284,6 +285,7 @@ def test_the_detail_gives_the_integration_without_the_token(deps: Deps) -> None:
             actor="testes",
             expected_version=0,
             production=False,
+            purpose="internal",
         )
 
     found = detail(deps, "demo")

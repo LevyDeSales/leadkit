@@ -175,14 +175,22 @@ class Artifact(Base):
 
 
 class Delivery(Base):
-    """Entrega do resultado a um destino externo (hoje: o webhook). Retries ficam no Hatchet.
+    """Fato PDF com receptor, revisão, audiência e tentativa fixados; epochs cercam repetições.
 
-    `destination_scope` e `destination_host`: qual destino do webhook o último envio usou (o do
-    formulário ou o padrão, resolvido na hora) e o host da URL. Nulos antes do primeiro envio e nas
-    entregas de antes do destino no admin."""
+    Históricos sem correlação são internos legados e nunca adotam participante por fallback.
+    Escopo e host registram o último transporte; a exclusão do receptor não apaga o fato nem
+    autoriza outro destino. Nenhuma URL, segredo ou cópia do documento vive nesta linha."""
 
     __tablename__ = "deliveries"
     __table_args__ = (
+        sa.CheckConstraint("audience in ('internal', 'participant')", name="audience"),
+        sa.CheckConstraint(
+            "authorization_origin in ('legacy', 'explicit')", name="authorization_origin"
+        ),
+        sa.CheckConstraint(
+            "authorization_origin = 'legacy' AND audience = 'internal' OR authorization_origin = 'explicit' AND webhook_destination_id IS NOT NULL AND config_version IS NOT NULL AND authorized_attempt IS NOT NULL",
+            name="authorization",
+        ),
         sa.UniqueConstraint(
             "artifact_id", "destination", name="uq_deliveries_artifact_destination"
         ),
@@ -196,6 +204,12 @@ class Delivery(Base):
     id: Mapped[uuid.UUID] = _pk()
     job_id: Mapped[uuid.UUID] = mapped_column(sa.ForeignKey("jobs.id"), index=True)
     artifact_id: Mapped[uuid.UUID] = mapped_column(sa.ForeignKey("artifacts.id"))
+    webhook_destination_id: Mapped[uuid.UUID | None] = mapped_column(sa.Uuid)
+    config_version: Mapped[int | None] = mapped_column(sa.Integer)
+    audience: Mapped[str] = mapped_column(sa.String(16), server_default="internal")
+    authorization_origin: Mapped[str] = mapped_column(sa.String(16), server_default="legacy")
+    authorized_attempt: Mapped[int | None] = mapped_column(sa.Integer)
+    dispatch_no: Mapped[int] = mapped_column(sa.Integer, server_default="1")
     destination: Mapped[str] = mapped_column(sa.String(64))
     event: Mapped[str] = mapped_column(sa.String(64))
     status: Mapped[str] = mapped_column(sa.String(16), default="pending")
@@ -216,6 +230,10 @@ class WebhookDestination(Base):
 
     __tablename__ = "webhook_destinations"
     __table_args__ = (
+        sa.CheckConstraint("purpose in ('internal', 'participant')", name="purpose"),
+        sa.CheckConstraint(
+            "purpose_origin in ('legacy', 'explicit', 'default')", name="purpose_origin"
+        ),
         sa.UniqueConstraint("form_slug", name="uq_webhook_destinations_form_slug"),
         sa.Index(
             "uq_webhook_destinations_default",
@@ -224,6 +242,9 @@ class WebhookDestination(Base):
             postgresql_where=sa.text("form_slug IS NULL"),
         ),
     )
+
+    purpose: Mapped[str] = mapped_column(sa.String(16), server_default="participant")
+    purpose_origin: Mapped[str] = mapped_column(sa.String(16), server_default="default")
 
     id: Mapped[uuid.UUID] = _pk()
     form_slug: Mapped[str | None] = mapped_column(sa.String(64))
@@ -270,10 +291,17 @@ class Integration(Base):
 
     __tablename__ = "integrations"
     __table_args__ = (
+        sa.CheckConstraint("purpose in ('internal', 'participant')", name="purpose"),
+        sa.CheckConstraint(
+            "purpose_origin in ('legacy', 'explicit', 'default')", name="purpose_origin"
+        ),
         sa.UniqueConstraint("form_slug", "kind", name="uq_integrations_form_slug_kind"),
         sa.CheckConstraint(f"kind in ({_in(INTEGRATION_KINDS)})", name="kind"),
         sa.CheckConstraint("table_id >= 1", name="table_id"),
     )
+
+    purpose: Mapped[str] = mapped_column(sa.String(16), server_default="participant")
+    purpose_origin: Mapped[str] = mapped_column(sa.String(16), server_default="default")
 
     id: Mapped[uuid.UUID] = _pk()
     form_slug: Mapped[str] = mapped_column(sa.String(64))
@@ -626,3 +654,24 @@ class ApiKey(Base):
     revoked_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
     revoked_by: Mapped[str | None] = mapped_column(sa.Text)
     last_used_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+
+
+class DeploymentContract(Base):
+    """Piso operacional persistente e atestação da frota compatível com projeções."""
+
+    __tablename__ = "deployment_contract"
+    __table_args__ = (
+        sa.CheckConstraint("id = 1", name="single_row"),
+        sa.CheckConstraint("minimum_contract >= 0", name="minimum_contract"),
+        sa.CheckConstraint("phase in ('blocked', 'verified')", name="phase"),
+        sa.CheckConstraint(
+            "phase <> 'verified' OR (minimum_contract >= 1 AND epoch IS NOT NULL AND attested_at IS NOT NULL)",
+            name="verified",
+        ),
+    )
+    id: Mapped[int] = mapped_column(sa.SmallInteger, primary_key=True)
+    minimum_contract: Mapped[int] = mapped_column(sa.Integer, server_default="1")
+    phase: Mapped[str] = mapped_column(sa.String(16), server_default="blocked")
+    epoch: Mapped[uuid.UUID | None] = mapped_column(sa.Uuid)
+    evidence: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default=sa.text("'{}'::jsonb"))
+    attested_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))

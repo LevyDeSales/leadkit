@@ -12,6 +12,7 @@ from typing import Any
 import pytest
 import sqlalchemy as sa
 import yaml
+from test_deployment_contract import rollout_engine  # noqa: F401 — fixture PostgreSQL compartilhada
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOWS = ROOT / ".github/workflows"
@@ -177,6 +178,7 @@ def test_the_swarm_runs_on_pushes_and_on_pull_requests_that_touch_what_it_tests(
     for path in (
         "deploy/swarm/stack.yaml",
         "deploy/swarm/deploy.sh",
+        "deploy/swarm/rollout.py",
         "deploy/entrypoint.sh",
         "Dockerfile",
         ".dockerignore",
@@ -185,6 +187,7 @@ def test_the_swarm_runs_on_pushes_and_on_pull_requests_that_touch_what_it_tests(
         ".github/workflows/deploy-image.yml",
         "app/migrations/versions/0008_legacy_forms_as_version_one.py",
         "app/settings.py",
+        "app/deployment_contract.py",
         "app/worker.py",
         "app/api/main.py",
     ):
@@ -248,10 +251,11 @@ def test_the_swarm_rebuild_from_the_local_image_stays_on_the_default_builder() -
     """O passo do `swarm` que reaproveita a tag para outra imagem (`LABEL ci.build=reaproveitada`)
     parte da imagem local `gerador-planos:ci`: só o builder padrão a enxerga, não o do cache."""
     plain = [s["run"] for s in steps_of("swarm") if "docker build" in str(s.get("run", ""))]
-    (script,) = plain
+    assert len(plain) == 2  # Imagem histórica fixada e reconstrução local da candidata.
+    (script,) = [script for script in plain if "FROM gerador-planos:ci" in script]
     assert "FROM gerador-planos:ci" in script
     assert "LABEL ci.build=reaproveitada" in script
-    assert "--builder" not in script
+    assert all("--builder" not in script for script in plain)
     assert [s for s in steps_of("image") if "docker build" in str(s.get("run", ""))] == []
 
 
@@ -366,15 +370,19 @@ def test_publisher_rejects_forks_prs_other_shas_and_missing_or_failed_checks(
     assert not publisher_allowed({"vars.LEADKIT_PUBLISH_ENABLED": "true", **overrides})
 
 
-def test_swarm_rehearsal_accepts_the_real_guard_refusal(
-    shared_engine, database_url: str, tmp_path: Path
-) -> None:
+def test_swarm_rehearsal_accepts_the_real_guard_refusal(request, tmp_path: Path) -> None:
     """O ensaio precisa reconhecer a recusa real e ainda permitir rollback sem migrar.
 
     Só o transporte Docker é substituído: o deploy.sh e o Alembic/guard usam código real
     e PostgreSQL 16. Não há Swarm local; versões e disponibilidade ficam no ensaio remoto.
     """
+    from uuid import uuid4
+
     from test_swarm_scripts import Server, Staging
+
+    from app.models import DeploymentContract
+
+    engine = request.getfixturevalue("rollout_engine")
 
     staging_dir = tmp_path / "staging"
     staging_dir.mkdir()
@@ -383,13 +391,18 @@ def test_swarm_rehearsal_accepts_the_real_guard_refusal(
     docker.rename(server.bin_dir / "docker-stub")
     docker.write_text(
         "#!/usr/bin/env bash\n"
-        'if [[ "$1" == run ]]; then\n'
+        'if [[ "$1" == run && "${@: -1}" == migrate ]]; then\n'
         '  echo "$*" >> "$STUB_CALLS"\n'
         '  exec "$GUARD_PYTHON" -m alembic -c "$GUARD_ROOT/app/alembic.ini" upgrade head\n'
+        "fi\n"
+        'if [[ "$1" == run && "$*" == *app.deployment_contract* ]]; then\n'
+        '  echo "$*" >> "$STUB_CALLS"\n'
+        '  exec "$GUARD_PYTHON" -m app.deployment_contract "${@: -1}"\n'
         "fi\n"
         'exec "$(dirname "$0")/docker-stub" "$@"\n'
     )
     docker.chmod(0o755)
+    database_url = engine.url.render_as_string(hide_password=False)
     env = {
         "STUB_NETWORK": "1",
         "GUARD_PYTHON": sys.executable,
@@ -398,16 +411,37 @@ def test_swarm_rehearsal_accepts_the_real_guard_refusal(
         "PYTHONPATH": str(ROOT),
         "IMAGE": "gerador-planos:ci",
     }
-    with shared_engine.begin() as connection:
+    with engine.begin() as connection:
+        original_contract = dict(
+            connection.execute(sa.select(DeploymentContract.__table__)).mappings().one()
+        )
         original = connection.exec_driver_sql(
             "SELECT version_num FROM alembic_version"
         ).scalar_one()
         connection.exec_driver_sql("UPDATE alembic_version SET version_num = 'ci_futura'")
+        connection.execute(
+            DeploymentContract.__table__.update().values(
+                phase="verified", epoch=uuid4(), attested_at=sa.func.now()
+            )
+        )
     try:
         refused = server.run("deploy.sh", **env)
         assert refused.returncode != 0
         assert "revisão incompatível" in refused.stderr
-        assert not any(call.startswith("stack deploy") for call in server.calls)
+        assert "deploy.sh: migrations com " in refused.stdout
+        assert any(call.startswith("run ") and call.endswith(" migrate") for call in server.calls)
+        assert any(call.startswith("run ") and call.endswith(" begin") for call in server.calls)
+        assert not any(
+            call.startswith(("stack deploy", "service scale", "service update"))
+            for call in server.calls
+        )
+        with engine.connect() as connection:
+            assert (
+                connection.exec_driver_sql(
+                    "select minimum_contract || ':' || phase from deployment_contract where id=1"
+                ).scalar_one()
+                == "1:blocked"
+            )
         log = tmp_path / "back-sem-rollback.log"
         log.write_text(refused.stdout + refused.stderr)
         rehearsal = next(
@@ -427,22 +461,995 @@ def test_swarm_rehearsal_accepts_the_real_guard_refusal(
         )
         assert checked.returncode == 0, checked.stdout + checked.stderr
         assert "revisão incompatível" in checked.stdout
-        assert "a stack não foi mexida" in checked.stdout
+        assert "a imagem não foi atualizada" in checked.stdout
 
         server.calls_file.write_text("")
         rollback = server.run("deploy.sh", ROLLBACK="1", **env)
         assert rollback.returncode == 0, rollback.stdout + rollback.stderr
         assert "sem migrations" in rollback.stdout
         assert any(call.startswith("stack deploy") for call in server.calls)
-        assert not any(call.startswith("run ") for call in server.calls)
-        with shared_engine.connect() as connection:
+        assert not any(
+            call.startswith("run ") and call.endswith(" migrate") for call in server.calls
+        )
+        with engine.connect() as connection:
             assert (
                 connection.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one()
                 == "ci_futura"
             )
     finally:
-        with shared_engine.begin() as connection:
+        with engine.begin() as connection:
             connection.execute(
                 sa.text("UPDATE alembic_version SET version_num = :revision"),
                 {"revision": original},
             )
+            connection.execute(DeploymentContract.__table__.update().values(**original_contract))
+
+
+@pytest.mark.parametrize(
+    ("failure", "exit_code", "category"),
+    [
+        (
+            "sqlalchemy.exc.OperationalError: password authentication failed",
+            1,
+            "database_authentication",
+        ),
+        ("psycopg.OperationalError: could not translate host name", 1, "database_dns"),
+        ("psycopg.OperationalError: connection refused", 1, "database_unavailable"),
+        ("ModuleNotFoundError: historical.module", 1, "module_missing"),
+        ("RuntimeError: estrutura incompatível; objetos: private_table", 1, "schema_guard"),
+        ("docker: daemon refused the request", 125, "docker_run"),
+        ("unexpected historical failure", 1, "unclassified"),
+        ("successful migration with private output", 0, None),
+    ],
+)
+def test_historical_migration_failure_reports_only_safe_category_and_keeps_failure(
+    tmp_path: Path, failure: str, exit_code: int, category: str | None
+) -> None:
+    """Executa o trecho real do workflow; somente o Docker externo é substituído."""
+    import json
+
+    rehearsal = next(
+        step["run"]
+        for step in steps_of("swarm")
+        if step.get("name") == "Rehearse real pre-projection bootstrap and forward recovery"
+    )
+    start = rehearsal.index('docker run --rm --network "${compat}_internal"')
+    command = rehearsal[rehearsal.rfind("\n", 0, start) + 1 :]
+    command = command[: command.index('test "$(psql_compat')]
+    sentinel = "SYNTHETIC_PRIVATE_MIGRATION_CONTENT"
+    script = (
+        'docker() { printf "%s\\n" "$SYNTHETIC_FAILURE" >&2; return "$SYNTHETIC_EXIT"; }\n'
+        + command
+        + '\necho "migration failure was ignored"\n'
+    )
+    result = subprocess.run(
+        ["bash", "-e", "-c", script],
+        env={
+            **os.environ,
+            "RUNNER_TEMP": str(tmp_path),
+            "compat": "synthetic-compat",
+            "old_image": "synthetic:historical",
+            "SYNTHETIC_FAILURE": f"{failure}\n{sentinel} postgresql://private@example.test/test",
+            "SYNTHETIC_EXIT": str(exit_code),
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == exit_code
+    if exit_code:
+        assert json.loads(result.stdout) == {
+            "stage": "historical_migration",
+            "exit_code": exit_code,
+            "category": category,
+        }
+    else:
+        assert result.stdout == "migration failure was ignored\n"
+    assert result.stderr == ""
+    assert sentinel not in result.stdout + result.stderr
+    assert "private" not in result.stdout + result.stderr
+
+
+def test_historical_source_is_readable_by_image_user_before_build_without_opening_config(
+    tmp_path: Path,
+) -> None:
+    """Usa tar real e o prefixo real do workflow sob umask077, sem Docker ou download."""
+    import io
+    import json
+    import shlex
+    import shutil
+    import stat
+    import tarfile
+
+    archive = tmp_path / "public-source.tar.gz"
+    with tarfile.open(archive, "w:gz") as package:
+        for name in ("public-source", "public-source/app"):
+            entry = tarfile.TarInfo(name)
+            entry.type, entry.mode = tarfile.DIRTYPE, 0o755
+            package.addfile(entry)
+        entry = tarfile.TarInfo("public-source/app/alembic.ini")
+        content = b"[alembic]\nscript_location = app/migrations\n"
+        entry.size, entry.mode = len(content), 0o644
+        package.addfile(entry, io.BytesIO(content))
+    configuration = tmp_path / "private-config"
+    configuration.mkdir(mode=0o700)
+    env_file = configuration / "app.env"
+    env_file.touch(mode=0o600)
+    rehearsal = next(
+        step["run"]
+        for step in steps_of("swarm")
+        if step.get("name") == "Rehearse real pre-projection bootstrap and forward recovery"
+    )
+    prefix = rehearsal[: rehearsal.index('cp "$CONF/stack.yaml"')]
+    probe = (
+        "import json,stat,sys; from pathlib import Path; p=Path(sys.argv[1]); "
+        "print(json.dumps({name:stat.S_IMODE((p/name).stat().st_mode) "
+        "for name in ('app','app/alembic.ini')}))"
+    )
+    script = (
+        'curl() { cp "$SYNTHETIC_ARCHIVE" "$RUNNER_TEMP/compat-old.tar.gz"; }\n'
+        'tar() { "$TEST_TAR" "$@"; }\n'
+        f'docker() {{ "$TEST_PYTHON" -c {shlex.quote(probe)} "$source"; }}\n' + prefix
+    )
+    result = subprocess.run(
+        ["bash", "-e", "-c", script],
+        env={
+            **os.environ,
+            "RUNNER_TEMP": str(tmp_path),
+            "SYNTHETIC_ARCHIVE": str(archive),
+            "TEST_TAR": shutil.which("gtar") or shutil.which("tar"),
+            "TEST_PYTHON": sys.executable,
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {"app": 0o755, "app/alembic.ini": 0o644}
+    assert stat.S_IMODE(configuration.stat().st_mode) == 0o700
+    assert stat.S_IMODE(env_file.stat().st_mode) == 0o600
+
+
+@pytest.mark.parametrize(
+    "fault,reason,last_operation",
+    [
+        ({"STUB_OLD_RUNNING": "1"}, "old_process_alive", "container.inspect"),
+        ({"STUB_REAP_RACE": "wait", "STUB_LATE_TASK": "1"}, "inventory_changed", "container.ls"),
+    ],
+)
+def test_early_adoption_refusal_is_diagnosed_without_accepting_it_as_post_ddl_failure(
+    tmp_path: Path,
+    fault: dict[str, str],
+    reason: str,
+    last_operation: str,
+) -> None:
+    """O helper real recusa processo vivo; só Docker é falso e os marcadores continuam obrigatórios."""
+    import json
+
+    from test_swarm_scripts import Server, Staging
+
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    server = Server(tmp_path, Staging(staging))
+    rehearsal = next(
+        step["run"]
+        for step in steps_of("swarm")
+        if step.get("name") == "Rehearse real pre-projection bootstrap and forward recovery"
+    )
+    wrapper_folder = server.folder / "bin"
+    wrapper_folder.mkdir()
+    wrapper = wrapper_folder / "docker"
+    wrapper.write_text(rehearsal.split("cat > bin/docker <<'SH'\n", 1)[1].split("\nSH\n", 1)[0])
+    wrapper.chmod(0o700)
+    start = rehearsal.index('if env -u DOMAIN -u STACK PATH="$folder/bin:$PATH"')
+    script = rehearsal[start : rehearsal.index("cat before-ddl", start)]
+    launcher = server.folder / "rehearse.sh"
+    launcher.write_text("#!/usr/bin/env bash\nset -euo pipefail\n" + script)
+    launcher.chmod(0o700)
+    result = server.run(
+        "rehearse.sh",
+        folder=str(server.folder),
+        CI_REAL_DOCKER=str(server.bin_dir / "docker"),
+        CI_COMPAT_FOLDER=str(server.folder),
+        CI_COMPAT_STACK="gerador-planos",
+        STUB_NETWORK="1",
+        STUB_CONTRACT_FLOOR="0",
+        **fault,
+    )
+    assert result.returncode == 1
+    assert json.loads(result.stdout) == {
+        "stage": "first_adoption",
+        "exit_code": 1,
+        "reason": reason,
+        "last_operation": last_operation,
+        "before_ddl": False,
+        "ddl_committed": False,
+    }
+    assert result.stderr == ""
+    assert not (server.folder / "before-ddl").exists()
+    assert not (server.folder / "ddl-committed-launcher-failed").exists()
+
+
+@pytest.mark.parametrize("role", ["api", "worker", "SYNTHETIC_PRIVATE_ROLE"])
+def test_bootstrap_err_trap_keeps_exit_cleanup_and_only_reports_safe_location(
+    tmp_path: Path, role: str
+) -> None:
+    import json
+
+    rehearsal = next(
+        step["run"]
+        for step in steps_of("swarm")
+        if step.get("name") == "Rehearse real pre-projection bootstrap and forward recovery"
+    )
+    prefix = rehearsal[: rehearsal.index("old_sha=")]
+    cleanup = rehearsal[rehearsal.index("cleanup_compat()") :]
+    cleanup = cleanup[: cleanup.index("trap cleanup_compat EXIT") + len("trap cleanup_compat EXIT")]
+    script = (
+        prefix
+        + 'docker() { case "$1 ${2:-}" in\n'
+        + '  "service inspect") return 37 ;;\n'
+        + '  "stack rm") : > "$CLEANUP_MARKER" ;;\n'
+        + '  "network inspect") return 1 ;;\n'
+        + "esac; }\n"
+        + cleanup
+        + '\nbootstrap_role="$SYNTHETIC_ROLE"\n'
+        + 'docker service inspect "$SYNTHETIC_PRIVATE_ARG"\n'
+    )
+    result = subprocess.run(
+        ["bash", "-e", "-u", "-o", "pipefail", "-c", script],
+        env={
+            **os.environ,
+            "compat": "synthetic-compat",
+            "SYNTHETIC_ROLE": role,
+            "SYNTHETIC_PRIVATE_ARG": "SYNTHETIC_PRIVATE_ARGUMENT",
+            "CLEANUP_MARKER": str(tmp_path / "cleanup-ran"),
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 37
+    assert (tmp_path / "cleanup-ran").exists()
+    assert json.loads(result.stdout) == {
+        "stage": "bootstrap_error",
+        "line": len(script.splitlines()),
+        "exit_code": 37,
+        "role": role if role in ("api", "worker") else "none",
+    }
+    assert result.stderr == ""
+    assert "SYNTHETIC_PRIVATE" not in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("arguments", "operation"),
+    [
+        (["image", "inspect"], "image.inspect"),
+        (["image", "tag"], "image.tag"),
+        *[
+            (["service", action], f"service.{action}")
+            for action in ("inspect", "ls", "ps", "scale", "update")
+        ],
+        (["inspect", "--type", "container"], "container.inspect"),
+        (["inspect", "--type", "task"], "task.inspect"),
+        (["container", "wait"], "container.wait"),
+        (["network", "inspect"], "network.inspect"),
+        (["node", "inspect"], "node.inspect"),
+        (["info"], "info"),
+        (["ps"], "container.ls"),
+        (["stack", "deploy"], "stack.deploy"),
+        *[
+            (["run", "SYNTHETIC_PRIVATE_IMAGE", action], f"run.{action}")
+            for action in ("capability", "status", "begin", "attest", "migrate")
+        ],
+        (["SYNTHETIC_PRIVATE_COMMAND"], "other"),
+    ],
+)
+def test_docker_wrapper_records_only_closed_operation_and_preserves_failure(
+    tmp_path: Path, arguments: list[str], operation: str
+) -> None:
+    rehearsal = next(
+        step["run"]
+        for step in steps_of("swarm")
+        if step.get("name") == "Rehearse real pre-projection bootstrap and forward recovery"
+    )
+    wrapper = tmp_path / "docker"
+    wrapper.write_text(rehearsal.split("cat > bin/docker <<'SH'\n", 1)[1].split("\nSH\n", 1)[0])
+    wrapper.chmod(0o700)
+    real = tmp_path / "real-docker"
+    real.write_text(
+        '#!/usr/bin/env bash\nif [[ "${SYNTHETIC_MIGRATE:-0}" == 1 && "$1 ${2:-}" == "service inspect" ]]; then\n'
+        "  echo 0; exit 0\nfi\nexit 37\n"
+    )
+    real.chmod(0o700)
+    (tmp_path / "old-containers").touch()
+    sent = arguments if operation.startswith("run.") else [*arguments, "SYNTHETIC_PRIVATE_ARGUMENT"]
+    result = subprocess.run(
+        [str(wrapper), *sent],
+        env={
+            **os.environ,
+            "CI_REAL_DOCKER": str(real),
+            "CI_COMPAT_FOLDER": str(tmp_path),
+            "CI_COMPAT_STACK": "synthetic-compat",
+            "SYNTHETIC_MIGRATE": str(int(operation == "run.migrate")),
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 37
+    assert (tmp_path / "last-docker-operation").read_text().strip() == operation
+    assert result.stdout == result.stderr == ""
+    assert not (tmp_path / "ddl-committed-launcher-failed").exists()
+
+
+def test_bootstrap_evidence_never_publishes_private_helper_logs(tmp_path: Path) -> None:
+    rehearsal = next(
+        step["run"]
+        for step in steps_of("swarm")
+        if step.get("name") == "Rehearse real pre-projection bootstrap and forward recovery"
+    )
+    first = rehearsal[rehearsal.index("test -s before-ddl") :]
+    first = first[: first.index('test "$(psql_compat')]
+    refused = rehearsal[rehearsal.index('test "$(versions)" = "$before"') :]
+    refused = refused[: refused.index("env -u DOMAIN -u STACK IMAGE=gerador-planos:ci ./deploy.sh")]
+    (tmp_path / "before-ddl").write_text("synthetic-api 1 0 0\n")
+    (tmp_path / "ddl-committed-launcher-failed").touch()
+    for name in ("first-adoption.log", "refuse-old.log"):
+        (tmp_path / name).write_text("SYNTHETIC_PRIVATE_LOG_CONTENT\n")
+    result = subprocess.run(
+        [
+            "bash",
+            "-e",
+            "-c",
+            "versions() { echo synthetic; }; before=synthetic; psql_compat() { echo 1:blocked; };\n"
+            + first
+            + refused,
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "synthetic-api 1 0 0\n"
+    assert result.stderr == ""
+
+
+@pytest.mark.parametrize("operation", ["service.inspect", "SYNTHETIC_PRIVATE_OPERATION"])
+def test_first_adoption_report_validates_operation_before_emitting_it(
+    tmp_path: Path, operation: str
+) -> None:
+    import json
+
+    rehearsal = next(
+        step["run"]
+        for step in steps_of("swarm")
+        if step.get("name") == "Rehearse real pre-projection bootstrap and forward recovery"
+    )
+    parser = rehearsal.split("python3 - \"$adoption_exit\" <<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
+    (tmp_path / "first-adoption.log").write_text(
+        "Docker recusou uma operação; SYNTHETIC_PRIVATE_LOG_VALUE\n"
+    )
+    (tmp_path / "last-docker-operation").write_text(operation)
+    result = subprocess.run(
+        [sys.executable, "-", "1"],
+        input=parser,
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {
+        "stage": "first_adoption",
+        "exit_code": 1,
+        "reason": "docker_operation",
+        "last_operation": operation if operation == "service.inspect" else "unknown",
+        "before_ddl": False,
+        "ddl_committed": False,
+    }
+    assert "SYNTHETIC_PRIVATE" not in result.stdout
+
+
+def test_migration_wrapper_keeps_controlled_post_commit_failure(tmp_path: Path) -> None:
+    rehearsal = next(
+        step["run"]
+        for step in steps_of("swarm")
+        if step.get("name") == "Rehearse real pre-projection bootstrap and forward recovery"
+    )
+    wrapper = tmp_path / "docker"
+    wrapper.write_text(rehearsal.split("cat > bin/docker <<'SH'\n", 1)[1].split("\nSH\n", 1)[0])
+    wrapper.chmod(0o700)
+    real = tmp_path / "real-docker"
+    real.write_text(
+        '#!/usr/bin/env bash\nif [[ "$1 ${2:-}" == "service inspect" ]]; then echo 0; fi\nexit 0\n'
+    )
+    real.chmod(0o700)
+    (tmp_path / "old-containers").touch()
+    result = subprocess.run(
+        [str(wrapper), "run", "SYNTHETIC_PRIVATE_IMAGE", "migrate"],
+        env={
+            **os.environ,
+            "CI_REAL_DOCKER": str(real),
+            "CI_COMPAT_FOLDER": str(tmp_path),
+            "CI_COMPAT_STACK": "synthetic-compat",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 42
+    assert (tmp_path / "before-ddl").stat().st_size > 0
+    assert (tmp_path / "ddl-committed-launcher-failed").exists()
+    assert (tmp_path / "last-docker-operation").read_text().strip() == "run.migrate"
+    assert result.stdout == result.stderr == ""
+
+
+@pytest.mark.parametrize(
+    "proof",
+    [
+        "stopped",
+        "destroyed",
+        "task_removed",
+        "running",
+        "missing",
+        "list_error",
+        "event_error",
+        "wrong_id",
+        "history_rotated",
+        "cached_wrong_id",
+    ],
+)
+def test_bootstrap_proves_old_container_exit_without_requiring_retention(
+    tmp_path: Path, proof: str
+) -> None:
+    from test_swarm_scripts import Server, Staging
+
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    server = Server(tmp_path, Staging(staging))
+    rehearsal = next(
+        step["run"]
+        for step in steps_of("swarm")
+        if step.get("name") == "Rehearse real pre-projection bootstrap and forward recovery"
+    )
+    wrapper = server.folder / "wrapper-docker"
+    wrapper.write_text(rehearsal.split("cat > bin/docker <<'SH'\n", 1)[1].split("\nSH\n", 1)[0])
+    wrapper.chmod(0o700)
+    baseline = rehearsal[
+        rehearsal.index('python3 - "$folder" "$compat"') : rehearsal.index("export CI_REAL_DOCKER=")
+    ]
+    script = server.folder / "prove.sh"
+    script.write_text(
+        "#!/usr/bin/env bash\nset -euo pipefail\n"
+        + baseline
+        + "\n"
+        + (
+            "true"
+            if proof == "running"
+            else "docker service scale gerador-planos_api=0 gerador-planos_worker=0"
+        )
+        + '\ncid=$(python3 -c \'import json; print(json.load(open("exit-baseline.json"))["roles"]["api"][0]["container_id"])\')\n./wrapper-docker ci-prove-stopped "$cid"\n'
+        + (
+            'python3 - <<\'PY\'\nimport json\nfrom pathlib import Path\np=Path("exit-baseline.json"); d=json.loads(p.read_text()); next(iter(d["proofs"].values()))["container_id"]="wrong"; p.write_text(json.dumps(d))\nPY\n'
+            if proof == "cached_wrong_id"
+            else ""
+        )
+        + './wrapper-docker ci-prove-stopped "$cid"\n'
+    )
+    script.chmod(0o700)
+    faults = {"STUB_REAP": "container"}
+    if proof in {"stopped", "running"}:
+        faults = {}
+    if proof == "task_removed":
+        faults = {"STUB_REAP": "task"}
+    if proof == "missing":
+        faults["STUB_NO_DESTROY"] = "1"
+    if proof == "list_error":
+        faults["STUB_LOCAL_LIST_FAIL"] = "1"
+    if proof == "event_error":
+        faults["STUB_EVENTS_FAIL"] = "1"
+    if proof == "wrong_id":
+        faults["STUB_EVENT_FAULT"] = "id"
+    if proof in {"history_rotated", "cached_wrong_id"}:
+        faults["STUB_CONSUME_EVENTS"] = "1"
+    result = server.run(
+        "prove.sh",
+        folder=str(server.folder),
+        compat="gerador-planos",
+        CI_REAL_DOCKER=str(server.bin_dir / "docker"),
+        CI_COMPAT_FOLDER=str(server.folder),
+        CI_COMPAT_STACK="gerador-planos",
+        STUB_NETWORK="1",
+        STUB_CONTRACT_FLOOR="0",
+        **faults,
+    )
+    assert (result.returncode == 0) == (
+        proof in {"stopped", "destroyed", "task_removed", "history_rotated"}
+    )
+    assert result.stdout == result.stderr == ""
+
+
+@pytest.mark.parametrize(
+    "fault,expected_status,expected_deploys",
+    [
+        ("normal", 0, 2),
+        ("multiple", 0, 2),
+        *[
+            (name, 1, 1)
+            for name in (
+                "adoption_db",
+                "adoption_db_restart",
+                "adoption_image",
+                "adoption_extra_image",
+                "adoption_health",
+                "adoption_stopped",
+                "adoption_contract",
+            )
+        ],
+        *[
+            (name, 1, 2)
+            for name in (
+                "second_api",
+                "second_worker",
+                "second_db",
+                "second_db_restart",
+                "second_api_container",
+                "second_api_restart",
+            )
+        ],
+    ],
+)
+def test_manual_stack_adoption_precedes_strict_noop(
+    tmp_path: Path, fault: str, expected_status: int, expected_deploys: int
+) -> None:
+    """Executa o bloco real; só o deploy externo e o daemon fornecem metadados sintéticos."""
+    run_manual_stack_adoption(
+        tmp_path, fault, expected_status=expected_status, expected_deploys=expected_deploys
+    )
+
+
+def run_manual_stack_adoption(
+    tmp_path: Path, fault: str, *, expected_status: int, expected_deploys: int
+) -> None:
+    import json
+
+    configuration = tmp_path / "conf"
+    configuration.mkdir()
+    (configuration / "app.env").write_text("SYNTHETIC_CONFIGURATION\n")
+    state = tmp_path / "deploys.json"
+    state.write_text("[]")
+    binary = tmp_path / "bin"
+    binary.mkdir()
+    deploy = configuration / "deploy.sh"
+    deploy.write_text(
+        f"#!{sys.executable}\n"
+        "import json, os\nfrom pathlib import Path\n"
+        "p=Path(os.environ['NOOP_STATE']); calls=json.loads(p.read_text())\n"
+        "calls.append(os.environ.get('IMAGE')); p.write_text(json.dumps(calls))\n"
+    )
+    deploy.chmod(0o700)
+    docker = binary / "docker"
+    docker.write_text(f"#!{sys.executable}\n" + MANUAL_ADOPTION_DOCKER)
+    docker.chmod(0o700)
+    script = next(
+        step["run"]
+        for step in steps_of("swarm")
+        if step.get("name") == "Run deploy.sh on the stack deployed by hand"
+    )
+    result = subprocess.run(
+        ["bash", "-e", "-o", "pipefail", "-c", script],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={
+            **os.environ,
+            "CONF": str(configuration),
+            "PATH": f"{binary}:{os.environ['PATH']}",
+            "NOOP_STATE": str(state),
+            "NOOP_FAULT": fault,
+        },
+    )
+    assert result.returncode == expected_status, result.stdout + result.stderr
+    assert json.loads(state.read_text()) == ["gerador-planos:ci"] * expected_deploys
+    assert (configuration / "app.env").read_text() == "SYNTHETIC_CONFIGURATION\n"
+    assert "SYNTHETIC_PRIVATE" not in result.stdout + result.stderr
+
+
+MANUAL_ADOPTION_DOCKER = r"""
+import hashlib, json, os, sys
+from pathlib import Path
+args=sys.argv[1:]; phase=len(json.loads(Path(os.environ['NOOP_STATE']).read_text()))
+fault=os.environ['NOOP_FAULT']; target='sha256:'+'a'*64
+
+def active(role):
+    count=2 if role=='worker' and fault in {'multiple','adoption_extra_image'} else 1
+    rows=[]
+    for slot in range(1,count+1):
+        version='manual' if phase==0 and role!='db' else 'adopted'
+        if role=='db': version='original'
+        if phase>=1 and fault=='adoption_db' and role=='db': version='replaced'
+        if phase>=2 and fault=='second_'+role: version='recreated'
+        tid=hashlib.sha256(f'{role}-{slot}-{version}'.encode()).hexdigest()
+        cid=hashlib.sha256(tid.encode()).hexdigest()
+        if phase>=2 and role=='api' and fault=='second_api_container': cid=hashlib.sha256((cid+'changed').encode()).hexdigest()
+        restarted=(role=='db' and ((fault=='adoption_db_restart' and phase>=1) or (fault=='second_db_restart' and phase>=2))) or (role=='api' and fault=='second_api_restart' and phase>=2)
+        wrong_image=phase>=1 and ((fault=='adoption_image' and role=='api') or (fault=='adoption_extra_image' and role=='worker' and slot==2))
+        unhealthy=phase>=1 and fault=='adoption_health' and role=='worker'
+        stopped=phase>=1 and fault=='adoption_stopped' and role=='api'
+        metadata={'id':cid,'image':'sha256:'+'b'*64 if wrong_image else target,
+                  'running':not stopped,'health':'unhealthy' if unhealthy else 'healthy',
+                  'started':'2026-10-21T00:00:00Z' if restarted else '2026-10-20T00:00:00Z',
+                  'restarts':1 if restarted else 0}
+        rows.append((tid,cid,metadata))
+    return rows
+
+if args[:2]==['image','inspect']: print(target)
+elif args[:2]==['service','inspect']:
+    role=args[-1].rsplit('_',1)[-1]; print(len(active(role)))
+elif args[:2]==['service','ps']:
+    services=[x for x in args if x.startswith('gerador-planos_')]
+    if '-q' in args:
+        print('\n'.join(row[0] for name in services for row in active(name.rsplit('_',1)[-1])))
+    else:
+        print('\n'.join(f'{name}.{slot} {row[0]}' for name in services for slot,row in enumerate(active(name.rsplit('_',1)[-1]),1)))
+elif args[:2]==['inspect','--type']:
+    kind=args[2]; identity=args[-1]
+    row=next((row for role in ('db','api','worker') for row in active(role) if identity==row[0 if kind=='task' else 1]),None)
+    if row is None: sys.stderr.write('SYNTHETIC_PRIVATE_DAEMON_ERROR'); raise SystemExit(1)
+    print(row[1] if kind=='task' else json.dumps(row[2]))
+elif args[0]=='exec': print('1:blocked' if fault=='adoption_contract' else '1:verified')
+else:
+    sys.stderr.write('SYNTHETIC_PRIVATE_DAEMON_ERROR'); raise SystemExit(2)
+"""
+
+
+@pytest.mark.parametrize(
+    "fault,status,deploys",
+    [
+        ("normal", 0, 1),
+        ("same_content", 1, 0),
+        ("empty_state", 1, 1),
+        ("wrong_image", 1, 1),
+        ("no_replacement", 1, 1),
+        ("unhealthy", 1, 1),
+        ("no_tasks", 1, 1),
+        ("db_replaced", 1, 1),
+    ],
+)
+def test_rolling_rehearsal_uses_distinct_content_before_expecting_completed(
+    tmp_path: Path, fault: str, status: int, deploys: int
+) -> None:
+    run_distinct_rolling_rehearsal(tmp_path, fault, status=status, deploys=deploys)
+
+
+def run_distinct_rolling_rehearsal(
+    tmp_path: Path, fault: str, *, status: int, deploys: int
+) -> None:
+    import json
+
+    state = tmp_path / "rolling.json"
+    state.write_text(
+        json.dumps(
+            {
+                "images": {"gerador-planos:ci": "sha256:" + "a" * 64},
+                "current": "sha256:" + "a" * 64,
+                "updated": False,
+                "deploys": 0,
+            }
+        )
+    )
+    binary = tmp_path / "bin"
+    binary.mkdir()
+    docker = binary / "docker"
+    docker.write_text(f"#!{sys.executable}\n" + DISTINCT_ROLLING_DOCKER)
+    docker.chmod(0o700)
+    deploy = tmp_path / "deploy.sh"
+    deploy.write_text(
+        f"#!{sys.executable}\n"
+        + """import json,os
+from pathlib import Path
+p=Path(os.environ['ROLLING_STATE']); state=json.loads(p.read_text())
+target=state['images'][os.environ['IMAGE']]
+state['updated']=target!=state['current']; state['current']=target; state['deploys']+=1
+p.write_text(json.dumps(state))
+"""
+    )
+    deploy.chmod(0o700)
+    full = next(
+        step["run"]
+        for step in steps_of("swarm")
+        if step.get("name", "").startswith("Update, break and go back")
+    )
+    start = full.index('echo "::group::1.')
+    helpers = full[full.index("state() {") : start]
+    group = full[start : full.index('echo "::group::2.', start)]
+    result = subprocess.run(
+        ["bash", "-e", "-o", "pipefail", "-c", 'cd "$CONF"\n' + helpers + group],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={
+            **os.environ,
+            "CONF": str(tmp_path),
+            "PATH": f"{binary}:{os.environ['PATH']}",
+            "ROLLING_STATE": str(state),
+            "ROLLING_FAULT": fault,
+        },
+    )
+    assert result.returncode == status, result.stdout + result.stderr
+    recorded = json.loads(state.read_text())
+    assert recorded["deploys"] == deploys
+    if status == 0:
+        assert (
+            recorded["images"]["gerador-planos:ci-novo"] != recorded["images"]["gerador-planos:ci"]
+        )
+
+
+DISTINCT_ROLLING_DOCKER = r"""
+import hashlib,json,os,sys
+from pathlib import Path
+p=Path(os.environ['ROLLING_STATE']); state=json.loads(p.read_text()); a=sys.argv[1:]
+fault=os.environ['ROLLING_FAULT']; original='sha256:'+'a'*64
+def task(role):
+    changed=state['updated'] and ((role in {'api','worker'} and fault!='no_replacement') or (role=='db' and fault=='db_replaced'))
+    return role+('-new-task' if changed else '-task')
+if a[0]=='tag': state['images'][a[-1]]=state['images'][a[-2]]
+elif a[0]=='build':
+    definition=sys.stdin.read()
+    assert 'FROM gerador-planos:ci\n' in definition and 'LABEL ci.build=' in definition
+    state['images']['gerador-planos:ci-novo']=original if fault=='same_content' else 'sha256:'+'b'*64
+    print(state['images']['gerador-planos:ci-novo'])
+elif a[:2]==['image','inspect']: print(state['images'][a[-1]])
+elif a[:2]==['service','inspect']:
+    fmt=a[a.index('--format')+1]
+    print(('completed' if state['updated'] and fault!='empty_state' else '') if 'UpdateStatus' in fmt else 'leadkit-local:'+state['current'].split(':')[1])
+elif a[:2]==['service','ps']:
+    role=a[-1].rsplit('_',1)[-1]
+    if not (state['updated'] and role=='worker' and fault=='no_tasks'): print(task(role))
+elif a[:2]==['inspect','--type']:
+    if a[2]=='task': print(hashlib.sha256(a[-1].encode()).hexdigest())
+    elif 'Health.Status' in a[a.index('--format')+1]: print('unhealthy' if fault=='unhealthy' else 'healthy')
+    else: print(original if fault=='wrong_image' and a[-1]==hashlib.sha256(task('worker').encode()).hexdigest() else state['current'])
+else: raise SystemExit(2)
+p.write_text(json.dumps(state))
+"""
+
+
+@pytest.mark.parametrize(
+    "case,fault,expected",
+    [
+        (4, "valid", 0),
+        (4, "missing_migration", 1),
+        (4, "verified", 1),
+        (4, "wrong_floor", 1),
+        (4, "changed_service", 1),
+        (5, "valid", 0),
+        (5, "unexpected_migration", 1),
+        (5, "uncontrolled", 1),
+        (5, "changed_service", 1),
+    ],
+)
+def test_preflight_and_migration_evidence_require_distinct_proofs(
+    tmp_path: Path, case: int, fault: str, expected: int
+) -> None:
+    full = next(
+        step["run"]
+        for step in steps_of("swarm")
+        if step.get("name", "").startswith("Update, break and go back")
+    )
+    segment = full[
+        full.index(f'echo "::group::{case}.') : full.index(f'echo "::group::{case + 1}.')
+    ]
+    filename = (
+        "back-sem-rollback.log"
+        if case == 4
+        else re.findall(r'cat "\$RUNNER_TEMP/([^"\n]+)"', segment)[-1]
+    )
+    marker = "deploy.sh: migrations com gerador-planos:ci\n"
+    if case == 4:
+        content = (
+            "" if fault == "missing_migration" else marker
+        ) + "revisão incompatível; a imagem não foi atualizada.\n"
+        assertions = segment.rsplit(f'cat "$RUNNER_TEMP/{filename}"\n', 1)[1].split(
+            "ROLLBACK=1 IMAGE="
+        )[0]
+    else:
+        content = (
+            "a stack não foi mexida.\n"
+            if fault == "uncontrolled"
+            else "O banco não confirmou o contrato; a stack não foi mexida.\n"
+        )
+        if fault == "unexpected_migration":
+            content += marker
+        assertions = segment.rsplit(f'cat "$RUNNER_TEMP/{filename}"\n', 1)[1].split(
+            'cp "$RUNNER_TEMP/app.env.ok"'
+        )[0]
+    (tmp_path / filename).write_text(content)
+    prefix = 'versions() { echo "$OBSERVED_VERSION"; }; psql_db() { echo "$OBSERVED_CONTRACT"; }; before=original;\n'
+    result = subprocess.run(
+        ["bash", "-e", "-c", prefix + assertions],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={
+            **os.environ,
+            "RUNNER_TEMP": str(tmp_path),
+            "OBSERVED_VERSION": "changed" if fault == "changed_service" else "original",
+            "OBSERVED_CONTRACT": "1:verified"
+            if fault == "verified"
+            else "0:blocked"
+            if fault == "wrong_floor"
+            else "1:blocked",
+        },
+    )
+    assert result.returncode == expected, result.stdout + result.stderr
+
+
+def test_preflight_unavailable_database_never_calls_begin_or_migrate(tmp_path: Path) -> None:
+    import shutil
+
+    from test_swarm_scripts import Server, Staging
+
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    server = Server(tmp_path, Staging(stage))
+    if gnu_sed := shutil.which("gsed"):
+        (server.bin_dir / "sed").symlink_to(gnu_sed)
+    docker = server.bin_dir / "docker"
+    docker.rename(server.bin_dir / "docker-stub")
+    docker.write_text(
+        '#!/usr/bin/env bash\nif [[ "$1" == run && "${@: -1}" == status ]]; then\n  echo "$*" >> "$STUB_CALLS"\n  exit 1\nfi\nexec "$(dirname "$0")/docker-stub" "$@"\n'
+    )
+    docker.chmod(0o700)
+    server.write_app_env(
+        "DATABASE_URL=postgresql+psycopg://synthetic@gerador-planos_db:5432/synthetic_test"
+    )
+    shutil.copyfile(server.folder / "app.env", tmp_path / "app.env.ok")
+    full = next(
+        step["run"]
+        for step in steps_of("swarm")
+        if step.get("name", "").startswith("Update, break and go back")
+    )
+    segment = full[full.index('echo "::group::5.') : full.index('echo "::group::6.')]
+    launcher = server.folder / "preflight.sh"
+    launcher.write_text(
+        "#!/usr/bin/env bash\nset -euo pipefail\nversions() { echo synthetic-services; }\n"
+        + segment
+    )
+    launcher.chmod(0o700)
+    result = server.run(
+        "preflight.sh",
+        RUNNER_TEMP=str(tmp_path),
+        STUB_NETWORK="1",
+        STUB_CONTRACT_FLOOR="1",
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "O banco não confirmou o contrato" in result.stdout
+    assert not any(
+        call.startswith("run ") and call.endswith((" begin", " migrate", " attest"))
+        for call in server.calls
+    )
+    assert not any(
+        call.startswith(("stack deploy", "service scale", "service update"))
+        for call in server.calls
+    )
+
+
+@pytest.mark.parametrize(
+    "fault,status",
+    [
+        ("delayed", 0),
+        ("permanent", 1),
+        ("list_error", 1),
+        ("network_error", 1),
+        ("network_pending", 1),
+        ("service_pending", 1),
+        ("service_error", 1),
+    ],
+)
+def test_volume_redeploy_requires_confirmed_cleanup(
+    tmp_path: Path, fault: str, status: int
+) -> None:
+    run_volume_redeploy_cleanup(tmp_path, fault, status=status)
+
+
+def run_volume_redeploy_cleanup(tmp_path: Path, fault: str, *, status: int) -> None:
+    import json
+
+    from test_swarm_scripts import Server, Staging, rollout_state
+
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    server = Server(tmp_path, Staging(stage))
+    docker = server.bin_dir / "docker"
+    docker.rename(server.bin_dir / "docker-stub")
+    docker.write_text(f"#!{sys.executable}\n" + VOLUME_CLEANUP_DOCKER)
+    docker.chmod(0o700)
+    for name, content in (("sleep", "exit 0"), ("seq", "printf '1\\n2\\n3\\n'")):
+        path = server.bin_dir / name
+        path.write_text("#!/usr/bin/env bash\n" + content + "\n")
+        path.chmod(0o700)
+    full = next(
+        step["run"]
+        for step in steps_of("swarm")
+        if step.get("name", "").startswith("Remove the stack, keep the volume")
+    )
+    script = full.split("for _ in $(seq 1 30)", 1)[0]
+    launcher = server.folder / "redeploy.sh"
+    launcher.write_text("#!/usr/bin/env bash\nset -euo pipefail\n" + script)
+    launcher.chmod(0o700)
+    result = server.run(
+        "redeploy.sh",
+        CONF=str(server.folder),
+        STUB_NETWORK="1",
+        STUB_CONTRACT_FLOOR="1",
+        CLEANUP_FAULT=fault,
+    )
+    assert result.returncode == status, result.stdout + result.stderr
+    expected_reason = {
+        "delayed": "removed",
+        "permanent": "containers_pending",
+        "list_error": "containers_unavailable",
+        "network_error": "networks_unavailable",
+        "network_pending": "network_pending",
+        "service_pending": "services_pending",
+        "service_error": "services_unavailable",
+    }[fault]
+    events = [
+        json.loads(line) for line in result.stdout.splitlines() if line.startswith('{"stage":')
+    ]
+    assert events == [{"stage": "stack_removal", "reason": expected_reason}]
+    assert "SYNTHETIC_PRIVATE" not in result.stdout + result.stderr
+    state = rollout_state(server)
+    if status == 0:
+        assert not state["cleanup_pending"]
+        assert state["cleanup_queries"] >= 2
+        assert state["floor"] == 1
+        assert state["phase"] == "verified"
+        assert any(call.startswith("run ") and call.endswith(" migrate") for call in server.calls)
+    else:
+        assert not any(call.startswith("run ") for call in server.calls)
+        assert not any(call.startswith("stack deploy") for call in server.calls)
+
+
+VOLUME_CLEANUP_DOCKER = r"""
+import json,os,subprocess,sys
+from pathlib import Path
+args=sys.argv[1:]; calls=Path(os.environ['STUB_CALLS']); state_path=Path(str(calls)+'.state')
+real=Path(__file__).with_name('docker-stub'); fault=os.environ['CLEANUP_FAULT']
+if not state_path.exists(): subprocess.run([str(real),'info'],check=True,capture_output=True)
+state=json.loads(state_path.read_text()); handled=True; out=''; code=0
+if args[:2]==['stack','rm']:
+    state['cleanup_pending']={task['Status']['ContainerStatus']['ContainerID']:task['role'] for task in state['tasks'].values()}
+    for container in state['containers'].values(): container['State']['Running']=False
+    state['services']={}; state['tasks']={}; state['network']=False
+elif args[0]=='ps' and any('com.docker.stack.namespace=' in a for a in args):
+    if fault=='list_error': code=1
+    if '-aq' in args:
+        state['cleanup_queries']=state.get('cleanup_queries',0)+1
+        if state['cleanup_queries']>=2 and fault!='permanent':
+            for cid in state['cleanup_pending']: state['containers'].pop(cid,None)
+            state['cleanup_pending']={}
+        out='\n'.join(state['cleanup_pending'])
+elif args[0]=='ps' and state.get('cleanup_pending'):
+    role=args[-1].rsplit('_',1)[-1]
+    out='\n'.join(cid for cid,r in state['cleanup_pending'].items() if r==role)
+elif args[:2]==['network','ls']:
+    if fault=='network_error': code=1
+    out='traefik-public\n'+('gerador-planos_internal' if fault=='network_pending' else '')
+elif args[:2]==['service','ls'] and any('com.docker.stack.namespace=' in a for a in args):
+    if fault=='service_error': code=1
+    if fault=='service_pending': out='gerador-planos_api'
+elif args[:2]==['network','inspect'] and not state['network'] and 'gerador-planos_internal' in args:
+    code=1
+elif args[:2]==['volume','inspect']: out='gerador-planos_pgdata continua'
+else: handled=False
+if handled:
+    with calls.open('a') as file: file.write(' '.join(args)+'\n')
+    state_path.write_text(json.dumps(state))
+    if out: print(out)
+    if code: sys.stderr.write('SYNTHETIC_PRIVATE_DAEMON_ERROR')
+    raise SystemExit(code)
+os.execv(str(real),[str(real),*args])
+"""

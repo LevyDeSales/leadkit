@@ -86,7 +86,10 @@ def test_the_server_lists_one_tool_per_operation_the_key_allows(world: World) ->
     listed = session_run(world, lambda session: session.list_tools())
 
     names = {tool.name for tool in listed.tools}
-    assert names == operation_ids(world.api.document) - {"download_job_pdf"}
+    assert names == operation_ids(world.api.document) - {
+        "download_job_pdf",
+        "get_job_plan_projection",
+    }
     assert len(listed.tools) == 59
     for tool in listed.tools:
         spec = world.tools[tool.name]

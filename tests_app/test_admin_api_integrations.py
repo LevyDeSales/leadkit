@@ -356,6 +356,7 @@ WRONG_TOKEN = "token-errado-do-teste"
 
 def connect_body(**changes: Any) -> dict[str, Any]:
     body: dict[str, Any] = {
+        "purpose": "internal",
         "base_url": BASEROW_URL,
         "table_id": BASEROW_TABLE,
         "token": BASEROW_TOKEN,
@@ -800,7 +801,7 @@ def page_connect(client: ApiClient, **form: str) -> Callable[[], httpx.Response]
 
     def call() -> httpx.Response:
         assert login(client, PAGE_USER).status_code == 303
-        data = {"csrf_token": csrf_token(client), **form}
+        data = {"csrf_token": csrf_token(client), "purpose": "internal", **form}
         return client.post(f"{PAGE}/forms/{SLUG}/baserow/connect", data=data, headers=ORIGIN)
 
     return call

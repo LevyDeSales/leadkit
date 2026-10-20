@@ -67,6 +67,7 @@ def check_installed_package() -> None:
         "migrations/versions/0012_leadkit_baseline.py",
         "migrations/versions/0014_capture_receipts.py",
         "migrations/versions/0015_capture_delivery.py",
+        "migrations/versions/0016_plan_audiences.py",
         "capture_deliveries.py",
         "migrations/versions/0013_artifact_availability.py",
         "forms/starter/definition.json",
@@ -80,7 +81,7 @@ def check_installed_package() -> None:
     assert not (root / "migrations/legacy_forms").exists()
     assert (
         ScriptDirectory.from_config(Config(str(root / "alembic.ini"))).get_current_head()
-        == "0015_capture_delivery"
+        == "0016_plan_audiences"
     )
     assert len(list((root / "assets/fonts").glob("*.ttf"))) == 8
     assert list((root / "web/templates").rglob("*.html"))

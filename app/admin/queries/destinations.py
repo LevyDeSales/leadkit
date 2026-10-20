@@ -99,6 +99,7 @@ class Detail:
     serving_host: str | None
     unreadable: bool
     serving_events: tuple[str, ...] = ()
+    serving_purpose: str | None = None
     capture_counts: Counts = field(default_factory=Counts)
 
 
@@ -123,6 +124,7 @@ def detail(
         serving=scope,
         serving_host=serving.host if serving else None,
         serving_events=serving.events if serving else (),
+        serving_purpose=serving.purpose if serving else None,
         capture_counts=capture_counts(session, webhook_destination_id=own.id) if own else Counts(),
         unreadable=own is not None and form_slug in destinations.unreadable(session, cipher),
     )

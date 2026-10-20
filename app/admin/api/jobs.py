@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import Depends, Path, Query, Request
 from fastapi.concurrency import run_in_threadpool
@@ -47,10 +47,12 @@ from app.admin.api.schemas.jobs import (
     DeliveryFilter,
     JobDetail,
     JobPage,
+    JobPlanProjection,
     JobStatus,
     JobSummary,
     ReprocessedJob,
     ReprocessJobRequest,
+    ResendDeliveryRequest,
     ResendRequest,
     ResentDelivery,
     ResentSync,
@@ -330,6 +332,44 @@ def get_job(
 
 @router.operation(
     "GET",
+    "/jobs/{public_id}/plan-projection",
+    operation_id="get_job_plan_projection",
+    role="total",
+    lead_data=True,
+    errors={
+        409: "A tentativa atual não tem plano ou a versão histórica não permite projetá-lo (`state_conflict`)."
+    },
+    summary="Consultar o plano por audiência",
+    description="Devolve somente o plano da tentativa atual e referências da versão histórica. Participante remove campos internos antes da serialização; interna conserva o documento validado. Exige chave total. O documento inteiro é dado da lead; o MCP só oferece esta operação com GERADOR_MCP_LEAD_DATA=1. Não concede acesso público, não gera outro plano nem envia eventos.",
+    returns="Documento projetado para a audiência explícita, sem respostas ou contato.",
+    response_model=JobPlanProjection,
+)
+def get_job_plan_projection(
+    public_id: Annotated[str, Path(description="Código do pedido.")],
+    audience: Annotated[
+        Literal["participant", "internal"],
+        Query(description="Audiência do documento; participante por omissão."),
+    ] = "participant",
+) -> JobPlanProjection:
+    deps = get_deps()
+    try:
+        with deps.sessions() as session:
+            found = job_queries.get_job_plan_projection(
+                session, public_id, forms=deps.forms, audience=audience
+            )
+    except job_queries.ProjectionUnavailable as exc:
+        raise ApiError("state_conflict", str(exc)) from None
+    if found is None:
+        raise ApiError("not_found", "Pedido não encontrado.")
+    from dataclasses import asdict
+
+    values = asdict(found)
+    document = values.pop("document")
+    return JobPlanProjection(**values, lead_data={"document": document})
+
+
+@router.operation(
+    "GET",
     "/jobs/{public_id}/pdf",
     operation_id="download_job_pdf",
     role="total",
@@ -504,15 +544,19 @@ async def reprocess_job(
     errors={
         404: "O pedido não existe, ou a entrega não é dele (`not_found`).",
         409: (
-            "A entrega não está em `failed`: já voltou para a fila, ou já saiu (`state_conflict`). "
-            "Nada acontece. " + CONFLICT_REPEATED
+            "A entrega não está em `failed`, ou receptor, revisão, audiência, tentativa ou "
+            "retenção não permitem repetir (`state_conflict`). Nada acontece. " + CONFLICT_REPEATED
         ),
     },
     summary="Reenviar uma entrega ao webhook",
     description=(
+        "Novas entregas fixam receptor, revisão, audiência e tentativa. Informe "
+        "`expected_config_version` e `expected_attempt`, lidos agora, para reautorizar a revisão "
+        "do mesmo receptor; a audiência do fato não muda. Tentativa anterior, receptor removido "
+        "ou retenção encerrada são recusados. Históricos sem correlação continuam internos legados. "
         "Reenvia ao webhook o PDF de uma entrega que **falhou** (`failed`, em `get_job.deliveries`): "
-        "ela volta para pendente (`pending`) e o envio é disparado de novo, para o destino que "
-        'vale agora para o formulário. Chama um serviço de fora, por isso exige `"confirm": '
+        "ela volta para pendente (`pending`) e o envio é disparado com a autorização conferida. "
+        'Chama um serviço de fora, por isso exige `"confirm": '
         "true`; sem ele a resposta é `422 confirmation_required` e nada acontece. A ação fica na "
         "auditoria em nome da chave que chamou. Uma entrega que não falhou (já pendente ou "
         "entregue) é `409 state_conflict`: é isso que torna seguro repetir a chamada depois de uma "
@@ -533,12 +577,19 @@ async def resend_job_delivery(
         uuid.UUID,
         Path(description="O `id` da entrega, como `get_job` a mostra em `deliveries`."),
     ],
-    body: ResendRequest,
+    body: ResendDeliveryRequest,
     key: CurrentKey,
 ) -> ResentDelivery:
     deps = get_deps()
     try:
-        done = await job_actions.resend_delivery(deps, public_id, delivery_id, actor=key.actor)
+        done = await job_actions.resend_delivery(
+            deps,
+            public_id,
+            delivery_id,
+            actor=key.actor,
+            expected_config_version=body.expected_config_version,
+            expected_attempt=body.expected_attempt,
+        )
     except job_actions.JobNotFound:
         raise ApiError("not_found", JOB_NOT_FOUND) from None
     except job_actions.ResendRefused as refused:
@@ -610,6 +661,11 @@ def _resend_refused(what: str, refused: job_actions.ResendRefused) -> ApiError:
     """A recusa de um reenvio: `404` se a linha não é deste pedido, `409` se não está em `failed`."""
     if refused.missing:
         return ApiError("not_found", f"Esta {what} não existe neste pedido.")
+    if what == "entrega":
+        return ApiError(
+            "state_conflict",
+            "A entrega precisa ter falhado e manter a mesma audiência e tentativa. Leia a revisão atual do mesmo destino e envie expected_config_version e expected_attempt; confira também a retenção. Nada foi feito.",
+        )
     return ApiError(
         "state_conflict",
         f"Só dá para reenviar uma {what} que falhou (`failed`), e esta já não está nesse estado. "

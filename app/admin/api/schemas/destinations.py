@@ -50,6 +50,9 @@ def _scope(form_slug: str | None) -> str:
 
 
 class Destination(BaseModel):
+    purpose: Literal["internal", "participant"]
+    purpose_origin: Literal["legacy", "explicit", "default"]
+
     """Um destino do webhook guardado, como a API o mostra. **Nunca traz o segredo.**"""
 
     events: list[Literal["plano.concluido", "submissao.persistida"]] = Field(
@@ -103,6 +106,8 @@ class Destination(BaseModel):
         return cls(
             scope=_scope(stored.form_slug),
             events=list(stored.events),
+            purpose=stored.purpose,
+            purpose_origin=stored.purpose_origin,
             url=stored.url if full_url else destinations.origin_of(stored.url),
             url_redacted=not full_url,
             host=stored.host,
@@ -196,6 +201,11 @@ class DestinationPage(Page[DestinationSummary]):
 
 
 class DestinationDetail(BaseModel):
+    serving_purpose: Literal["internal", "participant"] | None = Field(
+        default=None,
+        description="Finalidade efetiva, inclusive do destino padrão herdado. Nenhum documento ou dado pessoal acompanha este estado.",
+    )
+
     """O destino de um escopo e quem entrega os eventos dele."""
 
     capture_delivery_counts: CaptureDeliveryCounts = Field(
@@ -238,6 +248,7 @@ class DestinationDetail(BaseModel):
             serving=found.serving,  # type: ignore[arg-type]
             serving_host=found.serving_host,
             serving_events=list(found.serving_events),
+            serving_purpose=found.serving_purpose,
         )
 
 
@@ -245,6 +256,11 @@ class DestinationDetail(BaseModel):
 
 
 class SaveDestinationRequest(ConfirmedInput, VersionedInput):
+    purpose: Literal["internal", "participant"] | None = Field(
+        default=None,
+        description="Finalidade do receptor. Interna inclui dados comerciais; participante recebe só plano público. Criação omitida nunca autoriza uso interno; mudar URL exige escolha explícita. Giro de segredo conserva a escolha.",
+    )
+
     """O endereço a gravar. Criar o destino (`expected_version` `"0"`) gera o segredo; mudar o endereço
     mantém o segredo. Como o endereço decide para onde vão os dados das leads, a operação exige
     `confirm: true` em toda chamada."""
@@ -305,7 +321,8 @@ class RotatedDestination(Destination):
 
     secret: str = Field(
         description="O segredo novo do destino. **Só existe nesta resposta**: ponha-o no receptor "
-        "agora, porque o antigo já não vale e as entregas seguintes saem assinadas com este.",
+        "agora, porque o antigo já não vale. Novos envios usam este segredo; entregas PDF fixadas "
+        "exigem repetir explicitamente com a revisão atual.",
         examples=["<segredo-mostrado-uma-vez>"],
         repr=False,
     )
@@ -334,7 +351,7 @@ class RemovedDestination(BaseModel):
     )
     serving: Serving = Field(
         description="Quem entrega os eventos deste escopo depois da remoção: `default` (o formulário "
-        "passa a usar o destino padrão) ou `none` (**os planos deixam de ser entregues**). Nunca "
+        "passa a usar o destino padrão para novos envios) ou `none` (novos envios ficam sem entrega). Intenções PDF fixadas não são redirecionadas. Nunca "
         "`form`."
     )
     serving_host: str | None = Field(

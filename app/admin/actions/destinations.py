@@ -78,6 +78,7 @@ def save(
     expected_version: int,
     http_confirmed: bool,
     events: list[str] | None = None,
+    purpose: str | None = None,
 ) -> destinations.SaveResult:
     """Cria o destino (com o segredo novo em `secret`, que só existe neste resultado) ou muda o
     endereço do que existe, que mantém o segredo. `expected_version` é a versão que a pessoa viu (0:
@@ -97,11 +98,14 @@ def save(
             production=deps.settings.app_env == "production",
             http_confirmed=http_confirmed,
             events=events,
+            purpose=purpose,
         )
         db.flush()
         from app.integration_readiness import webhook_problems
 
         if issues := webhook_problems(db, form_slug):
+            if issues[0].path == "integrations.purpose":
+                raise destinations.InvalidPurpose(issues[0].message)
             raise destinations.InvalidEvents(issues[0].message)
         return result
 
@@ -138,8 +142,8 @@ class Removed:
 
 
 def remove(deps: Deps, form_slug: str | None, *, actor: str, expected_version: int) -> Removed:
-    """Apaga o destino: o formulário passa a usar o destino padrão, se houver, e sem ele os planos
-    deixam de ser entregues. Devolve o destino como estava e quem entrega agora. Levanta
+    """Apaga o destino: novos envios usam o padrão, se houver. Intenções PDF fixadas não mudam
+    de receptor; fatos internos legados conservam somente a resolução interna legada. Devolve o destino como estava e quem entrega agora. Levanta
     `Conflict`."""
     with deps.sessions.begin() as db:
         from app.integration_readiness import configuration_lock

@@ -101,6 +101,8 @@ def configuration(session, delivery, spec):
         )
         if row is None or not row.active:
             return row, "configuration_inactive"
+        if row.purpose != "internal":
+            return row, "configuration_incompatible"
         if row.version != delivery.config_version:
             return row, "configuration_changed"
         entries = entries_of(row.capture_mapping)
@@ -126,6 +128,8 @@ def configuration(session, delivery, spec):
         return row, "configuration_removed"
     if row.version != delivery.config_version:
         return row, "configuration_changed"
+    if row.purpose != "internal":
+        return row, "configuration_incompatible"
     if EVENT not in row.events:
         return row, "configuration_incompatible"
     return row, None

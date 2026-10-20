@@ -168,7 +168,7 @@ def new_integration(**changes: object) -> Integration:
         "token_changed_at": now,
         **changes,
     }
-    return Integration(**values)
+    return Integration(**values, purpose="internal")
 
 
 def completed_like_the_previous_code(deps: Deps) -> tuple[uuid.UUID, uuid.UUID]:

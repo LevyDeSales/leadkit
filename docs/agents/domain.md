@@ -18,6 +18,9 @@ obriga uma revisão de arquitetura. Specs e tickets continuam no [tracker](issue
 Formulários e conteúdo são responsabilidade da operadora. Nossa responsabilidade é o código,
 a segurança e os contratos que permitem operá-los. Preserve a equivalência funcional entre admin,
 API e MCP nos serviços compartilhados, conforme a [ADR 0015](../adr/0015-api-de-admin.md).
-Hatchet recebe e devolve só IDs e contagens, sem PII; migrations são aditivas e permitem que o
-código anterior continue rodando. Os detalhes técnicos estão em
+Hatchet recebe e devolve só IDs e contagens, sem PII; migrations preservam o DDL aditivo.
+Após a 0016, a exceção da [ADR 0017](../adr/0017-projecoes-e-finalidade-de-receptores.md)
+exige adoção drenada e retorno somente com runtime compatível com o piso persistido, conforme
+[qualidade e compatibilidade](product-quality.md) e o [roteiro Swarm](../../deploy/swarm/README.md).
+Os detalhes técnicos estão em
 [CONTRIBUTING.md](../../CONTRIBUTING.md).

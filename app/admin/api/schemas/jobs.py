@@ -194,6 +194,12 @@ class JobPdf(BaseModel):
 
 
 class JobDelivery(BaseModel):
+    audience: Literal["internal", "participant"] = "internal"
+    authorization_origin: Literal["legacy", "explicit"] = "legacy"
+    config_version: int | None = None
+    current_config_version: int | None = None
+    dispatch_no: int = 1
+
     """A entrega do PDF de uma tentativa ao destino externo."""
 
     id: uuid.UUID = Field(description="O id da entrega.")
@@ -405,6 +411,11 @@ class JobLeadData(BaseModel):
 def _delivery_of(delivery: queries.DeliveryState, run_url_template: str | None) -> dict[str, Any]:
     """Os campos de `JobDelivery` de uma entrega lida: um só lugar para o pedido e para o reenvio."""
     return {
+        "audience": delivery.audience,
+        "authorization_origin": delivery.authorization_origin,
+        "config_version": delivery.config_version,
+        "current_config_version": delivery.current_config_version,
+        "dispatch_no": delivery.dispatch_no,
         "id": delivery.id,
         "destination": delivery.destination,
         "status": delivery.status,
@@ -618,6 +629,19 @@ class ReprocessedJob(JobState):
         return cls(**_state_fields(state, run_url_template), launched=launched)
 
 
+class ResendDeliveryRequest(ConfirmedInput):
+    expected_config_version: int | None = Field(
+        default=None,
+        ge=1,
+        description="Revisão atual do mesmo destino, lida no painel de destinos. Obrigatória para novas entregas fixadas.",
+    )
+    expected_attempt: int | None = Field(
+        default=None,
+        ge=1,
+        description="Tentativa atual autorizada; obrigatória para novas entregas. A audiência do fato não muda.",
+    )
+
+
 class ResendRequest(ConfirmedInput):
     """O pedido de reenvio de uma entrega ou de uma sincronização. Chama o destino de novo, por isso
     exige `confirm: true`."""
@@ -645,3 +669,19 @@ class ResentSync(JobSync):
     @classmethod
     def with_launch(cls, sync: queries.SyncState, *, launched: bool) -> ResentSync:
         return cls(**_sync_of(sync), launched=launched)
+
+
+class JobProjectionData(BaseModel):
+    document: dict[str, Any]
+
+
+class JobPlanProjection(BaseModel):
+    """Documento da audiência pedida, sem anexar os dados internos do envio."""
+
+    public_id: str
+    form_slug: str
+    form_version: str
+    form_version_number: int
+    attempt: int
+    audience: Literal["participant", "internal"]
+    lead_data: JobProjectionData

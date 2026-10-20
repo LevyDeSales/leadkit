@@ -144,6 +144,8 @@ class ConnectionView:
     updated: Moment | None
     token_changed: Moment | None
     token_unreadable: bool
+    purpose: str = "participant"
+    purpose_origin: str = "default"
 
 
 @dataclass(frozen=True)
@@ -190,6 +192,8 @@ def connection_view(stored: StoredIntegration, *, token_unreadable: bool) -> Con
         updated=moment(stored.updated_at),
         token_changed=moment(stored.token_changed_at),
         token_unreadable=token_unreadable,
+        purpose=stored.purpose,
+        purpose_origin=stored.purpose_origin,
     )
 
 
