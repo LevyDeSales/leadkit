@@ -1565,6 +1565,12 @@ def _capture_tests_page(
         result = drafts.test_capture(draft, answers=answers, day=day, now=_now(request))
     except DefinitionError as exc:
         problems = exc.problems
+    errors = {
+        field: tuple(
+            problem for problem in problems if (problem.path == "date") == (field == "date")
+        )
+        for field in ("answers", "date")
+    }
     return _page(
         request,
         "admin/capture_test.html",
@@ -1574,6 +1580,7 @@ def _capture_tests_page(
             "answers": answers or "",
             "day": day,
             "problems": problems,
+            "errors": errors,
         },
         status_code=422 if problems else status_code,
     )

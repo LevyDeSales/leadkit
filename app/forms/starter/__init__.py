@@ -97,6 +97,9 @@ def definition(*, slug: str, title: str, generation: str = "pdf") -> dict[str, A
         for key in ("instructions", "prompt", "plan", "pdf", "preview"):
             document.pop(key)
         document["examples"].pop("plan", None)
+        document["steps"][0]["help"] = (
+            "Estes dados identificam suas respostas. Você pode deixar os campos opcionais em branco."
+        )
         document["generation"] = "none"
         document["completion"] = {"mode": "confirmation"}
         document["intro"] = "Conte suas respostas. Elas serão salvas ao concluir o envio."

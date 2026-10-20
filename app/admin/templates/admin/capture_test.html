@@ -1,15 +1,24 @@
 {% extends "admin/layout.html" %}
+{% import "admin/macros.html" as m %}
 {% set section = "forms" %}
 {% block title %}Teste local da captura{% endblock %}
 {% block content %}
 <h1>Teste local de {{ draft.title }}</h1>
 <p>Valida respostas, data, pontuação e conclusão sem IA, PDF ou envio persistido. Use respostas fictícias.</p>
-{% for problem in problems %}<p role="alert">{{ problem }}</p>{% endfor %}
+{% if problems %}
+<div class="alert alert--error" role="alert" id="problemas">
+{{ m.icon('alert-circle', 'icon--lg') }}<div><strong class="alert__title">Confira os campos para validar a captura</strong>
+<ul class="items">{% for field, found in errors.items() %}{% for problem in found %}
+<li><a href="#capture-{{ field }}">{{ "Data simulada" if field == "date" else "Respostas JSON" }}: {{ problem.message }}</a></li>
+{% endfor %}{% endfor %}</ul></div></div>
+{% endif %}
 <form method="post" action="/admin/forms/{{ draft.slug }}/draft/capture-test" class="form-stack">
 <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
 <label for="capture-answers">Respostas JSON (em branco: exemplo)</label>
-<textarea class="input" id="capture-answers" name="answers">{{ answers }}</textarea>
-<label for="capture-date">Data simulada</label><input id="capture-date" name="date" type="date" value="{{ day }}">
+<textarea class="input" id="capture-answers" name="answers"{% if errors.answers %} aria-invalid="true" aria-describedby="capture-answers-erro" autofocus{% endif %}>{{ answers }}</textarea>
+{% if errors.answers %}<div class="error" id="capture-answers-erro">{% for problem in errors.answers %}<p>{{ problem }}</p>{% endfor %}</div>{% endif %}
+<label for="capture-date">Data simulada</label><input id="capture-date" name="date" type="date" value="{{ day }}"{% if errors.date %} aria-invalid="true" aria-describedby="capture-date-erro"{% if not errors.answers %} autofocus{% endif %}{% endif %}>
+{% if errors.date %}<div class="error" id="capture-date-erro">{% for problem in errors.date %}<p>{{ problem }}</p>{% endfor %}</div>{% endif %}
 <button class="btn btn--primary" type="submit">Validar captura</button>
 </form>
 {% if result %}<p role="status">Respostas válidas · {{ result.today }}</p><pre>{{ result.scores | tojson }}</pre><p>{{ result.completion.message }}</p>{% endif %}
