@@ -170,7 +170,11 @@ class Rollout:
         tasks = self.decoded("inspect", "--type", "task", *ids) if ids else []
         # O inventário local também acha containers que já saíram do desired-state=running.
         containers = self.docker(
-            "ps", "-aq", "--filter", f"label=com.docker.swarm.service.name={self.stack}_{role}"
+            "ps",
+            "-aq",
+            "--no-trunc",
+            "--filter",
+            f"label=com.docker.swarm.service.name={self.stack}_{role}",
         ).stdout.split()
         by_container = {}
         for task in tasks:

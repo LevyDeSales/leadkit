@@ -17,6 +17,7 @@ SWARM_DIR = Path(__file__).resolve().parent.parent / "deploy" / "swarm"
 
 FAKE_DOCKER = r"""#!/usr/bin/env python3
 import copy
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -51,7 +52,7 @@ def apply(state, role, image, replicas):
             state['containers'][cid]['State']['Running'] = bool(os.getenv('STUB_OLD_RUNNING'))
     if replicas:
         tid = role + '-' + str(svc['Version']['Index'])
-        cid = tid + '-container'
+        cid = hashlib.sha256(tid.encode()).hexdigest()
         state['tasks'][tid] = {'ID':tid,'role':role,'NodeID':node, 'DesiredState':'running',
                               'Status':{'State':'running','ContainerStatus':{'ContainerID':cid}}}
         state['containers'][cid] = {'Image':image_id(image), 'State':{'Running':True,'Health':{'Status':'healthy'}}}
@@ -158,7 +159,7 @@ elif head == ['container','wait']:
 elif args[:1] == ['ps']:
     if '-aq' in args:
         role=args[-1].rsplit('_',1)[-1]
-        out='\n'.join(t['Status']['ContainerStatus']['ContainerID'] for t in state['tasks'].values() if t['role']==role)
+        out='\n'.join(t['Status']['ContainerStatus']['ContainerID'] if '--no-trunc' in args else t['Status']['ContainerStatus']['ContainerID'][:12] for t in state['tasks'].values() if t['role']==role)
     elif 'service.name='+os.getenv('STUB_DB_SERVICE','never') in ' '.join(args):
         out='container'
 elif args[:1] == ['exec']:
@@ -812,3 +813,16 @@ def test_restart_resumes_quiescent_bootstrap_after_committed_migration(server):
     result = deploy(server, STUB_NETWORK="1")
     assert result.returncode == 0, result.stderr
     assert rollout_state(server)["phase"] == "verified"
+
+
+def test_rollout_correlates_full_ids_when_docker_ps_truncates_by_default(server):
+    result = deploy(server, STUB_NETWORK="1")
+    assert result.returncode == 0, result.stderr
+    state = rollout_state(server)
+    assert state["phase"] == "verified"
+    services = state["attested"]["services"]
+    assert all(
+        len(task["container_id"]) == 64
+        for service in services.values()
+        for task in service["tasks"]
+    )
