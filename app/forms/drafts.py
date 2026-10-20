@@ -428,13 +428,7 @@ def document_of(
     elif previous.get("generation") == "none" and document.get("generation", "pdf") == "pdf":
         # A operadora habilitou geração explicitamente: começa pelo mesmo modelo PDF da criação.
         # Nenhum bloco de geração fica guardado enquanto o rascunho é captura.
-        initial = starter.definition(slug=document["slug"], title=str(document.get("title", "")))
-        for key in ("instructions", "plan", "pdf", "preview"):
-            document[key] = initial[key]
-        document["prompt"] = starter.prompt_of(
-            document.get("steps", ()), document.get("identity", {})
-        )
-        document["examples"]["plan"] = initial["examples"]["plan"]
+        _prepare_pdf(document)
     _keep_wording(document, previous)
     # O que o JSONB não guarda (NaN, o caractere nulo) sai aqui, com o caminho: no banco, viraria
     # um erro com um trecho da definição na mensagem.
@@ -442,6 +436,15 @@ def document_of(
     if problems:
         raise DefinitionError(problems)
     return document
+
+
+def _prepare_pdf(document: dict[str, Any]) -> None:
+    """Prepara geração num rascunho que era captura, preservando perguntas e respostas."""
+    initial = starter.definition(slug=document["slug"], title=str(document.get("title", "")))
+    for key in ("instructions", "plan", "pdf", "preview"):
+        document[key] = initial[key]
+    document["prompt"] = starter.prompt_of(document.get("steps", ()), document.get("identity", {}))
+    document["examples"] = {**document["examples"], "plan": initial["examples"]["plan"]}
 
 
 # --- o prompt montado -------------------------------------------------------------------------
@@ -1092,6 +1095,8 @@ def create(
                 start["completion"] = {"mode": "confirmation"}
         elif origin and generation == "pdf":
             start = {**start, "generation": "pdf"}
+            if origin.document.get("generation") == "none":
+                _prepare_pdf(start)
         document = as_stored(session, start)
     try:
         compile_definition(document, version_number=FIRST_VERSION)

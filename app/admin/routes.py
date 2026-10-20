@@ -140,7 +140,8 @@ class AdminRoute(APIRoute):
                 response = _error(
                     request,
                     409,
-                    "Este formulário apenas captura respostas. Use o teste local e a prévia da conclusão.",
+                    "Esta operação não está disponível para a finalidade atual do formulário. "
+                    "Recarregue o rascunho e escolha o teste correspondente.",
                 )
             except NotFound as exc:
                 response = _error(request, 404, str(exc))
@@ -1504,37 +1505,26 @@ def _tests_page(
     status_code: int = 200,
     headers: dict[str, str] | None = None,
     scoring: bool = False,
+    prompt_only: bool = False,
 ) -> Response:
     """A página do teste: as respostas (as de exemplo, se `answers` vier vazia) e a data, o prompt
     montado com elas ou, com `scoring`, a pontuação delas (ou os problemas delas) e os testes
     recentes. O que ela junta é da ação (`draft_test_actions.testing`), a mesma da API."""
     try:
         state = draft_test_actions.testing(
-            get_deps(), slug, answers=answers, day=day, scoring=scoring, now=_now(request)
+            get_deps(),
+            slug,
+            answers=answers,
+            day=day,
+            scoring=scoring,
+            prompt_only=prompt_only,
+            now=_now(request),
         )
     except UnknownForm:
         raise NotFound(DRAFT_NOT_FOUND) from None
     if state.draft.document.get("generation") == "none":
-        result = None
-        problems = state.problems
-        if not problems:
-            try:
-                result = drafts.test_capture(
-                    state.draft, answers=answers, day=day, now=_now(request)
-                )
-            except DefinitionError as exc:
-                problems = exc.problems
-        return _page(
-            request,
-            "admin/capture_test.html",
-            {
-                "draft": state.draft,
-                "result": result,
-                "answers": answers or "",
-                "day": day,
-                "problems": problems,
-            },
-            status_code=422 if problems else status_code,
+        return _capture_tests_page(
+            request, state.draft, answers=answers, day=day, status_code=status_code
         )
     page = draft_pages.testing_page(
         state.draft,
@@ -1556,6 +1546,35 @@ def _tests_page(
     return response
 
 
+def _capture_tests_page(
+    request: Request,
+    draft: drafts.Draft,
+    *,
+    answers: str | None = None,
+    day: str = "",
+    status_code: int = 200,
+) -> Response:
+    """O teste local usa a mesma validação de modo, respostas e conclusão da API/MCP."""
+    result = None
+    problems = ()
+    try:
+        result = drafts.test_capture(draft, answers=answers, day=day, now=_now(request))
+    except DefinitionError as exc:
+        problems = exc.problems
+    return _page(
+        request,
+        "admin/capture_test.html",
+        {
+            "draft": draft,
+            "result": result,
+            "answers": answers or "",
+            "day": day,
+            "problems": problems,
+        },
+        status_code=422 if problems else status_code,
+    )
+
+
 def _given(answers: str) -> str | None:
     """As respostas do formulário do teste; em branco, as de exemplo."""
     return answers if answers.strip() else None
@@ -1575,9 +1594,7 @@ def assemble_prompt(
 ) -> Response:
     """O prompt montado com as respostas e a data do formulário, sem gravar nada. É um POST para
     as respostas não irem para a URL nem para o log de acesso."""
-    if _draft(slug).document.get("generation") == "none":
-        raise GenerationUnavailable("este formulário apenas captura respostas")
-    return _tests_page(request, slug, answers=_given(answers), day=date)
+    return _tests_page(request, slug, answers=_given(answers), day=date, prompt_only=True)
 
 
 @protected.post("/forms/{slug}/draft/score")
@@ -2265,7 +2282,7 @@ def capture_test_page(
     answers: Annotated[str, Form()] = "",
     date: Annotated[str, Form()] = "",
 ) -> Response:
-    return _tests_page(request, slug, answers=_given(answers), day=date)
+    return _capture_tests_page(request, _draft(slug), answers=_given(answers), day=date)
 
 
 router.include_router(open_routes)

@@ -2027,7 +2027,7 @@
                 "type": "null"
               }
             ],
-            "description": "Finalidade: pdf gera plano; none apenas salva respostas. Ausente preserva a origem ou usa PDF.",
+            "description": "Finalidade: pdf gera plano; none apenas salva respostas. Ausente preserva a origem ou usa PDF. Copiar uma captura com pdf prepara os blocos de geração do modelo inicial no novo rascunho, mantendo perguntas e respostas de exemplo da origem.",
             "title": "Generation"
           },
           "slug": {
@@ -13235,7 +13235,7 @@
     },
     "/forms/{slug}/draft/prompt": {
       "post": {
-        "description": "Monta o prompt que o LLM receberia do rascunho do formulário `slug` (o rascunho salvo ou, sem rascunho salvo, a versão publicada atual) com `answers` e `simulated_date`: as instruções, o prompt montado com as respostas, as notas, os dados e a data, e o calendário das fases (`phases`) nessa data. É o mesmo prompt que `start_form_draft_test` manda ao LLM. **Não grava nada, não é auditada e não chama o LLM**: serve para conferir o que o prompt diz antes de gastar um teste. Sem `answers`, usa as respostas de exemplo do rascunho; as que você manda são conferidas pelas perguntas dele, todos os problemas de uma vez (`422` com `answers.<pergunta>` e o motivo, nunca o valor). A data simulada compila o rascunho com o relógio parado nesse dia: a pontuação, as janelas de datas e o `today` do prompt a seguem. Use respostas fictícias. Para ver só a pontuação, `score_form_draft`; para os testes que já rodaram, `list_form_draft_tests`.",
+        "description": "Monta o prompt que o LLM receberia do rascunho do formulário `slug` (o rascunho salvo ou, sem rascunho salvo, a versão publicada atual) com `answers` e `simulated_date`: as instruções, o prompt montado com as respostas, as notas, os dados e a data, e o calendário das fases (`phases`) nessa data. É o mesmo prompt que `start_form_draft_test` manda ao LLM. **Não grava nada, não é auditada e não chama o LLM**: serve para conferir o que o prompt diz antes de gastar um teste. Sem `answers`, usa as respostas de exemplo do rascunho; as que você manda são conferidas pelas perguntas dele, todos os problemas de uma vez (`422` com `answers.<pergunta>` e o motivo, nunca o valor). A data simulada compila o rascunho com o relógio parado nesse dia: a pontuação, as janelas de datas e o `today` do prompt a seguem. Use respostas fictícias. Para ver só a pontuação, `score_form_draft`; para os testes que já rodaram, `list_form_draft_tests`. A guarda da finalidade e a montagem usam o mesmo rascunho lido: uma edição concorrente vale para a próxima operação; se o rascunho lido é captura, esta operação responde `409 state_conflict`.",
         "operationId": "assemble_form_draft_prompt",
         "parameters": [
           {

@@ -499,7 +499,16 @@ O documento editado por `save_form_draft`/`patch_form_draft` inclui `completion`
 A entrega 8-A inclui autoria, recibo, consulta e retenção. As notificações assíncronas às
 integrações aplicáveis e ativas pertencem à entrega 8-B da mesma issue; #8 permanece aberta.
 `generation=none` dispensa conteúdo de geração e exige conclusão local, botão ou redirect;
-`generation` ausente preserva PDF. Teste local não persiste submissão nem usa provedor.
+`generation` ausente na definição preserva PDF; em `create_form`, herda a finalidade da origem
+quando informada. Copiar captura com `generation=pdf` prepara o conteúdo de geração pelo modelo
+inicial no novo rascunho, mantendo perguntas e respostas de exemplo; a origem não muda.
+
+O detalhe HTML distingue somente captura e não mostra plano, prompt ou templates inexistentes,
+antes ou depois da publicação. A montagem do prompt confere a finalidade no mesmo rascunho usado
+na montagem; uma edição concorrente passa a valer na próxima operação. Se o rascunho lido é captura,
+a montagem retorna `409 state_conflict`. O teste local de captura em HTML/API/MCP usa
+`drafts.test_capture` e recusa rascunho PDF com `409`; não persiste submissão nem usa provedor.
+As regressões públicas estão em `tests_app/test_capture_review_fixes.py`.
 
 | Rota atual | O que faz | Serviço hoje | Operação da API | `operation_id` | Papel | Marcas | Status |
 | --- | --- | --- | --- | --- | --- | --- | --- |

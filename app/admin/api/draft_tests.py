@@ -50,7 +50,7 @@ from app.admin.api.schemas.draft_tests import (
 )
 from app.admin.api.security import CurrentKey
 from app.deps import get_deps
-from app.forms import GenerationUnavailable, UnknownForm, draft_tests, drafts
+from app.forms import UnknownForm, draft_tests, drafts
 from app.forms.definition import DefinitionError, Problem
 from app.forms.definition.document import CompletionDoc
 
@@ -129,12 +129,19 @@ def _testing(
     answers: dict[str, Any] | None,
     day: str = "",
     scoring: bool = False,
+    prompt_only: bool = False,
     refused: str,
 ) -> draft_test_actions.Testing:
     """O estado do teste, ou o `404` do formulário e o `422` das respostas, da data e do rascunho."""
     try:
         state = draft_test_actions.testing(
-            get_deps(), slug, answers=answers, day=day, scoring=scoring, now=now(request)
+            get_deps(),
+            slug,
+            answers=answers,
+            day=day,
+            scoring=scoring,
+            prompt_only=prompt_only,
+            now=now(request),
         )
     except UnknownForm:
         raise ApiError("not_found", NOT_FOUND) from None
@@ -178,7 +185,9 @@ def _found(request: Request, slug: str, test_id: str) -> draft_test_actions.Foun
         "com `answers.<pergunta>` e o motivo, nunca o valor). A data simulada compila o rascunho "
         "com o relógio parado nesse dia: a pontuação, as janelas de datas e o `today` do prompt a "
         "seguem. Use respostas fictícias. Para ver só a pontuação, `score_form_draft`; para os "
-        "testes que já rodaram, `list_form_draft_tests`."
+        "testes que já rodaram, `list_form_draft_tests`. A guarda da finalidade e a montagem usam "
+        "o mesmo rascunho lido: uma edição concorrente vale para a próxima operação; se o rascunho "
+        "lido é captura, esta operação responde `409 state_conflict`."
     ),
     returns="O prompt montado: as instruções, o prompt, a data, as respostas usadas e as fases.",
     response_model=AssembledPrompt,
@@ -186,11 +195,9 @@ def _found(request: Request, slug: str, test_id: str) -> draft_test_actions.Foun
 def assemble_form_draft_prompt(
     slug: FORM, body: AssembleFormDraftPromptRequest, request: Request
 ) -> AssembledPrompt:
-    with get_deps().sessions() as session:
-        draft = drafts.load(session, slug)
-    if draft is not None and draft.document.get("generation") == "none":
-        raise GenerationUnavailable("este formulário apenas captura respostas")
-    state = _testing(request, slug, answers=body.answers, day=body.day, refused=NOT_ASSEMBLED)
+    state = _testing(
+        request, slug, answers=body.answers, day=body.day, refused=NOT_ASSEMBLED, prompt_only=True
+    )
     assert state.assembled is not None  # sem problemas, o prompt montou
     return AssembledPrompt.of(state.assembled)
 

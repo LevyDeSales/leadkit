@@ -47,7 +47,9 @@ class CreateFormRequest(ApiInput):
 
     generation: Literal["pdf", "none"] | None = Field(
         default=None,
-        description="Finalidade: pdf gera plano; none apenas salva respostas. Ausente preserva a origem ou usa PDF.",
+        description="Finalidade: pdf gera plano; none apenas salva respostas. Ausente preserva a "
+        "origem ou usa PDF. Copiar uma captura com pdf prepara os blocos de geração do modelo "
+        "inicial no novo rascunho, mantendo perguntas e respostas de exemplo da origem.",
     )
     title: str = Field(
         max_length=drafts.TITLE_MAX_LENGTH,

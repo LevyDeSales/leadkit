@@ -57,6 +57,7 @@ def testing(
     answers: str | Mapping[str, Any] | None = None,
     day: str = "",
     scoring: bool = False,
+    prompt_only: bool = False,
     now: datetime,
 ) -> Testing:
     """O estado do teste do rascunho de `slug`: o prompt montado com as `answers` (as de exemplo, se
@@ -64,7 +65,8 @@ def testing(
     pontuação delas, mais os testes recentes. **Só lê:** não grava, não audita e não chama o LLM.
 
     Respostas, data ou rascunho que não valem não são uma exceção: voltam em `problems` (sem repetir
-    o valor), e os testes recentes saem do mesmo jeito. Levanta `UnknownForm`."""
+    o valor), e os testes recentes saem do mesmo jeito. `prompt_only` exige montagem e confere
+    a geração no mesmo rascunho usado por ela. Levanta `UnknownForm` ou `GenerationUnavailable`."""
     with deps.sessions() as session:
         draft = drafts.load(session, slug)
     if draft is None:
@@ -72,7 +74,7 @@ def testing(
     assembled = scored = None
     problems: tuple[Problem, ...] = ()
     try:
-        if scoring or draft.document.get("generation") == "none":
+        if not prompt_only and (scoring or draft.document.get("generation") == "none"):
             scored = drafts.score(draft, answers=answers, now=now)
         else:
             assembled = drafts.assemble(draft, answers=answers, day=day, now=now)

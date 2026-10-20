@@ -77,8 +77,8 @@ CONSENT_UPDATED = (
     "continuar."
 )
 ALREADY_SENT = (
-    "Você já enviou este formulário com outras respostas. Se quiser um plano com estas "
-    "respostas, envie de novo."
+    "Você já enviou este formulário com outras respostas. Para salvar estas respostas como "
+    "um novo envio, envie de novo."
 )
 
 CSP = (
