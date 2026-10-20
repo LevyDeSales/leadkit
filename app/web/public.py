@@ -250,14 +250,9 @@ async def submit_form(slug: str, request: Request) -> Response:
 
 
 def _prepare_form_submission(
-    slug: str, request: Request, raw: FormData, session: Session
+    request: Request, spec: FormSpec, screen: Screen, post: FormPost, session: Session
 ) -> Accepted | Response:
-    """Escolhe a versão, lê e valida a página sob a mesma trava usada para persistir o envio."""
-    found = _screen_form(request, slug, f"web:{raw.get('_idem', '')}", session)
-    if isinstance(found, Response):
-        return found
-    spec, screen = found
-    post = read_post(screen, raw, spec.conditions)
+    """Valida e recebe a página sob a mesma trava usada para resolver sua versão."""
     if post.honeypot:
         return _form_page(request, spec, screen, post, banner=SEND_FAILED, status_code=400)
     errors = form_errors(spec, screen, post)
@@ -315,17 +310,24 @@ def _prepare_form_submission(
 
 def _submit_form(slug: str, request: Request, raw: FormData) -> Accepted | Response:
     deps = get_deps()
+    spec: FormSpec | None = None
+    screen: Screen | None = None
+    post: FormPost | None = None
     try:
         with deps.sessions.begin() as session:
-            accepted = _prepare_form_submission(slug, request, raw, session)
+            found = _screen_form(request, slug, f"web:{raw.get('_idem', '')}", session)
+            if isinstance(found, Response):
+                return found
+            spec, screen = found
+            post = read_post(screen, raw, spec.conditions)
+            accepted = _prepare_form_submission(request, spec, screen, post, session)
     except sa.exc.SQLAlchemyError:
         # Também cobre falha no commit: nenhum recibo ou disparo antecede sua confirmação.
-        found = _screen_form(request, slug)
-        if isinstance(found, Response):
-            return found
-        spec, screen = found
-        post = read_post(screen, raw, spec.conditions)
-        response = _form_page(request, spec, screen, post, banner=SEND_FAILED, status_code=503)
+        # Não consulta o banco indisponível de novo nem repete respostas ainda não validadas.
+        if spec is None or screen is None or post is None:
+            response = _page(request, "submission_unavailable", 503, slug=slug)
+        else:
+            response = _form_page(request, spec, screen, post, banner=SEND_FAILED, status_code=503)
         response.headers["Retry-After"] = "5"
         return response
     return accepted

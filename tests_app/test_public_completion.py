@@ -302,7 +302,7 @@ def test_concurrent_replay_waits_for_the_original_version_across_publication(
         sa.event.remove(engine, "before_cursor_execute", pause_database)
 
 
-def test_a_failed_commit_returns_a_recoverable_form_without_success_or_dispatch(
+def test_a_failed_transaction_start_returns_a_retry_page_without_success_or_dispatch(
     deps: Deps, monkeypatch
 ) -> None:
     configured(deps, "redirect", url="https://example.test/next")
@@ -322,12 +322,80 @@ def test_a_failed_commit_returns_a_recoverable_form_without_success_or_dispatch(
             patch.setattr(deps.sessions, "begin", unavailable)
             response = client.post("/p/demo", data=VALID_FORM)
         assert response.status_code == 503
-        assert "Não conseguimos enviar o formulário" in response.text
-        assert tags(response.text, "form")
+        assert "Não conseguimos confirmar o envio" in response.text
+        assert not tags(response.text, "form")
         assert "location" not in response.headers
         assert calls == []
         retry = client.post("/p/demo", data=VALID_FORM)
         assert retry.status_code == 303
+
+
+@pytest.mark.parametrize("surface", ["api", "html"])
+@pytest.mark.parametrize("stage", ["read", "commit"])
+def test_database_outage_returns_a_safe_retry_without_another_database_read(
+    deps: Deps, surface: str, stage: str
+) -> None:
+    calls = []
+    outage_started = False
+    triggered = threading.Event()
+
+    async def track(job_id, attempt):
+        calls.append((job_id, attempt))
+        triggered.set()
+        return "fake-run"
+
+    def unavailable():
+        return sa.exc.OperationalError("statement", {}, RuntimeError("synthetic_db_failure"))
+
+    def fail_read(connection, cursor, statement, parameters, context, executemany):
+        if stage == "read" or outage_started:
+            raise unavailable()
+
+    def fail_commit(session):
+        nonlocal outage_started
+        if stage == "commit" and not session.in_nested_transaction():
+            outage_started = True
+            raise unavailable()
+
+    engine, session_class = deps.sessions.kw["bind"], deps.sessions.class_
+    with TestClient(
+        create_app(trigger=track), follow_redirects=False, raise_server_exceptions=False
+    ) as client:
+
+        def send():
+            if surface == "html":
+                return client.post("/p/demo", data=VALID_FORM)
+            return client.post(
+                "/v1/forms/demo/submissions",
+                json={"answers": DEMO_ANSWERS, "consent": DEMO_CONSENT},
+                headers={"Idempotency-Key": "database-outage-retry"},
+            )
+
+        sa.event.listen(engine, "before_cursor_execute", fail_read)
+        sa.event.listen(session_class, "before_commit", fail_commit)
+        try:
+            response = send()
+        finally:
+            sa.event.remove(engine, "before_cursor_execute", fail_read)
+            sa.event.remove(session_class, "before_commit", fail_commit)
+        assert response.status_code == 503
+        assert int(response.headers["Retry-After"]) > 0
+        assert "location" not in response.headers
+        assert "synthetic_db_failure" not in response.text
+        assert calls == []
+        if surface == "html" and stage == "commit":
+            assert tags(response.text, "form")
+            assert DEMO_ANSWERS["email"] in response.text
+        elif surface == "html":
+            assert "Não conseguimos confirmar o envio" in response.text
+            assert DEMO_ANSWERS["email"] not in response.text
+            assert not tags(response.text, "form")
+        retry = send()
+        assert retry.status_code == (202 if surface == "api" else 303)
+        assert triggered.wait(1)
+        assert len(calls) == 1
+        if surface == "api":
+            assert not retry.json()["replay"]
 
 
 def test_an_interrupted_post_commit_trigger_is_recovered_by_the_existing_reconciler(

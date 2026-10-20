@@ -381,6 +381,10 @@ def create_app(
             )
         except UnknownForm:
             raise HTTPException(status_code=404, detail="formulário não encontrado") from None
+        except sa.exc.SQLAlchemyError:
+            return _refusal(
+                503, "unavailable", "não foi possível confirmar o envio; tente de novo", 5
+            )
         try:
             body = SubmissionIn.model_validate(await request.json())
         except ValidationError as exc:

@@ -68,6 +68,11 @@ incluindo `receipt_url` local. O token desse recibo é trocado por cookie como n
 Não envie esse token ao destino externo. A conclusão não bloqueia nem libera PDF: a geração e os
 acessos atuais continuam funcionando. Esta opção ainda opera apenas com geração de PDF.
 
+O runtime atualizado lê versões antigas. Uma versão publicada com `completion` exige um
+compilador que conheça esse bloco: depois dessa publicação, trocar apenas a imagem por uma anterior
+à funcionalidade não garante um rollback de conteúdo seguro. Preserve os dados e escolha um runtime
+compatível com as versões publicadas; não altere uma versão publicada para tentar voltar a imagem.
+
 ## API e MCP
 
 A especificação está em [docs/api/openapi.json](../docs/api/openapi.json); a referência interativa
