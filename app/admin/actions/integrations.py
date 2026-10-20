@@ -507,9 +507,13 @@ def activate(
         current = next(current_specs(db, form_slug), None)
         if current is None or local_problems(db, current):
             raise integration_config.Conflict(activated)
-        report = integration_mapping.build_report(list(entries), live, current, profile=profile)
+        current_profile = profile_for(current)
+        current_entries = stored.capture_entries if current_profile == "capture" else stored.entries
+        report = integration_mapping.build_report(
+            list(current_entries), live, current, profile=current_profile
+        )
         if not report.ok:
-            raise ReportPending(report, nothing_mapped=not entries)
+            raise ReportPending(report, nothing_mapped=not current_entries)
 
     logger.info("admin: integração ativada formulario=%s por=%s", form_slug, actor)
     return activated

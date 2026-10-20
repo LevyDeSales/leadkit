@@ -47,6 +47,12 @@ PUBLIC_DETAIL_KEYS = frozenset(
         # Destinos do webhook (`app/destinations.py`): o host da URL, nunca o caminho, que vale como
         # senha; o `source` é o nome da variável de ambiente de onde o destino padrão veio; no teste,
         # o status e o tempo (o `error` fica de fora).
+        # Entregas de captura: referências e finalidade autorizada, sem respostas nem credenciais.
+        "submission_id",
+        "config_version",
+        "dispatch_no",
+        "events",
+        "profile",
         "form_slug",
         "host",
         "previous_host",

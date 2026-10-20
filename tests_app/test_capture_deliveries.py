@@ -639,3 +639,55 @@ def test_capture_webhook_configuration_test_is_marked_synthetic_without_real_sub
     assert not {"job", "pdf", "plan", "receipt"}.intersection(payloads[0])
     with deps.sessions() as session:
         assert session.scalar(sa.select(sa.func.count()).select_from(Submission)) == 0
+
+
+def test_activation_revalidates_the_new_purpose_when_publication_changes_during_field_read(
+    deps, monkeypatch
+):
+    import pytest
+    from conftest import BASEROW_TABLE, BASEROW_TOKEN, BASEROW_URL, FakeBaserow
+    from test_admin_forms import store_version
+
+    from app.admin.actions import integrations as actions
+    from app.forms.starter import definition
+    from app.integrations import config
+
+    document = definition(slug="capture-test", title="Pesquisa")
+    import_definition(deps, json.dumps(document), actor="operadora")
+    fake = FakeBaserow().install(deps)
+    with deps.sessions.begin() as session:
+        stored = config.connect(
+            session,
+            deps.cipher,
+            form_slug="capture-test",
+            base_url=BASEROW_URL,
+            table_id=BASEROW_TABLE,
+            token=BASEROW_TOKEN,
+            actor="operadora",
+            expected_version=0,
+            production=False,
+        )
+        row = session.get(Integration, stored.id)
+        row.mapping = [
+            {"field_id": 104, "name": "Código", "type": "text", "source": "job.public_id"}
+        ]
+        row.key_field_id = 104
+        # A fonte existe e serve ao tipo; suas opções não têm pares na tabela remota.
+        row.capture_mapping = [
+            {"field_id": 104, "name": "Código", "type": "text", "source": "submission.id"},
+            {"field_id": 108, "name": "Equipe", "type": "single_select", "source": "answer:equipe"},
+        ]
+        row.capture_key_field_id = 104
+    original = actions.read_fields
+
+    def field_read(deps_, slug):
+        result = original(deps_, slug)
+        store_version(deps_, 2, capture_document())
+        return result
+
+    monkeypatch.setattr(actions, "read_fields", field_read)
+    with pytest.raises((actions.ReportPending, config.Conflict)):
+        actions.activate(deps, "capture-test", expected_version=1, actor="operadora")
+    with deps.sessions() as session:
+        assert session.get(Integration, stored.id).active is False
+    assert len(fake.rows) == 0
