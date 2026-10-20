@@ -267,6 +267,7 @@ def save_destination(
             actor=key.actor,
             expected_version=expected,
             http_confirmed=body.confirm_http,
+            events=body.events,
         )
     except destinations.InvalidUrl as invalid:
         if invalid.needs_confirmation:
@@ -475,9 +476,13 @@ def send_destination_test_event(
     deps = get_deps()
     target = resolve(deps, scope)
     try:
-        probe = destinations.send_test(deps, target.form_slug, actor=key.actor)
+        probe = destinations.send_test(deps, target.form_slug, actor=key.actor, event=body.event)
     except destinations.UnreadableSecret:
         raise ApiError("state_conflict", UNREADABLE_SECRET) from None
+    except destinations.UnsupportedEvent:
+        raise ApiError(
+            "state_conflict", "O destino não declarou aceitar o evento de captura."
+        ) from None
     if probe is None:
         raise ApiError("state_conflict", NOTHING_TO_TEST)
     logger.info(

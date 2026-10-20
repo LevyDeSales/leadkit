@@ -96,6 +96,7 @@ class Detail:
     serving: str
     serving_host: str | None
     unreadable: bool
+    serving_events: tuple[str, ...] = ()
 
 
 def detail(
@@ -118,5 +119,6 @@ def detail(
         stored=own,
         serving=scope,
         serving_host=serving.host if serving else None,
+        serving_events=serving.events if serving else (),
         unreadable=own is not None and form_slug in destinations.unreadable(session, cipher),
     )

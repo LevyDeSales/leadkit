@@ -249,6 +249,9 @@ def accept_submission(
             session.add(submission)
             session.flush()
             if spec.generation == "none":
+                from app.capture_deliveries import enqueue
+
+                enqueue(session, submission)
                 receipt = CaptureReceipt(
                     submission_id=submission.id,
                     public_id=new_public_id(),

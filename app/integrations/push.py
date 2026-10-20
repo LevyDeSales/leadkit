@@ -255,7 +255,9 @@ def sample_id(form_slug: str) -> str:
     return f"{SAMPLE_PREFIX}{form_slug}"
 
 
-def send_sample(deps: Deps, form_slug: str, *, actor: str) -> SampleResult | None:
+def send_sample(
+    deps: Deps, form_slug: str, *, actor: str, profile: MappingProfile | None = None
+) -> SampleResult | None:
     """Manda para a tabela uma linha sintética do formulário (a lead de exemplo, no domínio
     `exemplo`, com respostas inventadas), pelo mesmo caminho de um pedido de verdade, e devolve o
     que aconteceu; None se o formulário não tem integração. A linha fica na tabela, para a operadora
@@ -268,11 +270,16 @@ def send_sample(deps: Deps, form_slug: str, *, actor: str) -> SampleResult | Non
         return None
     public_id = sample_id(form_slug)
     spec = config.form_spec(deps, form_slug)
+    from app.integration_readiness import profile_for
+
+    profile = profile or profile_for(spec)
+    entries = stored.capture_entries if profile == "capture" else stored.entries
+    key_field_id = stored.capture_key_field_id if profile == "capture" else stored.key_field_id
     written: Written | None = None
     error: str | None = None
     if spec is None:
         error = "o formulário não tem versão publicada para montar a linha de teste"
-    elif stored.key_field_id is None or mapping.key_entry(list(stored.entries)) is None:
+    elif key_field_id is None or mapping.key_entry(list(entries), profile=profile) is None:
         error = "o mapeamento está vazio ou sem o código do pedido"
     else:
         try:
@@ -280,9 +287,11 @@ def send_sample(deps: Deps, form_slug: str, *, actor: str) -> SampleResult | Non
                 deps,
                 connection,
                 integration_id=stored.id,
-                key_field_id=stored.key_field_id,
-                entries=list(stored.entries),
-                data=mapping.sample_data(spec, public_id),
+                key_field_id=key_field_id,
+                entries=list(entries),
+                data=mapping.sample_data(spec, public_id, profile=profile),
+                profile=profile,
+                record_key=public_id,
             )
         except (RetryableError, TerminalError) as exc:
             error = str(exc)[:300]

@@ -68,7 +68,7 @@ def connect_baserow_integration(tools: Mapping[str, ToolSpec]) -> Composite | No
         "type": "object",
         "additionalProperties": {"type": "string"},
         "description": 'O mapeamento a guardar, `{"<id do campo no Baserow>": "<fonte>"}` (as fontes '
-        "de cada campo estão em `fields` de `get_form_integration`). Sem ele, a ferramenta guarda a "
+        "de cada campo estão em `fields` de `get_form_integration`; a finalidade publicada seleciona o perfil PDF ou captura). Sem ele, a ferramenta guarda a "
         "sugestão pelo nome dos campos se nada está mapeado, e mantém o mapeamento que existe. Com "
         "ele, troca o mapeamento inteiro: a pessoa vê o que há hoje e o que passa a haver, e numa "
         "integração ativa a troca pede a confirmação própria dela.",
@@ -147,6 +147,13 @@ def _shown_server(base_url: Any) -> str:
 
 def _sources_of(value: Any) -> dict[str, str] | None:
     return None if value is None else {str(key): str(source) for key, source in dict(value).items()}
+
+
+def _purpose_state(state: Mapping[str, Any]) -> Mapping[str, Any]:
+    """A composta opera o perfil publicado sem confundir os mapeamentos históricos."""
+    if state.get("profile") == "capture":
+        return {**state, "mapping": state.get("capture_mapping") or []}
+    return state
 
 
 def _stored_sources(state: Mapping[str, Any]) -> dict[str, str]:
@@ -238,7 +245,7 @@ async def _connect_baserow_integration(steps: Steps, arguments: dict[str, Any]) 
     reading = await steps.call("get_form_integration", {"slug": slug})
     if not succeeded(reading):
         return refused("ler a integração", reading, progress)
-    state = body(reading)
+    state = _purpose_state(body(reading))
     if not state.get("published"):
         return ToolOutput(
             f"O formulário «{plain(slug)}» ainda não tem versão publicada, então não há perguntas para "
@@ -372,7 +379,7 @@ async def _connect(
     rereading = await steps.call("get_form_integration", {"slug": slug})
     if not succeeded(rereading):
         return refused("ler a tabela depois de conectar", rereading, progress)
-    current = body(rereading)
+    current = _purpose_state(body(rereading))
     version = str((current.get("connection") or {}).get("version") or made.get("version"))
     names = _names(current)
     suggestion: dict[str, str] = {}
@@ -380,7 +387,11 @@ async def _connect(
     if not mapping_done:
         if explicit is None and not current.get("mapping"):
             suggestion = _suggested(current.get("fields") or [])
-            sources = suggestion if _has_one_key(suggestion) else None
+            sources = (
+                suggestion
+                if _has_one_key(suggestion, profile=current.get("profile", "pdf"))
+                else None
+            )
         # Com um mapeamento guardado e sem `sources`, a conexão o manteve (só o token mudou): não o
         # troco por um palpite.
         if sources is not None:
@@ -511,9 +522,12 @@ def _suggested(fields: Sequence[Any]) -> dict[str, str]:
     }
 
 
-def _has_one_key(sources: Mapping[str, str]) -> bool:
-    """O mapeamento precisa de um campo, e só um, com o código do pedido (`job.public_id`)."""
-    return list(sources.values()).count("job.public_id") == 1
+def _has_one_key(sources: Mapping[str, str], *, profile: str = "pdf") -> bool:
+    """O mapeamento precisa de um campo, e só um, com a chave do perfil."""
+    return (
+        list(sources.values()).count("submission.id" if profile == "capture" else "job.public_id")
+        == 1
+    )
 
 
 def _mapping_lines(
@@ -555,8 +569,8 @@ def _mapping_lines(
     if suggestion:
         return [
             (
-                "NÃO guardei o mapeamento: a sugestão pelo nome não acha o campo do código do pedido "
-                "(`job.public_id`), que a API exige, um e só um."
+                "NÃO guardei o mapeamento: a sugestão pelo nome não acha uma única chave do perfil "
+                "(submission.id na captura; job.public_id no PDF), que a API exige."
             ),
             "Sugestão pelo nome dos campos:",
             *listed(

@@ -729,6 +729,7 @@ class DestinationView:
     updated_by: str
     updated: Moment | None
     secret_created: Moment | None
+    events: tuple[str, ...] = ("plano.concluido",)
 
 
 def _destination_view(stored: destinations.StoredDestination) -> DestinationView:
@@ -741,6 +742,7 @@ def _destination_view(stored: destinations.StoredDestination) -> DestinationView
         updated_by=stored.updated_by,
         updated=moment(stored.updated_at),
         secret_created=moment(stored.secret_created_at),
+        events=stored.events,
     )
 
 
@@ -1073,6 +1075,8 @@ class FormDetail:
     # Sem versão publicada (criado do zero ou duplicado no admin): a leitura é a do rascunho.
     unpublished: bool = False
     integration: IntegrationBox | None = None  # a integração com a planilha, se ele tem
+    integration_issues: tuple[str, ...] = ()
+    destination_events: tuple[str, ...] = ()
 
     @property
     def duplicate_url(self) -> str:
@@ -1201,6 +1205,8 @@ def form_detail(
         else None,
         unpublished=found.unpublished,
         integration=integration_box(found.integration, slug),
+        integration_issues=found.integration_issues,
+        destination_events=found.destination.events if found.destination else (),
     )
 
 

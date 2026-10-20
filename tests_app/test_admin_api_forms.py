@@ -260,6 +260,7 @@ def test_list_forms_shows_the_same_forms_and_states_as_the_page(
 # --- get_form -----------------------------------------------------------------------------------
 
 DETAIL_FIELDS = {
+    "integration_issues",
     *SUMMARY_FIELDS,
     "version_label",
     "versions",
@@ -361,8 +362,16 @@ def test_get_form_says_which_destination_serves_it_and_only_the_host(
     own = client.get(form_url("demo"))
 
     assert none is None
-    assert default.json()["destination"] == {"scope": "default", "host": "padrao.example.test"}
-    assert own.json()["destination"] == {"scope": "form", "host": SECRET_HOST}
+    assert default.json()["destination"] == {
+        "scope": "default",
+        "host": "padrao.example.test",
+        "events": ["plano.concluido"],
+    }
+    assert own.json()["destination"] == {
+        "scope": "form",
+        "host": SECRET_HOST,
+        "events": ["plano.concluido"],
+    }
     for response in (default, own, client.get(url_of("list_forms"))):
         assert SECRET_PATH not in response.text and "https://" not in response.text
 

@@ -229,6 +229,9 @@ class WebhookDestination(Base):
     form_slug: Mapped[str | None] = mapped_column(sa.String(64))
     url: Mapped[str] = mapped_column(sa.Text)
     secret_sealed: Mapped[str] = mapped_column(sa.Text)
+    events: Mapped[list[str]] = mapped_column(
+        JSONB, server_default=sa.text("'[\"plano.concluido\"]'::jsonb")
+    )
     version: Mapped[int] = mapped_column(sa.Integer, default=1)
     created_by: Mapped[str] = mapped_column(sa.Text)
     created_at: Mapped[datetime] = _created_at()
@@ -282,6 +285,10 @@ class Integration(Base):
         JSONB, nullable=False, server_default=sa.text("'[]'::jsonb")
     )
     key_field_id: Mapped[int | None] = mapped_column(sa.Integer)
+    capture_mapping: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, server_default=sa.text("'[]'::jsonb")
+    )
+    capture_key_field_id: Mapped[int | None] = mapped_column(sa.Integer)
     active: Mapped[bool] = mapped_column(sa.Boolean, server_default=sa.false())
     version: Mapped[int] = mapped_column(sa.Integer, default=1)
     created_by: Mapped[str] = mapped_column(sa.Text)
@@ -323,6 +330,53 @@ class IntegrationSync(Base):
     row_id: Mapped[int | None] = mapped_column(sa.Integer)
     synced_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
     created_at: Mapped[datetime] = _created_at()
+
+
+class CaptureDelivery(Base):
+    """Intenção transacional por captura e destino fixo; nunca guarda respostas ou credenciais."""
+
+    __tablename__ = "capture_deliveries"
+    __table_args__ = (
+        sa.CheckConstraint(
+            "(integration_id IS NULL) <> (webhook_destination_id IS NULL)", name="destination"
+        ),
+        sa.CheckConstraint(f"status in ({_in(DELIVERY_STATUSES)})", name="status"),
+        sa.UniqueConstraint(
+            "submission_id", "event", "integration_id", name="uq_capture_deliveries_integration"
+        ),
+        sa.UniqueConstraint(
+            "submission_id", "event", "webhook_destination_id", name="uq_capture_deliveries_webhook"
+        ),
+        sa.Index("ix_capture_deliveries_status_updated_at", "status", "updated_at"),
+    )
+    id: Mapped[uuid.UUID] = _pk()
+    submission_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("submissions.id", ondelete="CASCADE"), index=True
+    )
+    integration_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.ForeignKey("integrations.id", ondelete="CASCADE"), index=True
+    )
+    webhook_destination_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.ForeignKey(
+            "webhook_destinations.id", ondelete="CASCADE", name="fk_capture_deliveries_webhook"
+        ),
+        index=True,
+    )
+    event: Mapped[str] = mapped_column(sa.String(64), default="submissao.persistida")
+    config_version: Mapped[int] = mapped_column(sa.Integer)
+    status: Mapped[str] = mapped_column(sa.String(16), default="pending")
+    attempts: Mapped[int] = mapped_column(sa.Integer, default=0)
+    dispatch_no: Mapped[int] = mapped_column(sa.Integer, default=1)
+    hatchet_run_id: Mapped[str | None] = mapped_column(sa.String(64))
+    last_error: Mapped[str | None] = mapped_column(sa.String(64))
+    response_status: Mapped[int | None] = mapped_column(sa.Integer)
+    row_id: Mapped[int | None] = mapped_column(sa.Integer)
+    outcome: Mapped[str | None] = mapped_column(sa.String(16))
+    delivered_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    created_at: Mapped[datetime] = _created_at()
+    updated_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
 
 
 class Form(Base):

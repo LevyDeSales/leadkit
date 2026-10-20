@@ -22,7 +22,7 @@ não é erro: é um resultado (`ok` falso).
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import Path
 from fastapi.concurrency import run_in_threadpool
@@ -98,8 +98,10 @@ NOT_FOUND = "Formulário não encontrado."
     returns="A integração, com a tabela lida agora, o mapeamento, o relatório e as sincronizações.",
     response_model=BaserowIntegration,
 )
-def get_form_integration(slug: FORM) -> BaserowIntegration:
-    detail = actions.read_detail(get_deps(), slug)
+def get_form_integration(
+    slug: FORM, profile: Literal["pdf", "capture"] | None = None
+) -> BaserowIntegration:
+    detail = actions.read_detail(get_deps(), slug, profile=profile)
     if detail is None:
         raise ApiError("not_found", NOT_FOUND)
     return BaserowIntegration.of(detail)
@@ -275,6 +277,7 @@ def save_form_integration_mapping(
             get_deps(),
             slug,
             chosen=body.chosen(),
+            profile=body.profile,
             expected_version=actions.version_number(body.expected_version),
             actor=key.actor,
         )
@@ -518,7 +521,7 @@ def send_form_integration_test(
 ) -> SentFormIntegrationTest:
     _ensure_form(slug)
     try:
-        result = actions.send_test(get_deps(), slug, actor=key.actor)
+        result = actions.send_test(get_deps(), slug, actor=key.actor, profile=body.profile)
     except actions.IntegrationMissing as missing:
         raise ApiError("state_conflict", str(missing)) from None
     except actions.TokenUnreadable as unreadable:

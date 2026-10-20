@@ -58,7 +58,7 @@ def test_the_contract_the_live_api_serves_generates_the_same_tools_as_the_file(l
 
     assert live.role == "total"
     assert live.tools == {tool.name: tool for tool in expected}
-    assert len(live.tools) == 58
+    assert len(live.tools) == 59
 
 
 def test_a_leitura_key_of_the_live_api_starts_with_the_read_tools(

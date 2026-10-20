@@ -128,6 +128,7 @@ class Serving:
 
     scope: str
     host: str
+    events: tuple[str, ...] = ()
 
 
 def serving_scope(
@@ -212,6 +213,7 @@ class FormDetail:
     # montada da página, do contrato e da definição guardada; None: a versão não compila mais.
     spec: FormSpec | None
     definition: FormDocument | None
+    integration_issues: tuple[str, ...] = ()
 
     @property
     def unpublished(self) -> bool:
@@ -260,8 +262,14 @@ def form_detail(
         else ()
     )
     scope, serving = serving_scope(destinations.listing(session), slug)
+    from app.integration_readiness import problems as integration_problems
+
+    integration_issues = (
+        tuple(problem.message for problem in integration_problems(session, spec)) if spec else ()
+    )
     return FormDetail(
         slug=slug,
+        integration_issues=integration_issues,
         title=row.title,
         active=row.active,
         public_url=public_url(public_base_url, slug),
@@ -280,7 +288,7 @@ def form_detail(
         history=tuple(stored_forms.history(session, slug)),
         draft=draft,
         notices=notices,
-        destination=Serving(scope, serving.host) if serving else None,
+        destination=Serving(scope, serving.host, serving.events) if serving else None,
         retention=Retention(
             form_retention.periods_of(session, slug) or form_retention.Periods(),
             default_pdf_days=retention_pdf_days,

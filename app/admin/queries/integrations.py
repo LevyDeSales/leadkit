@@ -108,6 +108,8 @@ class IntegrationDetail:
     sources: Mapping[str, Source]
     counts: syncs.SyncCounts
     failures: list[syncs.SyncRow]
+    profile: str = "pdf"
+    capture_deliveries: tuple[dict, ...] = ()
 
 
 _CODE = re.compile(r"^\[([a-z_]+)\]")

@@ -154,10 +154,11 @@
 
     <section class="box" id="destino" aria-labelledby="dest-titulo">
       <h2 id="dest-titulo">Destino do webhook</h2>
+      {% for issue in form.integration_issues %}<p role="alert">{{ issue }}</p>{% endfor %}
       {% if form.destination %}
-      <p>Os planos vão para {{ form.destination }}.</p>
+      <p>Destino efetivo: {{ form.destination }}. Eventos aceitos: {{ form.destination_events | join(", ") }}.</p>
       {% else %}
-      <div class="alert alert--warn" role="status">{{ m.icon('alert-triangle', 'icon--lg') }}<div><strong class="alert__title">Sem destino do webhook: os planos deste formulário não são entregues.</strong></div></div>
+      <div class="alert alert--warn" role="status">{{ m.icon('alert-triangle', 'icon--lg') }}<div><strong class="alert__title">Sem destino do webhook: nenhum evento é enviado por webhook.</strong></div></div>
       {% endif %}
       <p class="footnote"><a href="{{ form.destination_url }}">Configurar o destino deste formulário</a> ou o <a href="/admin/destinations/default">destino padrão</a>.</p>
     </section>
@@ -167,13 +168,13 @@
     <section class="box" id="integracao" aria-labelledby="int-titulo">
       <h2 id="int-titulo">Integração com o Baserow</h2>
       {% if integration.configured %}
-      <p>{{ m.badge(integration.badge) }} Cada pedido concluído vira uma linha na tabela {{ integration.table_id }} de <span class="mono">{{ integration.host }}</span>.</p>
+      <p>{{ m.badge(integration.badge) }} A finalidade publicada seleciona o perfil de captura ou PDF que preenche a tabela {{ integration.table_id }} de <span class="mono">{{ integration.host }}</span>.</p>
       {% if integration.failed %}
       <div class="alert alert--warn" role="status">{{ m.icon('alert-triangle', 'icon--lg') }}<div><strong class="alert__title">{{ integration.failed }} {{ "sincronização falhou" if integration.failed == 1 else "sincronizações falharam" }}</strong><p>Veja o motivo e reenvie na página da integração.</p></div></div>
       {% endif %}
       <p class="footnote"><a href="{{ integration.url }}">Ver e configurar a integração</a></p>
       {% else %}
-      <p class="muted">Sem integração. Dá para ligar este formulário a uma tabela do Baserow: cada pedido concluído vira uma linha, sem servidor à parte.</p>
+      <p class="muted">Sem integração. Dá para ligar este formulário a uma tabela do Baserow: capturas e pedidos PDF usam perfis separados na mesma conexão.</p>
       <p class="btns footnote"><a class="btn btn--secondary" href="{{ integration.url }}">Conectar o Baserow…</a></p>
       {% endif %}
     </section>

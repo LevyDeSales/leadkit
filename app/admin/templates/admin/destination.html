@@ -41,6 +41,12 @@
       <input class="input mono" id="url" name="url" type="url" value="{{ url }}" maxlength="{{ max_url_length }}" required autocomplete="off" spellcheck="false" placeholder="https://"{% if errors.get("url") %} aria-invalid="true" aria-describedby="url-erro"{% endif %}>
       {% if errors.get("url") %}<p class="error" id="url-erro">{{ m.icon('alert-circle') }}{{ errors["url"] }}</p>{% endif %}
     </div>
+    <p>Eventos do destino efetivo: {{ effective_events | join(", ") or "nenhum destino" }}.</p>
+    <input type="hidden" name="events_present" value="1">
+    <fieldset aria-describedby="eventos-ajuda"><legend>Eventos aceitos pelo receptor</legend>
+    <p id="eventos-ajuda">Declare a finalidade autorizada. Capturas enviam respostas sem plano ou PDF. Confira também o destino padrão herdado ao remover uma configuração própria.</p>
+    <label><input type="checkbox" name="events" value="plano.concluido"{% if 'plano.concluido' in selected_events %} checked{% endif %}>Planos concluídos (PDF)</label>
+    <label><input type="checkbox" name="events" value="submissao.persistida"{% if 'submissao.persistida' in selected_events %} checked{% endif %}>Capturas persistidas (sem PDF)</label></fieldset>
     {% if needs_confirmation %}
     <label class="choice choice--check"><input type="checkbox" name="confirm_http" value="on" required><span class="choice__body"><span class="choice__mark">{{ m.icon('check') }}</span><span>Confirmo que o receptor só aceita http e que os dados das leads vão sem criptografia até ele.</span></span></label>
     {% endif %}
@@ -82,7 +88,7 @@
   <h2 id="teste-titulo">Evento de teste</h2>
   <p>Manda um <span class="mono">webhook.teste</span> assinado como o <span class="mono">plano.concluido</span>, com dados fictícios e nenhum dado de lead, e mostra o que o receptor respondeu.</p>
   {#- Sem JavaScript é um POST comum que devolve a página inteira; com HTMX, troca só o resultado. -#}
-  <form method="post" action="{{ page.base }}/test" hx-post="{{ page.base }}/test" hx-target="#resultado-teste" hx-select="#resultado-teste" hx-swap="outerHTML">
+  <form method="post" action="{{ page.base }}/test" hx-post="{{ page.base }}/test" hx-target="#resultado-teste" hx-select="#resultado-teste" hx-swap="outerHTML"><label for="test-event">Finalidade do teste sintético</label><select name="event" id="test-event"><option value="webhook.teste">Conexão</option>{% if page.stored and 'submissao.persistida' in page.stored.events %}<option value="submissao.persistida">Captura persistida (sem submissão real)</option>{% endif %}</select>
     <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
     <button class="btn btn--secondary" type="submit">{{ m.icon('send') }}Mandar o evento de teste</button>
   </form>

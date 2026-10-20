@@ -8,6 +8,10 @@ from pydantic import AwareDatetime, BaseModel
 from app.admin.api.common import Page, PageParams, decode_keyset, encode_keyset, page_params
 from app.admin.api.errors import ApiError
 from app.admin.api.operations import OperationRouter
+from app.admin.api.schemas.capture_deliveries import (
+    CaptureDeliveryState,
+    RetryCaptureDeliveryRequest,
+)
 from app.admin.api.security import CurrentKey, ensure_role
 from app.admin.queries import captures
 from app.deps import get_deps
@@ -26,6 +30,7 @@ class CaptureState(BaseModel):
     form_version_number: int
     created_at: AwareDatetime
     lead_data: dict[str, Any] | None = None
+    deliveries: list[CaptureDeliveryState] = []
 
 
 class CapturePage(Page[CaptureState]):
@@ -93,3 +98,42 @@ def get_capture(
     if found is None:
         raise ApiError("not_found", "Captura não encontrada.")
     return CaptureState(**found)
+
+
+@router.operation(
+    "POST",
+    "/captures/{submission_id}/deliveries/{delivery_id}/retry",
+    operation_id="retry_capture_delivery",
+    role="total",
+    external_effect=True,
+    summary="Repetir uma entrega de captura",
+    description="Reautoriza a mesma entrega e o mesmo destino na revisão confirmada, após validar o perfil histórico. Só falhas voltam para pendente; sucesso não se repete. Exige confirmação e versões esperadas; não gera PDF nem recria submissão.",
+    returns="Estado seguro da entrega; intenção persistida é recuperada pelo reconciliador.",
+    response_model=CaptureDeliveryState,
+    errors={
+        404: "Captura ou entrega não encontrada.",
+        409: "Entrega ou configuração mudou (`state_conflict`); confira a revisão e a finalidade.",
+    },
+)
+def retry_capture_delivery(
+    submission_id: str, delivery_id: str, body: RetryCaptureDeliveryRequest, key: CurrentKey
+) -> CaptureDeliveryState:
+    from app.admin.actions import captures as actions
+
+    try:
+        result = actions.retry(
+            get_deps(),
+            submission_id,
+            delivery_id,
+            expected_dispatch=body.expected_dispatch,
+            expected_config_version=body.expected_config_version,
+            actor=key.actor,
+        )
+    except actions.Missing:
+        raise ApiError("not_found", "Captura ou entrega não encontrada.") from None
+    except actions.Conflict:
+        raise ApiError(
+            "state_conflict",
+            "Entrega ou configuração mudou; confira a finalidade e a revisão do mesmo destino.",
+        ) from None
+    return CaptureDeliveryState(**result)

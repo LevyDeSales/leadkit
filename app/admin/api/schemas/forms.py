@@ -159,6 +159,10 @@ class DraftState(BaseModel):
 class FormDestination(BaseModel):
     """Qual destino do webhook serve o formulário. Nunca a URL: o caminho costuma valer como senha."""
 
+    events: list[str] = Field(
+        default_factory=list,
+        description="Eventos aceitos pelo destino efetivo, inclusive padrão herdado.",
+    )
     scope: Literal["form", "default"] = Field(
         description="`form`: o destino é do próprio formulário. `default`: o formulário usa o "
         "destino padrão."
@@ -243,6 +247,10 @@ class FormDetail(FormSummary):
     """Um formulário: tudo o que a página dele junta, sem a leitura da versão (a definição se lê com
     `get_form_version`)."""
 
+    integration_issues: list[str] = Field(
+        default_factory=list,
+        description="Pendências locais das integrações para a finalidade publicada; sem consulta ao provedor.",
+    )
     version_label: str | None = Field(
         description="O rótulo da versão atual que vai no envio e no webhook (por exemplo, "
         "`diagnostico-rapido-v2`). Nulo: sem versão, ou ela não compila.",
@@ -265,6 +273,7 @@ class FormDetail(FormSummary):
         integration = found.integration
         return cls(
             slug=found.slug,
+            integration_issues=list(found.integration_issues),
             title=found.title,
             active=found.active,
             public_url=found.public_url,
@@ -283,6 +292,7 @@ class FormDetail(FormSummary):
             destination=FormDestination(
                 scope=found.destination.scope,  # type: ignore[arg-type]
                 host=found.destination.host,
+                events=list(found.destination.events),
             )
             if found.destination
             else None,

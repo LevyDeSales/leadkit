@@ -87,7 +87,7 @@ def test_the_server_lists_one_tool_per_operation_the_key_allows(world: World) ->
 
     names = {tool.name for tool in listed.tools}
     assert names == operation_ids(world.api.document) - {"download_job_pdf"}
-    assert len(listed.tools) == 58
+    assert len(listed.tools) == 59
     for tool in listed.tools:
         spec = world.tools[tool.name]
         assert tool.description == spec.description and tool.title == spec.summary

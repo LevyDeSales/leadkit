@@ -75,6 +75,7 @@ def save(
     actor: str,
     expected_version: int,
     http_confirmed: bool,
+    events: list[str] | None = None,
 ) -> destinations.SaveResult:
     """Cria o destino (com o segredo novo em `secret`, que só existe neste resultado) ou muda o
     endereço do que existe, que mantém o segredo. `expected_version` é a versão que a pessoa viu (0:
@@ -84,7 +85,7 @@ def save(
     `WEBHOOK_ENCRYPTION_KEY` não há onde guardar um segredo novo) e `Conflict` (o destino mudou:
     nada foi gravado)."""
     with deps.sessions.begin() as db:
-        return destinations.save(
+        result = destinations.save(
             db,
             deps.cipher,
             form_slug=form_slug,
@@ -93,7 +94,14 @@ def save(
             expected_version=expected_version,
             production=deps.settings.app_env == "production",
             http_confirmed=http_confirmed,
+            events=events,
         )
+        db.flush()
+        from app.integration_readiness import webhook_problems
+
+        if issues := webhook_problems(db, form_slug):
+            raise destinations.InvalidUrl(issues[0].message)
+        return result
 
 
 @dataclass(frozen=True)
@@ -134,6 +142,11 @@ def remove(deps: Deps, form_slug: str | None, *, actor: str, expected_version: i
         removed = destinations.remove(
             db, form_slug=form_slug, actor=actor, expected_version=expected_version
         )
+        db.flush()
+        from app.integration_readiness import webhook_problems
+
+        if webhook_problems(db, form_slug):
+            raise destinations.Conflict()
         remaining = destinations.listing(db)
     serving = remaining.get(None) if form_slug is not None else None
     return Removed(

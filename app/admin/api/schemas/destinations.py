@@ -51,6 +51,10 @@ def _scope(form_slug: str | None) -> str:
 class Destination(BaseModel):
     """Um destino do webhook guardado, como a API o mostra. **Nunca traz o segredo.**"""
 
+    events: list[Literal["plano.concluido", "submissao.persistida"]] = Field(
+        default_factory=lambda: ["plano.concluido"],
+        description="Eventos que a operadora declarou aceitos pelo receptor.",
+    )
     scope: str = Field(description=SCOPE_TEXT, examples=["default", "diagnostico-rapido"])
     url: str = Field(
         description="O endereço do receptor, para onde vai o evento `plano.concluido`. **A chave "
@@ -97,6 +101,7 @@ class Destination(BaseModel):
         host."""
         return cls(
             scope=_scope(stored.form_slug),
+            events=list(stored.events),
             url=stored.url if full_url else destinations.origin_of(stored.url),
             url_redacted=not full_url,
             host=stored.host,
@@ -192,6 +197,10 @@ class DestinationPage(Page[DestinationSummary]):
 class DestinationDetail(BaseModel):
     """O destino de um escopo e quem entrega os eventos dele."""
 
+    serving_events: list[str] = Field(
+        default_factory=list,
+        description="Eventos aceitos pelo destino efetivo, inclusive quando herdado do padrão.",
+    )
     scope: str = Field(description=SCOPE_TEXT, examples=["default", "diagnostico-rapido"])
     title: str | None = Field(
         description="O título do formulário. Nulo no destino padrão e no de um formulário que saiu do "
@@ -221,6 +230,7 @@ class DestinationDetail(BaseModel):
             else None,
             serving=found.serving,  # type: ignore[arg-type]
             serving_host=found.serving_host,
+            serving_events=list(found.serving_events),
         )
 
 
@@ -232,6 +242,11 @@ class SaveDestinationRequest(ConfirmedInput, VersionedInput):
     mantém o segredo. Como o endereço decide para onde vão os dados das leads, a operação exige
     `confirm: true` em toda chamada."""
 
+    events: list[Literal["plano.concluido", "submissao.persistida"]] | None = Field(
+        default=None,
+        min_length=1,
+        description="Na criação, omitido mantém PDF legado; na atualização, omitido conserva os eventos atuais. Captura exige autorização explícita para submissao.persistida.",
+    )
     url: str = Field(
         max_length=destinations.MAX_URL_LENGTH,
         description="A URL do receptor: `https` (ou `http`, que em produção pede `confirm_http`), com "
@@ -330,6 +345,11 @@ class RemovedDestination(BaseModel):
 
 class SendDestinationTestEventRequest(ConfirmedInput):
     """O envio do evento de teste. Sai para o receptor de verdade, por isso exige `confirm: true`."""
+
+    event: Literal["webhook.teste", "submissao.persistida"] = Field(
+        default="webhook.teste",
+        description="Teste sintético do contrato de captura exige que o destino aceite o evento. Não cria submissão.",
+    )
 
 
 class DestinationTestResult(BaseModel):

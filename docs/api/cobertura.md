@@ -36,7 +36,7 @@ o OpenAPI e exigem uma operação ou justificativa para cada rota.
 | --- | ---: | ---: | ---: | ---: |
 | Acesso (login e sessão) | 3 | 3 | 0 | 3 |
 | Pedidos | 6 | 6 | 6 | 0 |
-| Capturas | 2 | 2 | 2 | 0 |
+| Capturas | 3 | 3 | 3 | 0 |
 | Destinos do webhook | 11 | 6 | 6 | 0 |
 | Formulários: cadastro, situação e retenção | 10 | 10 | 8 | 2 |
 | Versões | 3 | 3 | 3 | 0 |
@@ -48,9 +48,9 @@ o OpenAPI e exigem uma operação ou justificativa para cada rota.
 | Imagens dos formulários | 5 | 5 | 5 | 0 |
 | Chaves de API | 3 | 3 | 3 | 0 |
 | Configurar o MCP | 2 | 2 | 0 | 1 |
-| **Total** | **73** | **68** | **57** | **7** |
+| **Total** | **74** | **69** | **60** | **7** |
 
-- **73 rotas** (`GET` e `POST`; o admin não usa outro método), de **68 funções**: as cinco ações dos
+- **74 rotas** (`GET` e `POST`; o admin não usa outro método), de **69 funções**: as cinco ações dos
   destinos (ver, endereço, segredo, remoção e teste) existem para o destino padrão e para o de um
   formulário, com a mesma função.
 - **66 rotas têm par na API**, em **57 operações** (algumas rotas dividem a operação: as duas dos
@@ -515,3 +515,11 @@ As regressões públicas estão em `tests_app/test_capture_review_fixes.py`.
 | `GET /admin/captures` | Lista estado sem PII; dados exigem total e opt-in | `queries.captures.listing` | `GET /captures` | `list_captures` | leitura | lead | feita · tests_app/test_capture.py::test_capture_is_consultable_without_disclosing_lead_data |
 | `GET /admin/captures/{submission_id}` | Identidade histórica; sem token de recibo | `queries.captures.detail` | `GET /captures/{submission_id}` | `get_capture` | leitura | lead | feita · tests_app/test_capture.py::test_capture_is_consultable_without_disclosing_lead_data |
 | `POST /admin/forms/{slug}/draft/capture-test` | Testa respostas, data, pontuação e conclusão | `drafts.test_capture` | `POST /forms/{slug}/draft/capture-test` | `test_capture_form_draft` | leitura | — | feita · tests_app/test_capture.py::test_capture_local_test_and_inapplicable_generation_operations |
+| `POST /admin/captures/{submission_id}/deliveries/{delivery_id}/retry` | Reautoriza o mesmo destino e perfil histórico com revisão e epoch esperados | `actions.captures.retry` | `POST /captures/{submission_id}/deliveries/{delivery_id}/retry` | `retry_capture_delivery` | total | externo | feita · tests_app/test_capture_deliveries.py::test_capture_delivery_api_requires_total_confirmation_and_versions_without_pii |
+
+Entregas de captura aparecem em `get_capture`, `list_captures` e `get_form_integration` sem
+`lead_data`: apenas IDs, revisão, epoch, tentativas, estado, código seguro e evidência do transporte.
+`retry_capture_delivery` exige `confirm`, `expected_dispatch` e `expected_config_version`, conserva
+fato e destino e não gera PDF. Os perfis Baserow `pdf`/`capture` têm mapeamentos e chaves separados,
+com uma ativação da conexão; o perfil consultado pode ser escolhido explicitamente. O webhook
+expõe `events`; omitir na criação usa `plano.concluido`, e omitir na atualização conserva a lista.

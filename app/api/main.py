@@ -49,7 +49,7 @@ from app.intake import (
 from app.integrations import config as integration_config
 from app.models import Job
 from app.pdf_availability import availability_dict, current_pdf
-from app.submission_launch import launch_after_commit, stop_launches
+from app.submission_launch import launch_after_commit, launch_capture_after_commit, stop_launches
 from app.tokens import TokenError
 from app.web import router as web_router
 from app.web.images import router as images_router
@@ -479,6 +479,8 @@ def create_app(
             )
 
         if isinstance(accepted, CaptureAccepted):
+            if not accepted.replay:
+                launch_capture_after_commit(request.app, accepted.submission.id)
             receipt_url = f"{deps.settings.public_base_url.rstrip('/')}/s/{accepted.receipt.public_id}/conclusao?t={accepted.token}"
             return JSONResponse(
                 {

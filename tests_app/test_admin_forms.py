@@ -279,9 +279,7 @@ def test_the_imported_form_has_its_place_in_the_webhook_destinations(
     published = import_form(client, DEFINITION).headers["location"]
 
     confirmation = section(client.get(published).text, "destino")
-    assert "Sem destino do webhook: os planos deste formulário não são entregues" in text(
-        confirmation
-    )
+    assert "Sem destino do webhook: nenhum evento é enviado por webhook" in text(confirmation)
     assert tags(confirmation, "a", href=f"/admin/destinations/forms/{SLUG}")
     destinations_page = client.get("/admin/destinations").text
     assert "Projeto de demonstração" in section(destinations_page, "formularios")
@@ -289,7 +287,7 @@ def test_the_imported_form_has_its_place_in_the_webhook_destinations(
 
     create(client, "/admin/destinations/default", receiver.url("/padrao"))
     shown = text(section(client.get(published).text, "destino"))
-    assert f"Os planos vão para o destino padrão ({receiver.host})" in shown
+    assert f"Destino efetivo: o destino padrão ({receiver.host})" in shown
 
 
 def test_the_registry_answers_every_version_even_with_a_cache_of_one(

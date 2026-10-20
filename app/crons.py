@@ -36,7 +36,13 @@ from app.hatchet_client import hatchet
 from app.integrations import syncs
 from app.models import utcnow
 from app.retention import RetentionReport, purge_expired
-from app.workflows import SCHEDULE_TIMEOUT, launch_delivery, launch_generate_plan, launch_sync
+from app.workflows import (
+    SCHEDULE_TIMEOUT,
+    launch_capture,
+    launch_delivery,
+    launch_generate_plan,
+    launch_sync,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +73,9 @@ class ReconcileReport(BaseModel):
     jobs_relaunched: int = 0
     jobs_failed: int = 0
     deliveries_launched: int = 0
+    captures_launched: int = 0
+    captures_relaunched: int = 0
+    captures_failed: int = 0
     syncs_launched: int = 0
     errors: int = 0
 
@@ -92,6 +101,7 @@ def reconcile_once(
     run_state: Callable[[str], RunState] = hatchet_run_state,
     launch_delivery_fn: Callable[[object], str | None] = launch_delivery,
     launch_sync_fn: Callable[[object], str | None] = launch_sync,
+    launch_capture_fn: Callable[[object, int], str | None] = launch_capture,
 ) -> ReconcileReport:
     report = ReconcileReport()
 
@@ -157,6 +167,18 @@ def reconcile_once(
             break
         report.syncs_launched += 1
 
+    from app.capture_deliveries import reconcile
+
+    counts = reconcile(
+        deps,
+        run_state=run_state,
+        launch=launch_capture_fn,
+        unlaunched_after=UNLAUNCHED_AFTER,
+        in_flight_after=IN_FLIGHT_AFTER,
+        limit=BATCH,
+    )
+    report.captures_launched, report.captures_relaunched, report.captures_failed, errors = counts
+    report.errors += errors
     return report
 
 

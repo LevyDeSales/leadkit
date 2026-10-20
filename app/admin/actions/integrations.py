@@ -153,6 +153,7 @@ class MappingSaved:
     integration: integration_config.StoredIntegration
     report: integration_mapping.Report
     was_active: bool
+    profile: str = "pdf"
 
     @property
     def deactivated(self) -> bool:
@@ -322,7 +323,11 @@ def read_fields(deps: Deps, form_slug: str) -> list[BaserowField]:
 
 
 def read_detail(
-    deps: Deps, form_slug: str, *, typed: Mapping[int, str] | None = None
+    deps: Deps,
+    form_slug: str,
+    *,
+    typed: Mapping[int, str] | None = None,
+    profile: str | None = None,
 ) -> queries.IntegrationDetail | None:
     """A integração do formulário como a página e a API a leem: a conexão (nunca o token), os campos
     da tabela **lidos agora no Baserow** com a fonte de cada um, o relatório do mapeamento guardado e
@@ -341,7 +346,11 @@ def read_detail(
         )
     if title is None:
         return None
-    sources = integration_mapping.catalog(spec)
+    from app.integration_readiness import profile_for
+
+    profile = profile or profile_for(spec)
+    entries = (stored.capture_entries if profile == "capture" else stored.entries) if stored else ()
+    sources = integration_mapping.catalog(spec, profile=profile)
     fields: list[queries.FieldChoice] | None = None
     report: integration_mapping.Report | None = None
     read_error = TOKEN_UNREADABLE if unreadable else None
@@ -351,11 +360,16 @@ def read_detail(
         except (IntegrationMissing, ReadFailed) as exc:
             read_error = str(exc)
         else:
-            fields = queries.field_choices(live, sources, stored.entries, typed)
-            if stored.entries:
-                report = integration_mapping.build_report(list(stored.entries), live, spec)
+            fields = queries.field_choices(live, sources, entries, typed)
+            if entries:
+                report = integration_mapping.build_report(
+                    list(entries), live, spec, profile=profile
+                )
     with deps.sessions() as db:
         counts, failures = queries.sync_overview(db, stored)
+        from app.capture_deliveries import listing as capture_deliveries
+
+        deliveries = tuple(capture_deliveries(db, integration_id=stored.id)) if stored else ()
     return queries.IntegrationDetail(
         slug=form_slug,
         title=title,
@@ -368,6 +382,8 @@ def read_detail(
         sources=sources,
         counts=counts,
         failures=failures,
+        profile=profile,
+        capture_deliveries=deliveries,
     )
 
 
@@ -378,6 +394,7 @@ def save_mapping(
     chosen: Mapping[int, str],
     expected_version: int,
     actor: str,
+    profile: str | None = None,
 ) -> MappingSaved:
     """Guarda o mapeamento: `chosen` é a fonte de cada campo da tabela (pelo id do campo no Baserow;
     uma fonte em branco, ou de um campo que a tabela não tem mais, não conta). É conferido contra a
@@ -392,6 +409,9 @@ def save_mapping(
     spec = integration_config.form_spec(deps, form_slug)
     if spec is None:
         raise NotPublished
+    from app.integration_readiness import profile_for
+
+    profile = profile or profile_for(spec)
     with deps.sessions() as db:
         before = integration_config.load(db, form_slug)
     if before is None or before.version != expected_version:
@@ -408,9 +428,21 @@ def save_mapping(
         for item in live
         if item.id in sources
     ]
-    integration_mapping.check_entries(entries, live, integration_mapping.catalog(spec))
-    report = integration_mapping.build_report(entries, live, spec)
+    integration_mapping.check_entries(
+        entries, live, integration_mapping.catalog(spec, profile=profile), profile=profile
+    )
+    report = integration_mapping.build_report(entries, live, spec, profile=profile)
     with deps.sessions.begin() as db:
+        from app.integration_readiness import configuration_lock, current_specs
+
+        configuration_lock(db)
+        current = next(current_specs(db, form_slug), None)
+        if current is None:
+            raise NotPublished
+        integration_mapping.check_entries(
+            entries, live, integration_mapping.catalog(current, profile=profile), profile=profile
+        )
+        report = integration_mapping.build_report(entries, live, current, profile=profile)
         saved = integration_config.save_mapping(
             db,
             form_slug=form_slug,
@@ -418,6 +450,7 @@ def save_mapping(
             actor=actor,
             expected_version=expected_version,
             deactivate=not report.ok,
+            profile=profile,
         )
     logger.info(
         "admin: mapeamento da integração formulario=%s campos=%s pendencias=%s por=%s",
@@ -426,7 +459,7 @@ def save_mapping(
         len(report.problems) + report.unmatched,
         actor,
     )
-    return MappingSaved(integration=saved, report=report, was_active=before.active)
+    return MappingSaved(integration=saved, report=report, was_active=before.active, profile=profile)
 
 
 def activate(
@@ -456,13 +489,28 @@ def activate(
         live = read_fields(deps, form_slug)
     except IntegrationMissing:  # removida entre o `load` e a leitura
         raise integration_config.Conflict(None) from None
-    report = integration_mapping.build_report(list(stored.entries), live, spec)
+    from app.integration_readiness import profile_for
+
+    profile = profile_for(spec)
+    entries = stored.capture_entries if profile == "capture" else stored.entries
+    report = integration_mapping.build_report(list(entries), live, spec, profile=profile)
     if not report.ok:
-        raise ReportPending(report, nothing_mapped=not stored.entries)
+        raise ReportPending(report, nothing_mapped=not entries)
     with deps.sessions.begin() as db:
         activated = integration_config.set_active(
             db, form_slug=form_slug, active=True, actor=actor, expected_version=expected_version
         )
+        db.flush()
+        from app.integration_readiness import current_specs
+        from app.integration_readiness import problems as local_problems
+
+        current = next(current_specs(db, form_slug), None)
+        if current is None or local_problems(db, current):
+            raise integration_config.Conflict(activated)
+        report = integration_mapping.build_report(list(entries), live, current, profile=profile)
+        if not report.ok:
+            raise ReportPending(report, nothing_mapped=not entries)
+
     logger.info("admin: integração ativada formulario=%s por=%s", form_slug, actor)
     return activated
 
@@ -507,7 +555,9 @@ def remove(deps: Deps, form_slug: str, *, expected_version: int, actor: str) -> 
     return Removed(integration=before, sync_counts=counts)
 
 
-def send_test(deps: Deps, form_slug: str, *, actor: str) -> integration_push.SampleResult:
+def send_test(
+    deps: Deps, form_slug: str, *, actor: str, profile: str | None = None
+) -> integration_push.SampleResult:
     """Manda para a tabela a linha de teste (a lead de exemplo, no domínio `exemplo`), pelo mesmo caminho
     de um pedido de verdade, e devolve o que aconteceu. A linha fica na tabela; testar de novo atualiza
     a mesma. Não passa pelo Hatchet nem toca dado de lead, e o resultado fica na auditoria. Um teste que
@@ -516,7 +566,7 @@ def send_test(deps: Deps, form_slug: str, *, actor: str) -> integration_push.Sam
     Levanta `IntegrationMissing` e `TokenUnreadable` (o token guardado não abre: nada é mandado, e o
     Baserow nem é chamado)."""
     try:
-        result = integration_push.send_sample(deps, form_slug, actor=actor)
+        result = integration_push.send_sample(deps, form_slug, actor=actor, profile=profile)
     except destinations.UnreadableSecret:
         raise TokenUnreadable from None
     if result is None:

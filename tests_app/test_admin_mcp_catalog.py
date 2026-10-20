@@ -48,7 +48,7 @@ def selected(role: str, lead_data: bool = False) -> dict[str, ToolSpec]:
 def test_the_catalog_has_exactly_the_operation_ids_of_the_file() -> None:
     assert LOADED.skipped == {}
     assert set(TOOLS) == operation_ids(DOCUMENT)
-    assert len(TOOLS) == 59
+    assert len(TOOLS) == 60
 
 
 def test_the_list_of_exceptions_starts_empty() -> None:
@@ -125,14 +125,14 @@ def test_a_total_key_registers_all_but_the_lead_pdf_while_the_option_is_off() ->
     found = selected("total")
 
     assert set(found) == operation_ids(DOCUMENT) - {"download_job_pdf"}
-    assert len(found) == 58
+    assert len(found) == 59
 
 
 def test_the_lead_data_option_registers_the_lead_pdf_for_a_total_key() -> None:
     found = selected("total", lead_data=True)
 
     assert set(found) == operation_ids(DOCUMENT)
-    assert len(found) == 59
+    assert len(found) == 60
 
 
 def test_the_option_does_nothing_for_a_leitura_key() -> None:
@@ -235,7 +235,7 @@ def test_the_marked_tools_are_exactly_the_destructive_or_external_operations() -
     }
 
     assert {name for name, tool in TOOLS.items() if tool.marked} == expected
-    assert len(expected) == 22
+    assert len(expected) == 23
 
 
 def test_every_marked_tool_offers_confirm_as_an_optional_boolean_and_says_what_it_does() -> None:

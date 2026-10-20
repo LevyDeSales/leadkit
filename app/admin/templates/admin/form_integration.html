@@ -3,6 +3,10 @@
 {% set section = "forms" %}
 {% block title %}Integração com o Baserow · {{ page.form_title }}{% endblock %}
 {% block content %}
+<nav aria-label="Perfis de mapeamento"><a href="{{ page.url }}?profile=capture">Captura sem PDF</a> · <a href="{{ page.url }}?profile=pdf">Plano com PDF</a></nav>
+<p>Finalidade do perfil: <strong>{{ 'Captura sem PDF' if page.profile == 'capture' else 'Plano com PDF' }}</strong>. A ativação da conexão vale para a finalidade publicada. Perfil de captura: {{ page.capture_mapped }} campo(s); perfil PDF: {{ page.pdf_mapped }} campo(s).</p>
+{% if page.active and (not page.report or not page.report.ok) %}<p role="alert">Integração ativa com configuração incompatível ou não verificada para esta finalidade. Confira o relatório e corrija o perfil ou desative a conexão.</p>{% endif %}
+
 <nav class="crumbs" aria-label="Você está em"><a href="/admin/forms">Formulários</a><span aria-hidden="true">/</span><a href="{{ page.form_url }}">{{ page.form_title }}</a><span aria-hidden="true">/</span><span>Integração com o Baserow</span></nav>
 
 <div class="page-head">
@@ -78,9 +82,10 @@
     <ul class="items">{% for problem in problems %}<li>{{ problem }}</li>{% endfor %}</ul>
   </div></div>
   {% endif %}
-  <form class="form-stack" method="post" action="{{ page.url }}/mapping">
+  <form class="form-stack" method="post" action="{{ page.url }}/mapping?profile={{ page.profile }}">
     <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
     <input type="hidden" name="version" value="{{ page.stored.version }}">
+    <input type="hidden" name="profile" value="{{ page.profile }}">
     <div class="tablewrap" role="region" aria-label="Campos da tabela" tabindex="0">
       <table class="table table--compact">
         <caption class="sr-only">Campos da tabela do Baserow e o que preenche cada um</caption>
@@ -193,6 +198,9 @@
   {% endif %}
 </section>
 
+<section class="box"><h2>Entregas de captura</h2>
+<p>As respostas são enviadas depois de salvas. Falha de integração não impede a conclusão. Sucesso confirma transporte, sem comprovar leitura.</p>
+<ul>{% for delivery in page.capture_deliveries %}<li><a href="/admin/captures/{{ delivery.submission_id }}">{{ delivery.submission_id }}</a> · {{ delivery.status }} · {{ delivery.attempts }} tentativa(s){% if delivery.error_code %} · {{ delivery.error_code }}{% endif %}</li>{% else %}<li>Nenhuma entrega de captura para esta conexão.</li>{% endfor %}</ul></section>
 <section class="box" id="sincronizacoes" aria-labelledby="sinc-titulo">
   <h2 id="sinc-titulo">Sincronizações</h2>
   <dl class="kv">

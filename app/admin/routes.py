@@ -592,6 +592,7 @@ def _destination_page(
     errors: dict[str, str] | None = None,
     url: str | None = None,
     needs_confirmation: bool = False,
+    selected_events: list[str] | None = None,
 ) -> Response:
     """A página do destino. `new_secret` só vem na resposta da criação ou da troca: a única vez
     em que o segredo aparece. Num pedido do HTMX, uma recusa sai com 200: o HTMX não troca o
@@ -601,6 +602,11 @@ def _destination_page(
     title = _form_title(form_slug) if form_slug is not None else None
     with deps.sessions() as db:
         page = views.destination_page(db, form_slug, title, deps.cipher)
+        effective = (
+            destinations.serving(destinations.listing(db), form_slug)
+            if form_slug
+            else destinations.listing(db).get(None)
+        )
     if page is None:
         return _error(request, 404, DESTINATION_NOT_FOUND)
     if url is None:
@@ -612,6 +618,10 @@ def _destination_page(
         "admin/destination.html",
         {
             "page": page,
+            "effective_events": effective.events if effective else (),
+            "selected_events": selected_events
+            if selected_events is not None
+            else (page.stored.events if page.stored else ("plano.concluido",)),
             "new_secret": new_secret,
             "test": test,
             "errors": errors or {},
@@ -651,6 +661,8 @@ def save_destination(
     url: Annotated[str, Form()] = "",
     version: Annotated[str, Form()] = "",
     confirm_http: Annotated[str, Form()] = "",
+    events: Annotated[list[str] | None, Form()] = None,
+    events_present: Annotated[str, Form()] = "",
 ) -> Response:
     """Cria o destino, e o segredo novo aparece só nesta resposta, ou muda a URL dele."""
     expected = _version(version)
@@ -662,6 +674,7 @@ def save_destination(
             actor=session.username,
             expected_version=expected,
             http_confirmed=bool(confirm_http),
+            events=(events or []) if events_present else events,
         )
     except destinations.InvalidUrl as exc:
         return _destination_page(
@@ -670,6 +683,7 @@ def save_destination(
             errors={"url": exc.message},
             url=url,
             needs_confirmation=exc.needs_confirmation,
+            selected_events=events or [] if events_present else events,
         )
     except destinations.NoCipher:
         return _destination_page(request, status_code=422, errors={"url": NO_CIPHER}, url=url)
@@ -743,14 +757,17 @@ def send_test_event(
     request: Request,
     session: Annotated[AdminSession, Depends(require_session)],
     form_slug: Target,
+    event: Annotated[str, Form()] = "webhook.teste",
 ) -> Response:
     """O evento de teste sai da API, sem passar pelo Hatchet (não leva dado de lead), com os
     timeouts do adaptador: a resposta pode levar até uns 20 s com o receptor mudo. As entregas
     saem do worker, que pode não alcançar o que a API alcança (a tela avisa)."""
     try:
-        probe = destinations.send_test(get_deps(), form_slug, actor=session.username)
+        probe = destinations.send_test(get_deps(), form_slug, actor=session.username, event=event)
     except destinations.UnreadableSecret:
         return _destination_page(request, status_code=409, test=views.UNREADABLE_PROBE)
+    except destinations.UnsupportedEvent:
+        return _back(session, form_slug, "O destino não declarou aceitar o evento de captura.")
     if probe is None:
         return _back(session, form_slug, NOTHING_TO_TEST)
     logger.info(
@@ -1946,7 +1963,10 @@ def _integration_page(
     digitar e escolher, devolvidos numa recusa (o token nunca volta). Num pedido do HTMX, uma recusa
     sai com 200, para o HTMX trocar o trecho."""
     deps = get_deps()
-    detail = integration_actions.read_detail(deps, slug, typed=selected)
+    profile = request.query_params.get("profile")
+    if profile not in (None, "pdf", "capture"):
+        return _error(request, 422, "Selecione o perfil pdf ou capture.")
+    detail = integration_actions.read_detail(deps, slug, typed=selected, profile=profile)
     if detail is None:
         return _error(request, 404, FORM_NOT_FOUND)
     stored = detail.stored
@@ -2059,7 +2079,12 @@ def save_integration_mapping(
     chosen = _chosen_sources(form)
     try:
         saved = integration_actions.save_mapping(
-            get_deps(), slug, chosen=chosen, expected_version=expected, actor=session.username
+            get_deps(),
+            slug,
+            chosen=chosen,
+            expected_version=expected,
+            actor=session.username,
+            profile=str(form.get("profile")) if form.get("profile") in ("pdf", "capture") else None,
         )
     except integration_actions.NotPublished as exc:
         return _integration_back(session, slug, str(exc))
@@ -2298,3 +2323,35 @@ def capture_test_page(
 
 router.include_router(open_routes)
 router.include_router(protected)
+
+
+@protected.post("/captures/{submission_id}/deliveries/{delivery_id}/retry")
+def retry_capture_delivery_page(
+    submission_id: str,
+    delivery_id: str,
+    request: Request,
+    session: Annotated[AdminSession, Depends(require_session)],
+    expected_dispatch: Annotated[int, Form()],
+    expected_config_version: Annotated[int, Form()],
+    confirm: Annotated[str, Form()] = "",
+) -> Response:
+    from app.admin.actions import captures
+
+    if confirm != "on":
+        return Response("Confirme o envio externo antes de repetir.", status_code=422)
+    try:
+        captures.retry(
+            get_deps(),
+            submission_id,
+            delivery_id,
+            expected_dispatch=expected_dispatch,
+            expected_config_version=expected_config_version,
+            actor=session.username,
+        )
+    except captures.Missing:
+        return Response("Captura ou entrega não encontrada.", status_code=404)
+    except captures.Conflict:
+        return Response(
+            "Entrega ou configuração mudou; confira a revisão e a finalidade.", status_code=409
+        )
+    return RedirectResponse(f"/admin/captures/{submission_id}", status_code=303)

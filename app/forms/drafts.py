@@ -1343,6 +1343,10 @@ def review(session: Session, draft: Draft) -> Review:
         spec = compile_definition(document, version_number=number)
     except DefinitionError as exc:
         problems = exc.problems
+    if spec is not None:
+        from app.integration_readiness import problems as integration_problems
+
+        problems = (*problems, *integration_problems(session, spec))
     llm = (
         llm_changes(previous, draft.document)
         if draft.pending and document.get("generation", "pdf") == "pdf"
@@ -1433,6 +1437,12 @@ def publish(
     version_id = uuid.uuid4()
     try:
         with deps.sessions.begin() as session:
+            from app.integration_readiness import configuration_lock
+            from app.integration_readiness import problems as integration_problems
+
+            configuration_lock(session)
+            if issues := integration_problems(session, found.spec):
+                raise PublishRefused(found, ["Integrações incompatíveis com a finalidade."], issues)
             session.execute(sa.select(Form.id).where(Form.id == draft.form_id).with_for_update())
             latest = load(session, slug)
             if latest is None or latest.token != expected or latest.next_number != found.number:

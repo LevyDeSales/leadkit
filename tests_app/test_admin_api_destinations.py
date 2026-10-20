@@ -281,6 +281,7 @@ def test_get_destination_of_the_default_with_none_says_to_create_it(api_client: 
         "destination": None,
         "serving": "none",
         "serving_host": None,
+        "serving_events": [],
     }
 
 

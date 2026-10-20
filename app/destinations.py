@@ -113,6 +113,10 @@ class StartupError(RuntimeError):
     traz um valor do ambiente."""
 
 
+class UnsupportedEvent(Exception):
+    """O receptor não declarou aceitar o contrato solicitado no teste."""
+
+
 class InvalidUrl(ValueError):
     """A URL não serve para um destino. A mensagem é para a tela; `needs_confirmation` diz que
     falta só confirmar um endereço http em produção."""
@@ -206,6 +210,7 @@ class StoredDestination:
     updated_by: str
     updated_at: datetime
     secret_created_at: datetime
+    events: tuple[str, ...] = ("plano.concluido",)
 
     @property
     def host(self) -> str:
@@ -250,6 +255,7 @@ def _stored(row: WebhookDestination) -> StoredDestination:
         updated_by=row.updated_by,
         updated_at=row.updated_at,
         secret_created_at=row.secret_created_at,
+        events=tuple(row.events),
     )
 
 
@@ -323,6 +329,12 @@ def resolve(session: Session, cipher: SecretCipher | None, form_slug: str) -> De
     )
     if row is None:
         return None
+    if "plano.concluido" not in row.events:
+        from app.errors import FailureCode, RetryableError
+
+        raise RetryableError(
+            FailureCode.DELIVERY_UNCONFIGURED, "destino não aceita evento de plano"
+        )
     if cipher is None:
         raise UnreadableSecret
     scope: Scope = "default" if row.form_slug is None else "form"
@@ -339,10 +351,20 @@ def save(
     expected_version: int,
     production: bool,
     http_confirmed: bool,
+    events: list[str] | None = None,
 ) -> SaveResult:
     """Cria o destino (com um segredo novo, devolvido uma vez) ou muda a URL do que existe, que
     mantém o segredo. `expected_version` é a versão que a pessoa viu (0 = ainda não havia
     destino): se mudou, levanta `Conflict` e nada muda. URL recusada: `InvalidUrl`."""
+    if events is not None and (
+        not events
+        or len(set(events)) != len(events)
+        or set(events) - {"plano.concluido", "submissao.persistida"}
+    ):
+        raise InvalidUrl("Selecione os eventos aceitos: plano.concluido e/ou submissao.persistida.")
+    from app.integration_readiness import configuration_lock
+
+    configuration_lock(session)
     url = check_url(url, production=production, http_confirmed=http_confirmed)
     # Em produção, um http só passa confirmado: a auditoria guarda quem confirmou.
     insecure = production and urlsplit(url).scheme == "http"
@@ -354,12 +376,19 @@ def save(
         row = _insert(session, cipher, form_slug=form_slug, url=url, secret=secret, actor=actor)
         if row is None:  # outro pedido criou o destino primeiro
             raise Conflict(_current(session, form_slug))
-        _audit(session, actor, "create", row, **confirmed)
+        if events is not None:
+            row.events = events
+            session.flush()
+        _audit(session, actor, "create", row, events=row.events, **confirmed)
         return SaveResult(_stored(row), secret)
     row = _lock_for_change(session, form_slug, expected_version, actor)
     previous_host = host_of(row.url)
     row.url = url
-    _audit(session, actor, "update", row, previous_host=previous_host, **confirmed)
+    if events is not None:
+        row.events = events
+    _audit(
+        session, actor, "update", row, previous_host=previous_host, events=row.events, **confirmed
+    )
     return SaveResult(_stored(row), None)
 
 
@@ -399,7 +428,9 @@ def sample_event(event_id: str, form_slug: str | None) -> dict[str, Any]:
     }
 
 
-def send_test(deps: Deps, form_slug: str | None, *, actor: str) -> Probe | None:
+def send_test(
+    deps: Deps, form_slug: str | None, *, actor: str, event: str = TEST_EVENT
+) -> Probe | None:
     """Manda o evento de teste ao destino desta página (o padrão não entra no lugar do de um
     formulário), assinado com o segredo vigente, e devolve o que o receptor respondeu; None se o
     destino não existe. A auditoria guarda o status e o tempo, não a resposta. Levanta
@@ -414,7 +445,27 @@ def send_test(deps: Deps, form_slug: str | None, *, actor: str) -> Probe | None:
         secret = deps.cipher.open(row.secret_sealed)
     event_id = str(uuid.uuid4())
     payload = sample_event(event_id, form_slug)
-    probe = deps.webhook.probe(stored.url, secret, TEST_EVENT, event_id, payload)
+    if event == "submissao.persistida" and event not in stored.events:
+        raise UnsupportedEvent
+    if event == "submissao.persistida":
+        payload = {
+            "event": event,
+            "event_id": event_id,
+            "test": True,
+            "occurred_at": utcnow().isoformat(),
+            "form": {"slug": form_slug, "version": "teste", "version_number": 0},
+            "submission": {"id": "teste-sintetico"},
+            "lead": {"name": "Contadora Exemplo", "email": "teste@example.test", "phone": None},
+            "answers": {},
+            "consent": {},
+            "tracking": {},
+            "scores": {},
+            "priority": None,
+            "persona": None,
+        }
+    else:
+        event = TEST_EVENT
+    probe = deps.webhook.probe(stored.url, secret, event, event_id, payload)
     with deps.sessions.begin() as session:
         _audit(
             session,
@@ -434,6 +485,12 @@ def remove(
     """Apaga o destino e o devolve como estava (com a versão e a autoria da última mudança, não as
     da remoção). O formulário passa a usar o destino padrão, se houver, e as entregas em repetição
     vão para ele na tentativa seguinte; sem padrão, elas esperam um destino novo."""
+    from app.integration_readiness import configuration_lock
+
+    configuration_lock(session)
+    from app.integration_readiness import configuration_lock
+
+    configuration_lock(session)
     row = _lock(session, form_slug, expected_version)
     removed = _stored(row)
     _audit(session, actor, "remove", row)
@@ -488,6 +545,9 @@ def _lock_for_change(
 ) -> WebhookDestination:
     """O destino travado para mudar, se ainda está na versão que a pessoa viu (senão
     `Conflict`), já com a versão nova e a autoria da mudança."""
+    from app.integration_readiness import configuration_lock
+
+    configuration_lock(session)
     row = _lock(session, form_slug, expected_version)
     row.version += 1
     row.updated_by = actor

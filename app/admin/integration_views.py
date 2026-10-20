@@ -170,6 +170,10 @@ class IntegrationPage:
     mapped: int  # quantos campos o mapeamento guardado preenche
     counts: syncs.SyncCounts
     failures: list[SyncView]
+    profile: str = "pdf"
+    capture_mapped: int = 0
+    pdf_mapped: int = 0
+    capture_deliveries: tuple[dict, ...] = ()
 
 
 def connection_view(stored: StoredIntegration, *, token_unreadable: bool) -> ConnectionView:
@@ -205,7 +209,13 @@ def integration_page(detail: IntegrationDetail) -> IntegrationPage:
         fields=field_rows(detail.fields, detail.sources) if detail.fields is not None else None,
         read_error=detail.read_error,
         report=report_view(detail.report) if detail.report else None,
-        mapped=len(stored.entries) if stored else 0,
+        mapped=len(stored.capture_entries if detail.profile == "capture" else stored.entries)
+        if stored
+        else 0,
+        profile=detail.profile,
+        capture_deliveries=detail.capture_deliveries,
+        capture_mapped=len(stored.capture_entries) if stored else 0,
+        pdf_mapped=len(stored.entries) if stored else 0,
         counts=detail.counts,
         failures=[sync_view(row) for row in detail.failures],
     )

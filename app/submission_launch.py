@@ -32,3 +32,19 @@ async def stop_launches(app: FastAPI) -> None:
     for task in tasks:
         task.cancel()
     await asyncio.gather(*tasks, return_exceptions=True)
+
+
+def launch_capture_after_commit(app: FastAPI, submission_id: uuid.UUID) -> None:
+    """Dispara somente IDs persistidos; SDK e provedor não prendem o HTTP da participante."""
+
+    async def launch() -> None:
+        from app.admin.launching import launch_capture_later
+
+        try:
+            await asyncio.wrap_future(launch_capture_later(submission_id))
+        except Exception:  # noqa: BLE001 — falha isolada, sem mensagem bruta.
+            logger.warning("disparo de captura adiado submission=%s", submission_id)
+
+    task = asyncio.create_task(launch())
+    app.state.submission_launches.add(task)
+    task.add_done_callback(app.state.submission_launches.discard)
