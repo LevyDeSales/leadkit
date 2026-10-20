@@ -453,3 +453,68 @@ def test_swarm_rehearsal_accepts_the_real_guard_refusal(request, tmp_path: Path)
                 sa.text("UPDATE alembic_version SET version_num = :revision"),
                 {"revision": original},
             )
+
+
+@pytest.mark.parametrize(
+    ("failure", "exit_code", "category"),
+    [
+        (
+            "sqlalchemy.exc.OperationalError: password authentication failed",
+            1,
+            "database_authentication",
+        ),
+        ("psycopg.OperationalError: could not translate host name", 1, "database_dns"),
+        ("psycopg.OperationalError: connection refused", 1, "database_unavailable"),
+        ("ModuleNotFoundError: historical.module", 1, "module_missing"),
+        ("RuntimeError: estrutura incompatível; objetos: private_table", 1, "schema_guard"),
+        ("docker: daemon refused the request", 125, "docker_run"),
+        ("unexpected historical failure", 1, "unclassified"),
+        ("successful migration with private output", 0, None),
+    ],
+)
+def test_historical_migration_failure_reports_only_safe_category_and_keeps_failure(
+    tmp_path: Path, failure: str, exit_code: int, category: str | None
+) -> None:
+    """Executa o trecho real do workflow; somente o Docker externo é substituído."""
+    import json
+
+    rehearsal = next(
+        step["run"]
+        for step in steps_of("swarm")
+        if step.get("name") == "Rehearse real pre-projection bootstrap and forward recovery"
+    )
+    start = rehearsal.index('docker run --rm --network "${compat}_internal"')
+    command = rehearsal[rehearsal.rfind("\n", 0, start) + 1 :]
+    command = command[: command.index('test "$(psql_compat')]
+    sentinel = "SYNTHETIC_PRIVATE_MIGRATION_CONTENT"
+    script = (
+        'docker() { printf "%s\\n" "$SYNTHETIC_FAILURE" >&2; return "$SYNTHETIC_EXIT"; }\n'
+        + command
+        + '\necho "migration failure was ignored"\n'
+    )
+    result = subprocess.run(
+        ["bash", "-e", "-c", script],
+        env={
+            **os.environ,
+            "RUNNER_TEMP": str(tmp_path),
+            "compat": "synthetic-compat",
+            "old_image": "synthetic:historical",
+            "SYNTHETIC_FAILURE": f"{failure}\n{sentinel} postgresql://private@example.test/test",
+            "SYNTHETIC_EXIT": str(exit_code),
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == exit_code
+    if exit_code:
+        assert json.loads(result.stdout) == {
+            "stage": "historical_migration",
+            "exit_code": exit_code,
+            "category": category,
+        }
+    else:
+        assert result.stdout == "migration failure was ignored\n"
+    assert result.stderr == ""
+    assert sentinel not in result.stdout + result.stderr
+    assert "private" not in result.stdout + result.stderr

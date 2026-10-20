@@ -466,8 +466,35 @@ jobs:
           test -n "$db"
           test "$(docker inspect --format '{{.State.Health.Status}}' "$db")" = healthy
           psql_compat() { docker exec "$db" sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "$1"' sh "$1"; }
-          docker run --rm --network "${compat}_internal" --env-file app.env "$old_image" migrate \
-            > "$RUNNER_TEMP/compat-old-migrate.log" 2>&1 || { echo 'A migration histórica falhou'; exit 1; }
+          if docker run --rm --network "${compat}_internal" --env-file app.env "$old_image" migrate \
+            > "$RUNNER_TEMP/compat-old-migrate.log" 2>&1; then
+            :
+          else
+            migration_exit=$?
+            # O log bruto pode conter DSN, parâmetros SQL ou credenciais: nunca o publique.
+            # Só categorias fixas distinguem a próxima investigação; a falha continua fatal.
+            python3 - "$RUNNER_TEMP/compat-old-migrate.log" "$migration_exit" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          text = Path(sys.argv[1]).read_text(errors="replace").lower()
+          exit_code = int(sys.argv[2])
+          categories = (
+              ("database_authentication", ("password authentication failed", "no pg_hba.conf entry")),
+              ("database_dns", ("could not translate host name", "name or service not known", "temporary failure in name resolution")),
+              ("database_unavailable", ("connection refused", "server closed the connection unexpectedly", "database system is starting up")),
+              ("module_missing", ("modulenotfounderror:", "importerror:")),
+              ("schema_guard", ("revisão incompatível", "estrutura incompatível", "banco ocupado sem marcador", "a ponte exige postgresql 16")),
+          )
+          category = "docker_run" if exit_code in (125, 126, 127) else next(
+              (name for name, markers in categories if any(marker in text for marker in markers)),
+              "unclassified",
+          )
+          print(json.dumps({"stage": "historical_migration", "exit_code": exit_code, "category": category}))
+          PY
+            exit "$migration_exit"
+          fi
           test "$(psql_compat 'select version_num from alembic_version')" = 0015_capture_delivery
           IMAGE="$old_image" STACK="$compat" DOMAIN=compat.ci.test \
             docker stack deploy --detach=false --resolve-image never -c stack.yaml "$compat"
