@@ -2460,3 +2460,10 @@ SIGNATURES = {
         ],
     }
 }
+
+# Delta aditivo conferido contra o catálogo PostgreSQL 16; 0012 permanece congelada.
+SIGNATURES["0013"] = {
+    **SIGNATURES["0012"],
+    "column:public.artifacts.verified_at": ["timestamp with time zone", "false", "", "", "", ""],
+    "column:public.artifacts.storage_revision": ["text", "false", "", "", "", "pg_catalog.default"],
+}

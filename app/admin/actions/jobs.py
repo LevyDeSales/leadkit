@@ -29,8 +29,10 @@ from sqlalchemy.orm import Session
 from app import jobs
 from app.admin import launching
 from app.deps import Deps
+from app.errors import FailureCode, RetryableError
 from app.integrations import syncs as integration_syncs
 from app.models import Artifact, Delivery, IntegrationSync, Job
+from app.pdf_availability import artifact_availability, verified_content, verify_completion
 
 logger = logging.getLogger(__name__)
 
@@ -62,37 +64,63 @@ class PdfFile:
     content: bytes | None = None
 
 
-def pdf_file(deps: Deps, public_id: str, version: int | None, *, signed_url: bool) -> PdfFile:
-    """O PDF da tentativa `version` do pedido (a mais recente, sem `version`).
+def pdf_file(
+    deps: Deps,
+    public_id: str,
+    version: int | None,
+    *,
+    signed_url: bool,
+    filename: str | None = None,
+    authorized_job: Job | None = None,
+) -> PdfFile:
+    """O PDF da tentativa `version` do pedido (a atual, sem `version`).
 
     Com `signed_url`, e se o storage assina (o S3, e não o disco local), devolve a URL de 300 s em
     vez dos bytes: é o que a página faz. Sem ele, devolve sempre os bytes: a API entrega o arquivo, e
     uma URL assinada seria um segundo segredo, fora da chave e da auditoria.
 
     Levanta `NoPdf` (404) e `PdfRemoved` (410). Um storage que falha levanta o erro dele."""
-    statement = (
-        sa.select(Artifact.storage_key, Artifact.version, Artifact.purged_at)
-        .join(Job, Job.id == Artifact.job_id)
-        .where(Job.public_id == public_id, Artifact.kind == "pdf")
-        .order_by(Artifact.version.desc())
-        .limit(1)
-    )
-    if version is not None:
-        statement = statement.where(Artifact.version == version)
-    with deps.sessions() as session:
-        found = session.execute(statement).one_or_none()
-    if found is None:
-        raise NoPdf
-    if found.purged_at is not None:
-        raise PdfRemoved
-    filename = f"plano-{public_id}-v{found.version}.pdf"
-    if signed_url:
-        url = deps.storage.presigned_url(
-            found.storage_key, ttl_seconds=SIGNED_URL_TTL_SECONDS, filename=filename
+    with deps.sessions.begin() as session:
+        job = session.scalar(sa.select(Job).where(Job.public_id == public_id).with_for_update())
+        if job is None or (version is None and job.status != "completed"):
+            raise NoPdf
+        if authorized_job is not None and (
+            job.id != authorized_job.id
+            or job.attempt != authorized_job.attempt
+            or job.token_version != authorized_job.token_version
+        ):
+            raise NoPdf
+        attempt = job.attempt if version is None else version
+        artifact = session.scalar(
+            sa.select(Artifact).where(
+                Artifact.job_id == job.id, Artifact.kind == "pdf", Artifact.version == attempt
+            )
         )
-        if url:
-            return PdfFile(filename, url=url)
-    return PdfFile(filename, content=deps.storage.get(found.storage_key))
+        if artifact is None:
+            raise NoPdf
+        state = artifact_availability(deps.storage, artifact)
+        if state.state == "removed":
+            raise PdfRemoved
+        if state.state == "unknown" and state.exists is True:
+            # Históricos só ganham prova depois de ler e validar os bytes, nunca por backfill.
+            content = verify_completion(session, deps.storage, job, attempt, artifact.id)
+        elif state.available:
+            content, _ = verified_content(deps.storage, artifact)
+        else:
+            raise RetryableError(FailureCode.STORAGE_FAILED, "PDF indisponível ou não verificado")
+        filename = filename or f"plano-{public_id}-v{artifact.version}.pdf"
+        if signed_url:
+            try:
+                url = deps.storage.presigned_url(
+                    artifact.storage_key, ttl_seconds=SIGNED_URL_TTL_SECONDS, filename=filename
+                )
+            except Exception:  # noqa: BLE001 — fronteira de storage com erro seguro
+                raise RetryableError(
+                    FailureCode.STORAGE_FAILED, "PDF indisponível no storage"
+                ) from None
+            if url:
+                return PdfFile(filename, url=url)
+        return PdfFile(filename, content=content)
 
 
 # --- reprocessar e reenviar ---------------------------------------------------------------------

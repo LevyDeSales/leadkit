@@ -25,6 +25,7 @@ from urllib.parse import quote, urlencode
 import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
+from app.adapters.storage import ArtifactStorage
 from app.admin.localtime import local_midnight
 from app.errors import TerminalError
 from app.forms import FormRegistry, LeadIdentity
@@ -43,6 +44,7 @@ from app.models import (
     Plan,
     Submission,
 )
+from app.pdf_availability import PdfAvailability, current_pdf
 from app.submission_identity import resolve_identity
 
 
@@ -605,6 +607,7 @@ class JobState:
     link_expires_at: datetime
     link_expired: bool  # o link da lead já passou do prazo, no instante pedido
     hatchet_run_id: str | None
+    current_pdf: PdfAvailability
     pdfs: tuple[PdfState, ...]  # o mais novo primeiro
     deliveries: tuple[DeliveryState, ...]  # do mais antigo ao mais novo
     syncs: tuple[SyncState, ...]  # o mais novo primeiro
@@ -683,7 +686,13 @@ def run_url(template: str | None, run_id: str | None) -> str | None:
 
 
 def read_job(
-    session: Session, public_id: str, *, forms: FormRegistry, now: datetime, with_lead: bool
+    session: Session,
+    public_id: str,
+    *,
+    forms: FormRegistry,
+    now: datetime,
+    with_lead: bool,
+    storage: ArtifactStorage | None = None,
 ) -> JobDetail | None:
     """O pedido de código `public_id`, ou nada. `now` é o instante contra o qual se diz que o link da
     lead venceu. Com `with_lead=False` o dado da lead nem é lido do banco; o parâmetro não tem valor
@@ -754,6 +763,7 @@ def read_job(
         link_expires_at=job.expires_at,
         link_expired=now > job.expires_at,
         hatchet_run_id=job.hatchet_run_id,
+        current_pdf=current_pdf(session, storage, job),
         pdfs=tuple(
             PdfState(a.version, a.byte_size, a.created_at, a.purged_at)
             for a in sorted(artifacts.values(), key=lambda a: a.version, reverse=True)

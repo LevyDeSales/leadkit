@@ -21,7 +21,7 @@
   {% endif %}
   <section class="acts" id="acoes" aria-label="Ações">
     <div class="acts__row">
-      {% if job.pdfs and not job.pdfs[0].removed %}<a class="btn btn--primary" href="/admin/jobs/{{ job.public_id }}/pdf">{{ m.icon('download') }}Baixar PDF</a>{% endif %}
+      {% if job.current_pdf.available %}<a class="btn btn--primary" href="/admin/jobs/{{ job.public_id }}/pdf">{{ m.icon('download') }}Baixar PDF</a>{% endif %}
       {% if job.run_url %}<a class="btn btn--secondary" href="{{ job.run_url }}" target="_blank" rel="noopener noreferrer">{{ m.icon('external') }}Ver execução no Hatchet<span class="sr-only"> (abre em nova aba)</span></a>{% endif %}
     </div>
     {% if job.can_reprocess %}
@@ -142,6 +142,10 @@
       {% else %}
       <p class="muted">O plano ainda não foi gerado.</p>
       {% endif %}
+      <h3 id="pdf-atual">PDF da tentativa atual</h3>
+      <p>Tentativa {{ job.current_pdf.attempt }} · {% if job.current_pdf.available %}Disponível{% elif job.current_pdf.state == 'removed' %}Removido pela retenção{% elif job.current_pdf.state == 'unknown' %}Sem verificação disponível{% elif job.current_pdf.state == 'invalid' %}Arquivo divergente{% elif job.current_pdf.state == 'missing' %}Arquivo ausente{% else %}Indisponível no momento{% endif %}.</p>
+      <p>A disponibilidade técnica não altera a permissão de acesso.</p>
+      {% if job.current_pdf.state == 'unknown' %}<a class="btn" href="/admin/jobs/{{ job.public_id }}/pdf">Verificar e baixar PDF atual</a>{% endif %}
       {% if job.pdfs %}
       <h3>PDFs</h3>
       <ul class="files">

@@ -18,6 +18,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app import destinations
+from app.adapters.storage import ArtifactStorage
 from app.adapters.webhook import Probe, outcome
 from app.admin.actions.destinations import BODY_START_CHARS
 from app.admin.actions.versions import DRAFT_REF
@@ -37,6 +38,7 @@ from app.forms import (
 from app.forms import retention as form_retention
 from app.forms import stored as stored_forms
 from app.integrations import syncs as integration_syncs
+from app.pdf_availability import PdfAvailability
 from app.retention import Due
 from app.settings import Settings
 
@@ -481,6 +483,7 @@ class JobDetail:
     answers: list[AnswerGroup]
     consents: list[ConsentView]
     plan: PlanView | None
+    current_pdf: PdfAvailability
     pdfs: list[PdfView]
     deliveries: list[DeliveryView]
     syncs: list[SyncView]
@@ -494,11 +497,14 @@ def job_detail(
     forms: FormRegistry,
     run_url_template: str | None,
     now: datetime,
+    storage: ArtifactStorage | None = None,
 ) -> JobDetail | None:
     """O pedido como a lead o enviou: rótulos e ordem vêm da versão do formulário que ela
     respondeu (`forms`), não da atual. A consulta é `app.admin.queries.jobs`, a mesma da API; aqui
     ela ganha rótulo, data de Brasília e os textos livres de volta nos eventos."""
-    found = job_queries.read_job(session, public_id, forms=forms, now=now, with_lead=True)
+    found = job_queries.read_job(
+        session, public_id, forms=forms, now=now, with_lead=True, storage=storage
+    )
     if found is None:
         return None
     state, lead = found.state, found.lead
@@ -555,6 +561,7 @@ def job_detail(
         answers=_answer_groups(lead.answers, spec),
         consents=_consents(lead.consent),
         plan=_plan_view(lead.plan, spec) if lead.plan else None,
+        current_pdf=state.current_pdf,
         pdfs=[
             PdfView(
                 version=pdf.version,

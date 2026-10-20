@@ -36,6 +36,7 @@ from app.admin.form_editor import FormEdit
 from app.admin.queries import forms as form_queries
 from app.admin.queries import jobs as job_queries
 from app.deps import get_deps
+from app.errors import RetryableError, TerminalError
 from app.forms import UnknownForm, draft_previews, draft_tests, drafts
 from app.forms import assets as form_assets
 from app.forms import retention as form_retention
@@ -386,6 +387,7 @@ def _detail_page(
             forms=deps.forms,
             run_url_template=deps.settings.hatchet_run_url_template,
             now=utcnow(),
+            storage=deps.storage,
         )
     if detail is None:
         return _error(request, 404, JOB_NOT_FOUND)
@@ -482,6 +484,8 @@ def job_pdf(request: Request, public_id: str, version: str = "") -> Response:
         return _error(request, 404, "Este pedido ainda não tem PDF.")
     except job_actions.PdfRemoved:
         return _error(request, 410, PDF_REMOVED)
+    except (RetryableError, TerminalError, OSError):
+        return _error(request, 502, "O PDF está indisponível. Tente novamente em instantes.")
     if pdf.url:
         return RedirectResponse(pdf.url, status_code=302)
     return Response(

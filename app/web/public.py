@@ -26,8 +26,9 @@ from pydantic import ValidationError
 from sqlalchemy.orm import Session
 from starlette.datastructures import FormData
 
+from app.admin.actions.jobs import NoPdf, PdfRemoved, pdf_file
 from app.deps import Deps, get_deps
-from app.errors import TerminalError
+from app.errors import RetryableError, TerminalError
 from app.forms import FormSpec, InactiveForm, Notices, Screen, UnknownForm
 from app.forms.dates import long_date
 from app.forms.sandbox import TemplateProblem
@@ -44,6 +45,7 @@ from app.intake import (
     submission_spec,
 )
 from app.models import Artifact, Job, Plan, Submission, utcnow
+from app.pdf_availability import PdfAvailability, current_pdf
 from app.submission_identity import resolve_identity
 from app.submission_launch import launch_after_commit
 from app.tokens import TokenError
@@ -399,6 +401,7 @@ class JobDetails:
     # O que a prévia de uma definição compilada recebe, como o PDF.
     lead_name: str | None = None
     scores: dict[str, Any] = field(default_factory=dict)
+    availability: PdfAvailability | None = None
 
 
 def _details(deps: Deps, job: Job) -> JobDetails:
@@ -409,7 +412,8 @@ def _details(deps: Deps, job: Job) -> JobDetails:
         except TerminalError:  # a página segue acessível, sem nome presumido de outro envio
             lead_name = None
         plan = pdf = None
-        if job.status == "completed":
+        availability = current_pdf(session, deps.storage, job)
+        if availability.available:
             plan = session.scalar(
                 sa.select(Plan.document).where(Plan.job_id == job.id, Plan.version == job.attempt)
             )
@@ -424,6 +428,7 @@ def _details(deps: Deps, job: Job) -> JobDetails:
         pdf,
         lead_name=lead_name,
         scores=submission.scores or {},
+        availability=availability,
     )
 
 
@@ -508,6 +513,13 @@ def job_page(public_id: str, request: Request) -> Response:
             progress=progress(job, utcnow()),
             notice=_notices(deps, details).waiting,
         )
+    if details.pdf is None:
+        return _page(
+            request,
+            "pdf_unavailable",
+            job=job,
+            can_verify=details.availability is not None and details.availability.state == "unknown",
+        )
     return _page(
         request,
         "result",
@@ -529,20 +541,27 @@ def download_pdf(public_id: str, request: Request) -> Response:
         return job
     if job.status != "completed":
         return RedirectResponse(f"/d/{job.public_id}", status_code=303)
-    with deps.sessions() as session:
-        pdf = _current_pdf(session, job)
-    if pdf is None:
-        return _page(request, "unknown", 404)
-    filename = f"plano-{job.public_id}.pdf"
-    url = deps.storage.presigned_url(
-        pdf.storage_key, ttl_seconds=DOWNLOAD_TTL_SECONDS, filename=filename
-    )
-    if url:
-        return RedirectResponse(url, status_code=302)
+    try:
+        pdf = pdf_file(
+            deps,
+            public_id,
+            None,
+            signed_url=True,
+            filename=f"plano-{job.public_id}.pdf",
+            authorized_job=job,
+        )
+    except NoPdf:
+        return _page(request, "pdf_unavailable", 404, job=job)
+    except PdfRemoved:
+        return _page(request, "pdf_unavailable", 410, job=job)
+    except (RetryableError, TerminalError, OSError):
+        return _page(request, "pdf_unavailable", 502, job=job)
+    if pdf.url:
+        return RedirectResponse(pdf.url, status_code=302)
     return Response(
-        deps.storage.get(pdf.storage_key),
+        pdf.content,
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": f'attachment; filename="plano-{job.public_id}.pdf"'},
     )
 
 
