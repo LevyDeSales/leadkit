@@ -46,6 +46,15 @@
       </select>
       {{ field_error("source") }}
     </div>
+    <div class="field">
+      <label for="f-generation">Finalidade</label>
+      <select class="select" name="generation" id="f-generation">
+        <option value="">Preservar a origem (modelo inicial: PDF)</option>
+        <option value="pdf"{% if page.generation == "pdf" %} selected{% endif %}>Gerar plano e PDF</option>
+        <option value="none"{% if page.generation == "none" %} selected{% endif %}>Somente salvar respostas, sem IA ou PDF</option>
+      </select>
+      {{ field_error("generation") }}
+    </div>
     <div class="btns"><button class="btn btn--primary" type="submit">Criar o rascunho</button></div>
   </form>
 </section>

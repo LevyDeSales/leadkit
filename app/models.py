@@ -92,6 +92,19 @@ class Submission(Base):
     created_at: Mapped[datetime] = _created_at()
 
 
+class CaptureReceipt(Base):
+    """Capacidade revogável para ler apenas a conclusão histórica de uma captura."""
+
+    __tablename__ = "capture_receipts"
+    id: Mapped[uuid.UUID] = _pk()
+    submission_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("submissions.id", ondelete="CASCADE"), unique=True
+    )
+    public_id: Mapped[str] = mapped_column(sa.String(32), unique=True)
+    token_version: Mapped[int] = mapped_column(sa.Integer, server_default=sa.text("1"))
+    expires_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True))
+
+
 class Job(Base):
     """Estado de negócio do pedido de plano. Execução, retries e histórico ficam no Hatchet."""
 

@@ -65,6 +65,7 @@ def check_installed_package() -> None:
         "migrations/contracts.py",
         "migrations/script.py.mako",
         "migrations/versions/0012_leadkit_baseline.py",
+        "migrations/versions/0014_capture_receipts.py",
         "migrations/versions/0013_artifact_availability.py",
         "forms/starter/definition.json",
         "forms/starter/pdf.html",
@@ -76,7 +77,8 @@ def check_installed_package() -> None:
         assert (root / name).is_file(), name
     assert not (root / "migrations/legacy_forms").exists()
     assert (
-        ScriptDirectory.from_config(Config(str(root / "alembic.ini"))).get_current_head() == "0013"
+        ScriptDirectory.from_config(Config(str(root / "alembic.ini"))).get_current_head()
+        == "0014_capture"
     )
     assert len(list((root / "assets/fonts").glob("*.ttf"))) == 8
     assert list((root / "web/templates").rglob("*.html"))

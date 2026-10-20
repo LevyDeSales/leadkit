@@ -1,0 +1,21 @@
+{% extends "admin/layout.html" %}
+{% set section = "captures" %}
+{% block title %}Capturas{% endblock %}
+{% block content %}
+<h1>Capturas confirmadas</h1>
+<p>Respostas salvas sem geração de plano ou PDF.</p>
+{% if detail %}
+<section class="box"><h2>{{ detail.form_slug }} · versão {{ detail.form_version_number }}</h2>
+<p>Capturada em {{ detail.created_at }} · {{ detail.submission_id }}</p>
+<dl>{% for key, value in detail.lead_data.identity.items() %}<dt>{{ key }}</dt><dd>{{ value or '—' }}</dd>{% endfor %}</dl>
+<h3>Respostas, consentimento e pontuação</h3><pre>{{ detail.lead_data | tojson(indent=2) }}</pre></section>
+{% else %}
+<form method="get" action="/admin/captures" class="form-stack">
+<label for="capture-form">Formulário</label><input class="input" id="capture-form" name="form" value="{{ form or '' }}">
+<label for="capture-version">Número da versão</label><input class="input" id="capture-version" name="form_version" type="number" min="1" value="{{ form_version or '' }}">
+<button class="btn btn--secondary" type="submit">Filtrar capturas</button>
+</form>
+<ul>{% for item in items %}<li><a href="/admin/captures/{{ item.submission_id }}">{{ item.form_slug }} · versão {{ item.form_version_number }} · {{ item.created_at }}</a> — Capturada</li>{% else %}<li>Nenhuma captura encontrada.</li>{% endfor %}</ul>
+{% if next_url %}<a class="btn btn--secondary" href="{{ next_url }}">Próxima página</a>{% endif %}
+{% endif %}
+{% endblock %}

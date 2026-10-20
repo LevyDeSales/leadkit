@@ -85,6 +85,8 @@ def normalized(document: Mapping[str, Any]) -> dict[str, Any]:
     """A definição na forma normal: cada parte sem os padrões escritos por extenso, as partes
     opcionais vazias ausentes e as respostas de exemplo sem as em branco."""
     found = dict(document)
+    if found.get("generation") == "pdf":
+        found.pop("generation")
     for key in PARTS:
         if key in found and (minimal := part(key, found[key])) is not None:
             found[key] = minimal

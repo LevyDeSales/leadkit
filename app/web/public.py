@@ -34,6 +34,7 @@ from app.forms.dates import long_date
 from app.forms.sandbox import TemplateProblem
 from app.intake import (
     Accepted,
+    CaptureAccepted,
     ConsentIn,
     ConsentTextMismatch,
     IdempotencyConflict,
@@ -78,8 +79,8 @@ CONSENT_UPDATED = (
     "continuar."
 )
 ALREADY_SENT = (
-    "Você já enviou este formulário com outras respostas. Se quiser um plano com estas "
-    "respostas, envie de novo."
+    "Você já enviou este formulário com outras respostas. Para salvar estas respostas como "
+    "um novo envio, envie de novo."
 )
 
 CSP = (
@@ -241,6 +242,10 @@ async def submit_form(slug: str, request: Request) -> Response:
     accepted = await run_in_threadpool(_submit_form, slug, request, raw)
     if isinstance(accepted, Response):
         return accepted
+    if isinstance(accepted, CaptureAccepted):
+        response = RedirectResponse(f"/s/{accepted.receipt.public_id}/conclusao", status_code=303)
+        _grant_capture_access(response, request, accepted.receipt, accepted.token)
+        return response
     job = accepted.job
     if not accepted.replay:
         # Falha no disparo não perde o pedido: o reconciliador dispara depois.
@@ -253,7 +258,7 @@ async def submit_form(slug: str, request: Request) -> Response:
 
 def _prepare_form_submission(
     request: Request, spec: FormSpec, screen: Screen, post: FormPost, session: Session
-) -> Accepted | Response:
+) -> Accepted | CaptureAccepted | Response:
     """Valida e recebe a página sob a mesma trava usada para resolver sua versão."""
     if post.honeypot:
         return _form_page(request, spec, screen, post, banner=SEND_FAILED, status_code=400)
@@ -310,7 +315,9 @@ def _prepare_form_submission(
     return accepted
 
 
-def _submit_form(slug: str, request: Request, raw: FormData) -> Accepted | Response:
+def _submit_form(
+    slug: str, request: Request, raw: FormData
+) -> Accepted | CaptureAccepted | Response:
     deps = get_deps()
     spec: FormSpec | None = None
     screen: Screen | None = None
@@ -582,3 +589,52 @@ def job_progress(public_id: str, request: Request) -> Response:
         progress=progress(job, utcnow()),
         announce=request.query_params.get("etapa") != job.stage,
     )
+
+
+CAPTURE_COOKIE = "leadkit_capture"
+
+
+def _grant_capture_access(response, request, receipt, token):
+    response.set_cookie(
+        CAPTURE_COOKIE,
+        token,
+        max_age=max(0, int((receipt.expires_at - utcnow()).total_seconds())),
+        path=f"/s/{receipt.public_id}",
+        secure=_https(request),
+        httponly=True,
+        samesite="lax",
+    )
+
+
+@router.get("/s/{public_id}/conclusao")
+def capture_completion_page(public_id: str, request: Request) -> Response:
+    """Recibo histórico sem respostas, contato ou acesso a PDF; troca token por cookie local."""
+    from fastapi.responses import HTMLResponse
+
+    from app.models import CaptureReceipt
+    from app.tokens import CaptureSigner, TokenError
+
+    deps = get_deps()
+    token = request.query_params.get("t")
+    supplied = token if token is not None else request.cookies.get(CAPTURE_COOKIE, "")
+    with deps.sessions() as session:
+        receipt = session.scalar(
+            sa.select(CaptureReceipt).where(CaptureReceipt.public_id == public_id)
+        )
+        if receipt is None:
+            return _page(request, "capture_unknown", 404)
+        try:
+            CaptureSigner(deps.signer.secrets_).verify(supplied, receipt)
+        except TokenError:
+            return _page(request, "capture_unknown", 404)
+        submission = session.get_one(Submission, receipt.submission_id)
+        try:
+            spec = deps.forms.get(submission.form_slug, submission.form_version_number)
+        except UnknownForm:
+            return _page(request, "capture_unknown", 404)
+    headers = {"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"}
+    if token is not None:
+        response = RedirectResponse(f"/s/{public_id}/conclusao", status_code=303, headers=headers)
+        _grant_capture_access(response, request, receipt, token)
+        return response
+    return HTMLResponse(render_completion(spec), headers=headers)

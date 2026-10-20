@@ -97,7 +97,11 @@ def periods_of(session: Session, slug: str) -> Periods | None:
 
 def seen_token(due: Due) -> str:
     """A contagem que a tela mostrou, para voltar no envio de confirmação."""
-    return f"{due.requests}:{due.pdfs}"
+    return (
+        f"{due.requests}:{due.pdfs}:{due.captures}"
+        if due.captures
+        else f"{due.requests}:{due.pdfs}"
+    )
 
 
 def _plural(count: int, singular: str, plural: str) -> str:
@@ -108,6 +112,8 @@ def deletion_sentence(due: Due) -> str:
     """O que a próxima retenção apagaria com os prazos, por extenso: é o que a tela mostra e o que a
     API diz quando pede a confirmação de uma redução."""
     parts = []
+    if due.captures:
+        parts.append(_plural(due.captures, "captura", "capturas"))
     if due.requests:
         parts.append(_plural(due.requests, "pedido inteiro", "pedidos inteiros"))
     if due.pdfs:
@@ -121,10 +127,10 @@ def deletion_sentence(due: Due) -> str:
 
 def parse_seen(text: str) -> Due | None:
     """A contagem de `seen_token`; None se o texto não é uma (a confirmação não vale)."""
-    requests, _, pdfs = text.partition(":")
-    if not (requests.isascii() and requests.isdecimal() and pdfs.isascii() and pdfs.isdecimal()):
+    parts = text.split(":")
+    if len(parts) not in (2, 3) or any(not p.isascii() or not p.isdecimal() for p in parts):
         return None
-    return Due(int(requests), int(pdfs))
+    return Due(*map(int, parts))
 
 
 class Refused(Exception):
@@ -200,7 +206,12 @@ def save(
         due = None
         if reduced:
             due = due_for_form(session, slug, **_days_of(after), now=now)
-            if confirmed is None or due.requests > confirmed.requests or due.pdfs > confirmed.pdfs:
+            if (
+                confirmed is None
+                or due.requests > confirmed.requests
+                or due.pdfs > confirmed.pdfs
+                or due.captures > confirmed.captures
+            ):
                 today = due_for_form(session, slug, **_days_of(before), now=now)
                 raise ConfirmationNeeded(due, today)
         form.retention_pdf_days = new.pdf_days
@@ -220,7 +231,11 @@ def save(
                     "in_force_pdf_days": after.pdf_days,
                     "in_force_request_days": after.request_days,
                     **(
-                        {"confirmed_requests": confirmed.requests, "confirmed_pdfs": confirmed.pdfs}
+                        {
+                            "confirmed_requests": confirmed.requests,
+                            "confirmed_pdfs": confirmed.pdfs,
+                            "confirmed_captures": confirmed.captures,
+                        }
                         if due is not None and confirmed is not None
                         else {}
                     ),

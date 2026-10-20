@@ -199,6 +199,7 @@ def create_form(body: CreateFormRequest, key: CurrentKey, request: Request) -> F
             slug=body.slug or "",
             actor=key.actor,
             source=body.source or "",
+            generation=body.generation,
         )
     except DefinitionError as refused:
         raise ApiError(

@@ -1385,6 +1385,282 @@
         "title": "BaserowTableField",
         "type": "object"
       },
+      "CaptureExamplesDoc": {
+        "additionalProperties": false,
+        "properties": {
+          "answers": {
+            "additionalProperties": true,
+            "title": "Answers",
+            "type": "object"
+          },
+          "plan": {
+            "title": "Plan",
+            "type": "null"
+          }
+        },
+        "required": [
+          "answers"
+        ],
+        "title": "CaptureExamplesDoc",
+        "type": "object"
+      },
+      "CaptureFormDocument": {
+        "additionalProperties": false,
+        "properties": {
+          "completion": {
+            "$ref": "#/components/schemas/CompletionDoc"
+          },
+          "consent": {
+            "$ref": "#/components/schemas/ConsentDoc"
+          },
+          "data": {
+            "default": {},
+            "patternProperties": {
+              "^[a-z][a-z0-9_]*$": {
+                "discriminator": {
+                  "mapping": {
+                    "edition": "#/components/schemas/EditionBlock",
+                    "list": "#/components/schemas/ListBlock",
+                    "value": "#/components/schemas/ValueBlock",
+                    "windows": "#/components/schemas/WindowsBlock"
+                  },
+                  "propertyName": "kind"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/ValueBlock"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ListBlock"
+                  },
+                  {
+                    "$ref": "#/components/schemas/WindowsBlock"
+                  },
+                  {
+                    "$ref": "#/components/schemas/EditionBlock"
+                  }
+                ]
+              }
+            },
+            "propertyNames": {
+              "maxLength": 64
+            },
+            "title": "Data",
+            "type": "object"
+          },
+          "examples": {
+            "$ref": "#/components/schemas/CaptureExamplesDoc"
+          },
+          "format": {
+            "const": 1,
+            "title": "Format",
+            "type": "integer"
+          },
+          "generation": {
+            "const": "none",
+            "title": "Generation",
+            "type": "string"
+          },
+          "identity": {
+            "$ref": "#/components/schemas/IdentityDoc"
+          },
+          "instructions": {
+            "title": "Instructions",
+            "type": "null"
+          },
+          "intro": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Intro",
+            "type": "string"
+          },
+          "minutes": {
+            "maximum": 60.0,
+            "minimum": 1.0,
+            "title": "Minutes",
+            "type": "integer"
+          },
+          "notices": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NoticesDoc"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pdf": {
+            "title": "Pdf",
+            "type": "null"
+          },
+          "phases": {
+            "title": "Phases",
+            "type": "null"
+          },
+          "plan": {
+            "title": "Plan",
+            "type": "null"
+          },
+          "preview": {
+            "title": "Preview",
+            "type": "null"
+          },
+          "prompt": {
+            "title": "Prompt",
+            "type": "null"
+          },
+          "scoring": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ScoringDoc"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "slug": {
+            "maxLength": 48,
+            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+            "title": "Slug",
+            "type": "string"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/StepDoc"
+            },
+            "minItems": 1,
+            "title": "Steps",
+            "type": "array"
+          },
+          "title": {
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "format",
+          "slug",
+          "title",
+          "intro",
+          "minutes",
+          "steps",
+          "identity",
+          "consent",
+          "generation",
+          "examples"
+        ],
+        "title": "CaptureFormDocument",
+        "type": "object"
+      },
+      "CapturePage": {
+        "properties": {
+          "items": {
+            "description": "Os itens desta página.",
+            "items": {
+              "$ref": "#/components/schemas/CaptureState"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Passe em `cursor` para ler a página seguinte; nulo na última.",
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "CapturePage",
+        "type": "object"
+      },
+      "CaptureState": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "form_slug": {
+            "title": "Form Slug",
+            "type": "string"
+          },
+          "form_version": {
+            "title": "Form Version",
+            "type": "string"
+          },
+          "form_version_number": {
+            "title": "Form Version Number",
+            "type": "integer"
+          },
+          "lead_data": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lead Data"
+          },
+          "status": {
+            "const": "captured",
+            "title": "Status",
+            "type": "string"
+          },
+          "submission_id": {
+            "title": "Submission Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "submission_id",
+          "status",
+          "form_slug",
+          "form_version",
+          "form_version_number",
+          "created_at"
+        ],
+        "title": "CaptureState",
+        "type": "object"
+      },
+      "CaptureTestResult": {
+        "properties": {
+          "completion": {
+            "$ref": "#/components/schemas/CompletionDoc"
+          },
+          "scores": {
+            "additionalProperties": true,
+            "title": "Scores",
+            "type": "object"
+          },
+          "today": {
+            "format": "date",
+            "title": "Today",
+            "type": "string"
+          }
+        },
+        "required": [
+          "today",
+          "scores",
+          "completion"
+        ],
+        "title": "CaptureTestResult",
+        "type": "object"
+      },
       "ComparisonSection": {
         "description": "Uma seção da definição numa comparação.",
         "properties": {
@@ -1738,6 +2014,22 @@
         "additionalProperties": false,
         "description": "Um formulário novo: o título, o endereço e, se quiser, o formulário de onde copiar.",
         "properties": {
+          "generation": {
+            "anyOf": [
+              {
+                "enum": [
+                  "pdf",
+                  "none"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Finalidade: pdf gera plano; none apenas salva respostas. Ausente preserva a origem ou usa PDF. Copiar uma captura com pdf prepara os blocos de geração do modelo inicial no novo rascunho, mantendo perguntas e respostas de exemplo da origem.",
+            "title": "Generation"
+          },
           "slug": {
             "anyOf": [
               {
@@ -2562,6 +2854,49 @@
         "title": "DraftState",
         "type": "object"
       },
+      "DraftTestInput": {
+        "additionalProperties": false,
+        "description": "As respostas e a data simulada de um prompt, de uma pontuação ou de um teste.",
+        "properties": {
+          "answers": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "As respostas que o teste usa: um objeto com uma chave por pergunta do formulário (o `name` dela, em `get_form_draft.document.steps`), do jeito que a lead as enviaria. Ausente ou nulo: as respostas de exemplo do rascunho (`examples.answers`). Um objeto vazio **não** é «sem respostas»: é um objeto sem nenhuma, e as perguntas obrigatórias o recusam. Uma chave que não é de uma pergunta do formulário é `422` no campo `answers`, sem citar a chave. **Use dados fictícios:** as respostas de um teste ficam guardadas com o resultado dele, e qualquer chave o lê.",
+            "examples": [
+              {
+                "nome": "Contadora Exemplo",
+                "tamanho_equipe": "2_a_5"
+              }
+            ],
+            "title": "Answers"
+          },
+          "simulated_date": {
+            "anyOf": [
+              {
+                "maxLength": 32,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A data simulada, no formato `AAAA-MM-DD` (entre 2000 e 2100). O rascunho é compilado com o relógio parado nesse dia (ao meio-dia, em São Paulo): o prompt recebe a data em `today` e o calendário das fases, em `phases`, e o teste com o LLM usa a mesma data. Ausente ou vazia: hoje, em São Paulo.",
+            "examples": [
+              "2027-03-01"
+            ],
+            "title": "Simulated Date"
+          }
+        },
+        "title": "DraftTestInput",
+        "type": "object"
+      },
       "DraftTestUsage": {
         "description": "O que o LLM gastou no teste, como o adaptador o grava. Os campos que o adaptador não deu\nficam nulos (o LLM falso do modo de teste não gasta token).",
         "properties": {
@@ -2827,27 +3162,6 @@
           "detail"
         ],
         "title": "ErrorResponse",
-        "type": "object"
-      },
-      "ExamplesDoc": {
-        "additionalProperties": false,
-        "properties": {
-          "answers": {
-            "additionalProperties": true,
-            "title": "Answers",
-            "type": "object"
-          },
-          "plan": {
-            "additionalProperties": true,
-            "title": "Plan",
-            "type": "object"
-          }
-        },
-        "required": [
-          "answers",
-          "plan"
-        ],
-        "title": "ExamplesDoc",
         "type": "object"
       },
       "FileMeasure": {
@@ -3183,162 +3497,6 @@
         "title": "FormDetail",
         "type": "object"
       },
-      "FormDocument": {
-        "additionalProperties": false,
-        "description": "A definição de um formulário: as etapas e as perguntas, a identidade e o consentimento da lead,\na pontuação, as instruções e o prompt do LLM, o modelo do plano, o HTML e o CSS do PDF, a prévia\nda página de resultado e os exemplos. É o que o banco guarda de cada versão publicada e o que a\nexportação escreve (`get_form_version` o devolve como está guardado). O formato e o que cada\nparte faz estão em `app.forms.definition`.",
-        "properties": {
-          "completion": {
-            "$ref": "#/components/schemas/CompletionDoc"
-          },
-          "consent": {
-            "$ref": "#/components/schemas/ConsentDoc"
-          },
-          "data": {
-            "default": {},
-            "patternProperties": {
-              "^[a-z][a-z0-9_]*$": {
-                "discriminator": {
-                  "mapping": {
-                    "edition": "#/components/schemas/EditionBlock",
-                    "list": "#/components/schemas/ListBlock",
-                    "value": "#/components/schemas/ValueBlock",
-                    "windows": "#/components/schemas/WindowsBlock"
-                  },
-                  "propertyName": "kind"
-                },
-                "oneOf": [
-                  {
-                    "$ref": "#/components/schemas/ValueBlock"
-                  },
-                  {
-                    "$ref": "#/components/schemas/ListBlock"
-                  },
-                  {
-                    "$ref": "#/components/schemas/WindowsBlock"
-                  },
-                  {
-                    "$ref": "#/components/schemas/EditionBlock"
-                  }
-                ]
-              }
-            },
-            "propertyNames": {
-              "maxLength": 64
-            },
-            "title": "Data",
-            "type": "object"
-          },
-          "examples": {
-            "$ref": "#/components/schemas/ExamplesDoc"
-          },
-          "format": {
-            "const": 1,
-            "title": "Format",
-            "type": "integer"
-          },
-          "identity": {
-            "$ref": "#/components/schemas/IdentityDoc"
-          },
-          "instructions": {
-            "title": "Instructions",
-            "type": "string"
-          },
-          "intro": {
-            "maxLength": 2000,
-            "minLength": 1,
-            "title": "Intro",
-            "type": "string"
-          },
-          "minutes": {
-            "maximum": 60.0,
-            "minimum": 1.0,
-            "title": "Minutes",
-            "type": "integer"
-          },
-          "notices": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/NoticesDoc"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "pdf": {
-            "$ref": "#/components/schemas/PdfDoc"
-          },
-          "phases": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/PhasesDoc"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "plan": {
-            "$ref": "#/components/schemas/PlanDoc"
-          },
-          "preview": {
-            "title": "Preview",
-            "type": "string"
-          },
-          "prompt": {
-            "title": "Prompt",
-            "type": "string"
-          },
-          "scoring": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/ScoringDoc"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "slug": {
-            "maxLength": 48,
-            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
-            "title": "Slug",
-            "type": "string"
-          },
-          "steps": {
-            "items": {
-              "$ref": "#/components/schemas/StepDoc"
-            },
-            "minItems": 1,
-            "title": "Steps",
-            "type": "array"
-          },
-          "title": {
-            "maxLength": 300,
-            "minLength": 1,
-            "title": "Title",
-            "type": "string"
-          }
-        },
-        "required": [
-          "format",
-          "slug",
-          "title",
-          "intro",
-          "minutes",
-          "steps",
-          "identity",
-          "consent",
-          "instructions",
-          "prompt",
-          "plan",
-          "pdf",
-          "preview",
-          "examples"
-        ],
-        "title": "FormDocument",
-        "type": "object"
-      },
       "FormDraft": {
         "description": "O rascunho de um formulário: o documento inteiro e o estado dele. `version` é o que\n`save_form_draft` e `patch_form_draft` devolvem em `expected_version`.",
         "properties": {
@@ -3367,8 +3525,16 @@
             "title": "Current Version"
           },
           "document": {
-            "$ref": "#/components/schemas/FormDocument",
-            "description": "O documento do rascunho, **exatamente como está guardado**: o schema `FormDocument` descreve o formato que o compilador de hoje aceita, e **não garante o texto guardado** (a resposta não é validada contra ele). Sem rascunho salvo, é a própria versão publicada atual, que um deploy mais rígido pode já não compilar. Tem o PDF (`pdf`), a prévia da página de resultado (`preview`) e as respostas de exemplo (`examples`). A versão do texto do consentimento (`consent.version`) é do sistema: a publicação a sobe sozinha quando o texto muda, e o valor que você mandar ao salvar é ignorado."
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PdfFormDocument"
+              },
+              {
+                "$ref": "#/components/schemas/CaptureFormDocument"
+              }
+            ],
+            "description": "O documento do rascunho, **exatamente como está guardado**: o schema `FormDocument` descreve o formato que o compilador de hoje aceita, e **não garante o texto guardado** (a resposta não é validada contra ele). Sem rascunho salvo, é a própria versão publicada atual, que um deploy mais rígido pode já não compilar. Tem o PDF (`pdf`), a prévia da página de resultado (`preview`) e as respostas de exemplo (`examples`). A versão do texto do consentimento (`consent.version`) é do sistema: a publicação a sobe sozinha quando o texto muda, e o valor que você mandar ao salvar é ignorado.",
+            "title": "Document"
           },
           "pending": {
             "description": "Há mudança que ainda não foi publicada.",
@@ -4242,8 +4408,16 @@
         "description": "Uma versão publicada com a definição. A definição é o JSON **como o banco a guarda** (o que a\nexportação da página escreve): importada em outro ambiente, dá o mesmo formulário.",
         "properties": {
           "definition": {
-            "$ref": "#/components/schemas/FormDocument",
-            "description": "A definição da versão, exatamente como está guardada. O schema `FormDocument` descreve o formato que o compilador de hoje aceita, e **não garante o texto guardado**: ele não é validado na resposta, e uma versão antiga pode trazer valores que o schema de hoje recusa (coerções do formato antigo) ou já não compilar. Os padrões do formato ficam como foram escritos (um `required: true` por extenso aparece), e uma condição (`show_when`) vem em regras, não em frase."
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PdfFormDocument"
+              },
+              {
+                "$ref": "#/components/schemas/CaptureFormDocument"
+              }
+            ],
+            "description": "A definição da versão, exatamente como está guardada. O schema `FormDocument` descreve o formato que o compilador de hoje aceita, e **não garante o texto guardado**: ele não é validado na resposta, e uma versão antiga pode trazer valores que o schema de hoje recusa (coerções do formato antigo) ou já não compilar. Os padrões do formato ficam como foram escritos (um `required: true` por extenso aparece), e uma condição (`show_when`) vem em regras, não em frase.",
+            "title": "Definition"
           },
           "fingerprint": {
             "description": "A impressão digital (SHA-256) da definição, como o banco a guarda.",
@@ -4464,8 +4638,16 @@
             "type": "boolean"
           },
           "definition": {
-            "$ref": "#/components/schemas/FormDocument",
-            "description": "A definição do formulário, o JSON que `get_form_version` devolve e a exportação da página escreve (o schema `FormDocument`). Quem confere é o compilador, com todos os problemas de uma vez. `errors[].field` é o caminho no documento, sem prefixo (`steps.1.questions.0.label`), com os índices das listas a partir de 0; `line` é a linha do template, quando o problema é de um."
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PdfFormDocument"
+              },
+              {
+                "$ref": "#/components/schemas/CaptureFormDocument"
+              }
+            ],
+            "description": "A definição do formulário, o JSON que `get_form_version` devolve e a exportação da página escreve (o schema `FormDocument`). Quem confere é o compilador, com todos os problemas de uma vez. `errors[].field` é o caminho no documento, sem prefixo (`steps.1.questions.0.label`), com os índices das listas a partir de 0; `line` é a linha do template, quando o problema é de um.",
+            "title": "Definition"
           },
           "note": {
             "anyOf": [
@@ -5962,6 +6144,188 @@
           "html"
         ],
         "title": "PdfDoc",
+        "type": "object"
+      },
+      "PdfExamplesDoc": {
+        "additionalProperties": false,
+        "properties": {
+          "answers": {
+            "additionalProperties": true,
+            "title": "Answers",
+            "type": "object"
+          },
+          "plan": {
+            "additionalProperties": true,
+            "title": "Plan",
+            "type": "object"
+          }
+        },
+        "required": [
+          "answers",
+          "plan"
+        ],
+        "title": "PdfExamplesDoc",
+        "type": "object"
+      },
+      "PdfFormDocument": {
+        "additionalProperties": false,
+        "properties": {
+          "completion": {
+            "$ref": "#/components/schemas/CompletionDoc"
+          },
+          "consent": {
+            "$ref": "#/components/schemas/ConsentDoc"
+          },
+          "data": {
+            "default": {},
+            "patternProperties": {
+              "^[a-z][a-z0-9_]*$": {
+                "discriminator": {
+                  "mapping": {
+                    "edition": "#/components/schemas/EditionBlock",
+                    "list": "#/components/schemas/ListBlock",
+                    "value": "#/components/schemas/ValueBlock",
+                    "windows": "#/components/schemas/WindowsBlock"
+                  },
+                  "propertyName": "kind"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/ValueBlock"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ListBlock"
+                  },
+                  {
+                    "$ref": "#/components/schemas/WindowsBlock"
+                  },
+                  {
+                    "$ref": "#/components/schemas/EditionBlock"
+                  }
+                ]
+              }
+            },
+            "propertyNames": {
+              "maxLength": 64
+            },
+            "title": "Data",
+            "type": "object"
+          },
+          "examples": {
+            "$ref": "#/components/schemas/PdfExamplesDoc"
+          },
+          "format": {
+            "const": 1,
+            "title": "Format",
+            "type": "integer"
+          },
+          "generation": {
+            "const": "pdf",
+            "default": "pdf",
+            "title": "Generation",
+            "type": "string"
+          },
+          "identity": {
+            "$ref": "#/components/schemas/IdentityDoc"
+          },
+          "instructions": {
+            "title": "Instructions",
+            "type": "string"
+          },
+          "intro": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Intro",
+            "type": "string"
+          },
+          "minutes": {
+            "maximum": 60.0,
+            "minimum": 1.0,
+            "title": "Minutes",
+            "type": "integer"
+          },
+          "notices": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NoticesDoc"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pdf": {
+            "$ref": "#/components/schemas/PdfDoc"
+          },
+          "phases": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PhasesDoc"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "plan": {
+            "$ref": "#/components/schemas/PlanDoc"
+          },
+          "preview": {
+            "title": "Preview",
+            "type": "string"
+          },
+          "prompt": {
+            "title": "Prompt",
+            "type": "string"
+          },
+          "scoring": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ScoringDoc"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "slug": {
+            "maxLength": 48,
+            "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+            "title": "Slug",
+            "type": "string"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/StepDoc"
+            },
+            "minItems": 1,
+            "title": "Steps",
+            "type": "array"
+          },
+          "title": {
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "format",
+          "slug",
+          "title",
+          "intro",
+          "minutes",
+          "steps",
+          "identity",
+          "consent",
+          "instructions",
+          "prompt",
+          "plan",
+          "pdf",
+          "preview",
+          "examples"
+        ],
+        "title": "PdfFormDocument",
         "type": "object"
       },
       "PdfTemplatesChange": {
@@ -8074,8 +8438,16 @@
         "description": "O documento novo do rascunho, inteiro.",
         "properties": {
           "document": {
-            "$ref": "#/components/schemas/FormDocument",
-            "description": "O documento inteiro do rascunho (o schema `FormDocument`): troca o que havia, inclusive o PDF e a prévia. Quem o confere é o compilador, com todos os problemas de uma vez, e mais o que o PDF e a prévia pedem (só arquivos do app, imagens que existem e `data:`). O `slug` do documento é o do formulário; antes da primeira publicação, outro `slug` muda o endereço do formulário junto (e o destino do webhook dele). `errors[].field` é o caminho no documento, sem prefixo (`steps.1.questions.0.label`), com os índices das listas a partir de 0; `line` é a linha do template, quando o problema é de um."
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PdfFormDocument"
+              },
+              {
+                "$ref": "#/components/schemas/CaptureFormDocument"
+              }
+            ],
+            "description": "O documento inteiro do rascunho (o schema `FormDocument`): troca o que havia, inclusive o PDF e a prévia. Quem o confere é o compilador, com todos os problemas de uma vez, e mais o que o PDF e a prévia pedem (só arquivos do app, imagens que existem e `data:`). O `slug` do documento é o do formulário; antes da primeira publicação, outro `slug` muda o endereço do formulário junto (e o destino do webhook dele). `errors[].field` é o caminho no documento, sem prefixo (`steps.1.questions.0.label`), com os índices das listas a partir de 0; `line` é a linha do template, quando o problema é de um.",
+            "title": "Document"
           },
           "expected_version": {
             "description": "A versão que você viu (o campo `version` da leitura). Se mudou desde então, a resposta é `409 version_conflict`, com a versão de agora, e nada é gravado.",
@@ -8190,7 +8562,7 @@
                 "type": "null"
               }
             ],
-            "description": "A contagem do que a próxima retenção apagaria com os prazos novos, o formato «pedidos:PDFs», como 3:5 (pedidos inteiros e arquivos de PDF), do jeito que a recusa `confirmation_required` a devolveu. Só uma **redução** de prazo (o que vale diminui, inclusive voltar a um padrão menor) precisa dela: sem ela, ou se a contagem cresceu desde que foi lida, a resposta é `422 confirmation_required` com a contagem de agora e nada é gravado. Ausente numa mudança que não reduz.",
+            "description": "A contagem do que a próxima retenção apagaria com os prazos novos, o formato «pedidos:PDFs:capturas», como 3:5:2 (legado «pedidos:PDFs» equivale a zero capturas) (pedidos inteiros, arquivos de PDF e capturas), do jeito que a recusa `confirmation_required` a devolveu. Só uma **redução** de prazo (o que vale diminui, inclusive voltar a um padrão menor) precisa dela: sem ela, ou se a contagem cresceu desde que foi lida, a resposta é `422 confirmation_required` com a contagem de agora e nada é gravado. Ausente numa mudança que não reduz.",
             "examples": [
               "3:5"
             ],
@@ -9236,7 +9608,7 @@
   "info": {
     "description": "Tudo o que o painel admin faz, por chave de API com papel.\n\n**Autenticação.** Só `Authorization: Bearer <chave>`: a chave não vai na URL nem em cookie, e a\nsessão do painel não vale em nenhuma operação (ela só abre esta referência e o `openapi.json`). Cada\noperação diz o papel mínimo (`x-required-role`): `leitura` só consulta; `total` faz tudo o que o\nadmin logado faz. Toda escrita fica na auditoria em nome da chave (`chave:<nome>`).\n\n**Erros.** Um formato só, `{\"code\", \"detail\"}`, com `errors` (`field`, `message`, `line`) no `422`.\nA resposta nunca traz o valor recebido.\n\n**Operações marcadas.** As que apagam ou sobrescrevem algo difícil de desfazer (`x-destructive`) e\nas que mudam o que a lead vê, para onde os dados dela vão ou chamam um serviço de fora\n(`x-external-effect`) exigem `\"confirm\": true` em toda chamada (na query, em `DELETE`). Sem ele, a\nresposta é `422 confirmation_required` e nada acontece.\n\n**Limite de uso.** Cada chave tem um balde de chamadas por minuto; passou, `429 rate_limited` com\n`Retry-After`.\n\n**Fora das operações.** De qualquer endereço podem vir `404 not_found` (caminho sem operação),\n`405 method_not_allowed` (com `Allow`, os métodos do caminho), `413 payload_too_large`,\n`500 internal_error` e `503 unavailable` (banco fora do ar, com `Retry-After`).\n\n## MCP: usar a API pelo Claude\n\nO **MCP** (`python -m app.admin_mcp`) é um programa que roda no computador da operadora e deixa o\nClaude Desktop e o Claude Code chamarem esta API numa conversa. É um cliente HTTP desta API, só por\n`stdio` (não há MCP remoto), com a chave de quem o usa: nada novo sobe no servidor, e a autorização é\na da chave.\n\n**Configurar.** A tela [Configurar o MCP](/admin/mcp), no menu do painel, leva do zero ao servidor\nfuncionando: escolhe ou cria a chave (o segredo aparece uma vez), mostra a instalação, monta o comando\ndo Claude Code ou o bloco do Claude Desktop já com o endereço deste painel e confere a chave.\n\n**Ferramentas por papel.** Cada operação desta referência é uma ferramenta, com o `operationId` como\nnome, o `summary` e a `description` como texto, e os parâmetros e o corpo juntos num só objeto de\nentrada. Uma chave `leitura` recebe as operações de papel `leitura`; uma `total`, todas. Vêm além\ndelas algumas **compostas**, que juntam as chamadas de um fluxo (`attention_overview`,\n`diagnose_order`, `edit_form_draft`, `publish_form_with_review` e `connect_baserow_integration`) e só\nchamam ferramentas que a chave já tem. Para explorar, prefira `leitura`: são menos ferramentas.\n\n**Confirmações.** Uma operação marcada (`x-destructive` ou `x-external-effect`) não executa sozinha: o\nMCP mostra o efeito e o alvo e só chama a API com o sim da pessoa. O `confirm` que o modelo escrever\npor conta própria é ignorado.\n\n**Dado da lead.** Fica desligado: sem `GERADOR_MCP_LEAD_DATA=1`, o nome, o e-mail e as respostas das\nleads não chegam ao modelo, e o argumento `include_lead_data`, a busca `q` de `list_jobs` e a\n`download_job_pdf` não existem. Com a opção e uma chave `total` eles voltam, e o que o Claude ler vai\nao provedor do modelo.\n\n**Pastas.** PDFs e HTML vão para arquivo, em `GERADOR_MCP_DOWNLOAD_DIR` (ou numa pasta só do usuário\nno diretório temporário), e a ferramenta devolve o caminho, nunca os bytes. As imagens\n(`upload_asset` e `replace_asset`) só saem de `GERADOR_MCP_UPLOAD_DIR`, uma pasta que a pessoa\nescolhe e que não tem padrão. **A imagem enviada é servida sem login**: ponha nessa pasta só o que\npode ser público.\n\n**A chave.** Vai no ambiente do cliente (`GERADOR_API_URL` e `GERADOR_API_KEY`), nunca na linha de\ncomando do servidor, e só viaja no cabeçalho `Authorization: Bearer`: não aparece em retorno de\nferramenta, em erro nem em log.\n",
     "title": "Leadkit: API de admin",
-    "version": "1.56.0"
+    "version": "1.59.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -10397,6 +10769,274 @@
         "tags": [
           "Auditoria"
         ],
+        "x-required-role": "leitura"
+      }
+    },
+    "/captures": {
+      "get": {
+        "description": "Lista capturas por chegada. Sem include_lead_data, lê somente estado. Dados históricos da participante exigem papel total e include_lead_data=true; sem opt-in não há busca pessoal.",
+        "operationId": "list_captures",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "include_lead_data",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Lead Data",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "form",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Form"
+            }
+          },
+          {
+            "in": "query",
+            "name": "form_version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Form Version"
+            }
+          },
+          {
+            "description": "Quantos itens por página (de 1 a 200; padrão 50).",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "description": "Quantos itens por página (de 1 a 200; padrão 50).",
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "O `next_cursor` da página anterior. É opaco: não monte nem altere.",
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 300,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "O `next_cursor` da página anterior. É opaco: não monte nem altere.",
+              "title": "Cursor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CapturePage"
+                }
+              }
+            },
+            "description": "Capturas e cursor da próxima página; sem credenciais do recibo."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Sem chave, chave desconhecida ou de segredo errado (`invalid_credentials`: a mesma resposta nos três casos), ou chave vencida (`key_expired`) ou revogada (`key_revoked`). Leva `WWW-Authenticate: Bearer`.",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Sempre `Bearer`: o único esquema que a API aceita.",
+                "schema": {
+                  "examples": [
+                    "Bearer"
+                  ],
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "O corpo ou a definição não valem (`validation_failed`; `errors` traz o caminho de cada campo) ou falta `confirm: true` numa operação marcada (`confirmation_required`; nada acontece)."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Limite de uso da chave ou bloqueio por chave errada (`rate_limited`), ou pausa entre os testes pagos do rascunho (`test_paused`). Leva `Retry-After`.",
+            "headers": {
+              "Retry-After": {
+                "description": "Quantos segundos esperar antes de tentar de novo.",
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "summary": "Listar capturas confirmadas",
+        "tags": [
+          "Capturas"
+        ],
+        "x-lead-data": true,
+        "x-required-role": "leitura"
+      }
+    },
+    "/captures/{submission_id}": {
+      "get": {
+        "description": "Consulta estado por referência da submissão. Respostas, contato histórico, consentimento, tracking e pontuação só são lidos com papel total e include_lead_data=true. Não expõe token ou URL de recibo.",
+        "operationId": "get_capture",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "submission_id",
+            "required": true,
+            "schema": {
+              "title": "Submission Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_lead_data",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Include Lead Data",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaptureState"
+                }
+              }
+            },
+            "description": "Captura confirmada e dados pessoais apenas quando autorizados e pedidos."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Sem chave, chave desconhecida ou de segredo errado (`invalid_credentials`: a mesma resposta nos três casos), ou chave vencida (`key_expired`) ou revogada (`key_revoked`). Leva `WWW-Authenticate: Bearer`.",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Sempre `Bearer`: o único esquema que a API aceita.",
+                "schema": {
+                  "examples": [
+                    "Bearer"
+                  ],
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Captura não encontrada."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "O corpo ou a definição não valem (`validation_failed`; `errors` traz o caminho de cada campo) ou falta `confirm: true` numa operação marcada (`confirmation_required`; nada acontece)."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Limite de uso da chave ou bloqueio por chave errada (`rate_limited`), ou pausa entre os testes pagos do rascunho (`test_paused`). Leva `Retry-After`.",
+            "headers": {
+              "Retry-After": {
+                "description": "Quantos segundos esperar antes de tentar de novo.",
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "summary": "Consultar uma captura",
+        "tags": [
+          "Capturas"
+        ],
+        "x-lead-data": true,
         "x-required-role": "leitura"
       }
     },
@@ -12332,6 +12972,127 @@
         "x-required-role": "total"
       }
     },
+    "/forms/{slug}/draft/capture-test": {
+      "post": {
+        "description": "Valida respostas fictícias, data, pontuação e conclusão do rascunho de captura. Não persiste submissão ou teste pago e não chama IA, renderização, storage ou fila.",
+        "operationId": "test_capture_form_draft",
+        "parameters": [
+          {
+            "description": "O endereço do formulário (`slug`), como `list_forms` o mostra.",
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "description": "O endereço do formulário (`slug`), como `list_forms` o mostra.",
+              "title": "Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DraftTestInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaptureTestResult"
+                }
+              }
+            },
+            "description": "Data, notas e conclusão da versão do rascunho."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Sem chave, chave desconhecida ou de segredo errado (`invalid_credentials`: a mesma resposta nos três casos), ou chave vencida (`key_expired`) ou revogada (`key_revoked`). Leva `WWW-Authenticate: Bearer`.",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Sempre `Bearer`: o único esquema que a API aceita.",
+                "schema": {
+                  "examples": [
+                    "Bearer"
+                  ],
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Formulário não encontrado."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "O rascunho exige geração PDF (`state_conflict`)."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Respostas, data ou definição inválidas."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Limite de uso da chave ou bloqueio por chave errada (`rate_limited`), ou pausa entre os testes pagos do rascunho (`test_paused`). Leva `Retry-After`.",
+            "headers": {
+              "Retry-After": {
+                "description": "Quantos segundos esperar antes de tentar de novo.",
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "summary": "Testar captura localmente",
+        "tags": [
+          "Teste do rascunho"
+        ],
+        "x-required-role": "leitura"
+      }
+    },
     "/forms/{slug}/draft/completion-preview": {
       "get": {
         "description": "Mostra a conclusão do rascunho salvo em HTML, com mensagem e rótulo escapados e botão externo desativado. Não salva respostas, não navega, não gera PDF, não chama LLM nem envia eventos. O destino é apenas texto. Sem rascunho editado, usa a versão publicada. Para editar a conclusão, use `save_form_draft` ou `patch_form_draft` com `completion` no documento; para publicar, `publish_form_draft`.",
@@ -12569,7 +13330,7 @@
     },
     "/forms/{slug}/draft/prompt": {
       "post": {
-        "description": "Monta o prompt que o LLM receberia do rascunho do formulário `slug` (o rascunho salvo ou, sem rascunho salvo, a versão publicada atual) com `answers` e `simulated_date`: as instruções, o prompt montado com as respostas, as notas, os dados e a data, e o calendário das fases (`phases`) nessa data. É o mesmo prompt que `start_form_draft_test` manda ao LLM. **Não grava nada, não é auditada e não chama o LLM**: serve para conferir o que o prompt diz antes de gastar um teste. Sem `answers`, usa as respostas de exemplo do rascunho; as que você manda são conferidas pelas perguntas dele, todos os problemas de uma vez (`422` com `answers.<pergunta>` e o motivo, nunca o valor). A data simulada compila o rascunho com o relógio parado nesse dia: a pontuação, as janelas de datas e o `today` do prompt a seguem. Use respostas fictícias. Para ver só a pontuação, `score_form_draft`; para os testes que já rodaram, `list_form_draft_tests`.",
+        "description": "Monta o prompt que o LLM receberia do rascunho do formulário `slug` (o rascunho salvo ou, sem rascunho salvo, a versão publicada atual) com `answers` e `simulated_date`: as instruções, o prompt montado com as respostas, as notas, os dados e a data, e o calendário das fases (`phases`) nessa data. É o mesmo prompt que `start_form_draft_test` manda ao LLM. **Não grava nada, não é auditada e não chama o LLM**: serve para conferir o que o prompt diz antes de gastar um teste. Sem `answers`, usa as respostas de exemplo do rascunho; as que você manda são conferidas pelas perguntas dele, todos os problemas de uma vez (`422` com `answers.<pergunta>` e o motivo, nunca o valor). A data simulada compila o rascunho com o relógio parado nesse dia: a pontuação, as janelas de datas e o `today` do prompt a seguem. Use respostas fictícias. Para ver só a pontuação, `score_form_draft`; para os testes que já rodaram, `list_form_draft_tests`. A guarda da finalidade e a montagem usam o mesmo rascunho lido: uma edição concorrente vale para a próxima operação; se o rascunho lido é captura, esta operação responde `409 state_conflict`.",
         "operationId": "assemble_form_draft_prompt",
         "parameters": [
           {
@@ -12635,6 +13396,16 @@
               }
             },
             "description": "O formulário não existe (`not_found`)."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Formulário de captura não monta prompt (`state_conflict`); use test_capture_form_draft."
           },
           "422": {
             "content": {
@@ -16375,6 +17146,10 @@
     {
       "description": "As chaves que autenticam esta API: quem está chamando, e listar, criar e revogar chaves. Os segredos saem só na criação.",
       "name": "Chaves de API"
+    },
+    {
+      "description": "Respostas confirmadas sem geração de plano ou PDF. Estado é de leitura; dados da participante exigem total e opt-in.",
+      "name": "Capturas"
     },
     {
       "description": "As imagens que os templates do PDF e da prévia de um formulário pedem por `asset:<nome>`: a biblioteca geral (que todo formulário enxerga) e as de cada formulário. Ler é de `leitura`; enviar, trocar e remover são só de `total`. O envio e a troca são `multipart/form-data` com o arquivo (PNG, JPEG ou WebP, até 8 MB), que a API otimiza antes de guardar; a resposta traz o que a otimização fez (tamanho, tipo e dimensões antes e depois). Remover exige `\"confirm\": true`.",

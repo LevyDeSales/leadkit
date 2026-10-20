@@ -195,7 +195,7 @@
     {% set reading = form.reading %}
     <section class="box" id="pagina" aria-labelledby="pag-titulo">
       <h2 id="pag-titulo">Página pública</h2>
-      <dl class="kv"><dt>Título</dt><dd>{{ reading.title }} <span class="muted">(também no PDF)</span></dd></dl>
+      <dl class="kv"><dt>Título</dt><dd>{{ reading.title }}{% if reading.generation == "pdf" %} <span class="muted">(também no PDF)</span>{% endif %}</dd></dl>
       {% if reading.intro %}<p>{{ reading.intro }}</p>{% endif %}
       {% if reading.minutes %}<p class="muted">Cerca de {{ reading.minutes }} {{ "minuto" if reading.minutes == 1 else "minutos" }} para responder.</p>{% endif %}
       {% for step in reading.steps %}
@@ -277,6 +277,7 @@
     </section>
     {% endif %}
 
+    {% if reading.generation == "pdf" %}
     <section class="box" id="instrucoes" aria-labelledby="ins-titulo">
       <h2 id="ins-titulo">Instruções</h2>
       <p class="muted">O papel e as regras fixas que o LLM recebe, iguais para toda lead.</p>
@@ -301,6 +302,13 @@
       {% endif %}
     </section>
 
+    {% else %}
+    <section class="box" aria-labelledby="captura-titulo">
+      <h2 id="captura-titulo">Somente captura</h2>
+      <p>As respostas são salvas sem gerar plano ou PDF.</p>
+    </section>
+    {% endif %}
+
     <section class="box" id="dados" aria-labelledby="dados-titulo">
       <h2 id="dados-titulo">Dados do formulário</h2>
       {% if reading.data %}
@@ -311,11 +319,14 @@
       {% endif %}
     </section>
 
+    {% if reading.generation == "pdf" %}
     <section class="box" id="templates" aria-labelledby="tpl-titulo">
       <h2 id="tpl-titulo">PDF e prévia</h2>
       <p class="muted">Os templates do PDF e da prévia na página de resultado, como estão escritos.</p>
       {% for item in reading.templates %}{{ source(item, "Template") }}{% endfor %}
     </section>
+
+    {% endif %}
 
     <section class="box" id="exemplos" aria-labelledby="ex-titulo">
       <h2 id="ex-titulo">Exemplos</h2>
@@ -323,9 +334,11 @@
       <h3>Respostas de exemplo</h3>
       <pre class="source" tabindex="0" aria-label="Respostas de exemplo (somente leitura)">{{ reading.example_answers }}</pre>
       {% endif %}
+      {% if reading.example_plan is not none %}
       <h3>Plano de exemplo</h3>
       <p class="muted">O que o modo de teste devolve no lugar do LLM.</p>
       <pre class="source" tabindex="0" aria-label="Plano de exemplo (somente leitura)">{{ reading.example_plan }}</pre>
+      {% endif %}
     </section>
     {% elif form.unpublished %}
     <div class="alert alert--error" role="alert" id="nao-compila">{{ m.icon('alert-circle', 'icon--lg') }}<div><strong class="alert__title">O rascunho não compila com o código deste deploy</strong><p>Abra o rascunho: salvar mostra cada problema no campo dele.</p></div></div>

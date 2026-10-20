@@ -449,6 +449,7 @@ class FormEdit:
     # `data-` e `scoring-` são dos editores delas.
     OPERATIONS: ClassVar[tuple[str, ...]] = ()
 
+    generation: str = "pdf"
     title: str = ""
     intro: str = ""
     minutes: str = ""
@@ -484,6 +485,7 @@ class FormEdit:
         consent = document.get("consent") or {}
         marketing = consent.get("marketing") or {}
         return cls(
+            generation=_text(document.get("generation", "pdf")),
             title=_text(document.get("title")),
             intro=_text(document.get("intro")),
             minutes=_text(document.get("minutes")),
@@ -552,6 +554,7 @@ class FormEdit:
         for (i, _), question in sorted(questions.items(), key=lambda item: item[0]):
             steps[i].questions.append(question)
         edit = cls(
+            generation=first("generation") or "pdf",
             title=first("title"),
             intro=first("intro"),
             minutes=first("minutes"),
@@ -646,7 +649,10 @@ class FormEdit:
             "plan": self.plan.document(),
             "data": self.data.document(),
         }
-        phases = self.plan.phases.document()
+        if self.generation != "pdf":
+            found["generation"] = self.generation
+            found.pop("plan")
+        phases = self.plan.phases.document() if self.generation == "pdf" else None
         if phases is not None:
             found["phases"] = phases
         if (scoring := self.scoring.document()) is not None:
@@ -660,7 +666,7 @@ class FormEdit:
 
     def problems(self) -> list[Problem]:
         """O que o editor não consegue escrever na definição: salvar para aqui, antes de compilar."""
-        found = self.data.problems() + self.plan.problems()
+        found = self.data.problems() + (self.plan.problems() if self.generation == "pdf" else [])
         for i, step in enumerate(self.steps):
             for j, question in enumerate(step.questions):
                 for place, condition in owners_of(question, i, j):

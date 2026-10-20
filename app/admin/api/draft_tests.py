@@ -24,10 +24,12 @@ recebe só o id do teste (`CONTRIBUTING.md`, "Hatchet e dados da lead").
 from __future__ import annotations
 
 from collections.abc import Iterable
+from datetime import date
 from typing import Annotated, Any
 
 from fastapi import Path, Request
 from fastapi.concurrency import run_in_threadpool
+from pydantic import BaseModel
 
 from app.admin.actions import draft_tests as draft_test_actions
 from app.admin.api.common import PdfResponse, now
@@ -38,6 +40,7 @@ from app.admin.api.schemas.draft_tests import (
     SIMULATED_DATE_FIELD,
     AssembledPrompt,
     AssembleFormDraftPromptRequest,
+    DraftTestInput,
     FormDraftScore,
     FormDraftTest,
     FormDraftTests,
@@ -47,8 +50,9 @@ from app.admin.api.schemas.draft_tests import (
 )
 from app.admin.api.security import CurrentKey
 from app.deps import get_deps
-from app.forms import UnknownForm, draft_tests
+from app.forms import UnknownForm, draft_tests, drafts
 from app.forms.definition import DefinitionError, Problem
+from app.forms.definition.document import CompletionDoc
 
 TAG = "Teste do rascunho"
 router = OperationRouter(
@@ -125,12 +129,19 @@ def _testing(
     answers: dict[str, Any] | None,
     day: str = "",
     scoring: bool = False,
+    prompt_only: bool = False,
     refused: str,
 ) -> draft_test_actions.Testing:
     """O estado do teste, ou o `404` do formulário e o `422` das respostas, da data e do rascunho."""
     try:
         state = draft_test_actions.testing(
-            get_deps(), slug, answers=answers, day=day, scoring=scoring, now=now(request)
+            get_deps(),
+            slug,
+            answers=answers,
+            day=day,
+            scoring=scoring,
+            prompt_only=prompt_only,
+            now=now(request),
         )
     except UnknownForm:
         raise ApiError("not_found", NOT_FOUND) from None
@@ -155,6 +166,7 @@ def _found(request: Request, slug: str, test_id: str) -> draft_test_actions.Foun
     operation_id="assemble_form_draft_prompt",
     role="leitura",
     errors={
+        409: "Formulário de captura não monta prompt (`state_conflict`); use test_capture_form_draft.",
         404: "O formulário não existe (`not_found`).",
         422: "As respostas, a data ou o rascunho não valem (`validation_failed`): o motivo vem em "
         "`errors`, com `answers.<pergunta>` para uma resposta, `answers` para uma resposta a uma "
@@ -173,7 +185,9 @@ def _found(request: Request, slug: str, test_id: str) -> draft_test_actions.Foun
         "com `answers.<pergunta>` e o motivo, nunca o valor). A data simulada compila o rascunho "
         "com o relógio parado nesse dia: a pontuação, as janelas de datas e o `today` do prompt a "
         "seguem. Use respostas fictícias. Para ver só a pontuação, `score_form_draft`; para os "
-        "testes que já rodaram, `list_form_draft_tests`."
+        "testes que já rodaram, `list_form_draft_tests`. A guarda da finalidade e a montagem usam "
+        "o mesmo rascunho lido: uma edição concorrente vale para a próxima operação; se o rascunho "
+        "lido é captura, esta operação responde `409 state_conflict`."
     ),
     returns="O prompt montado: as instruções, o prompt, a data, as respostas usadas e as fases.",
     response_model=AssembledPrompt,
@@ -181,7 +195,9 @@ def _found(request: Request, slug: str, test_id: str) -> draft_test_actions.Foun
 def assemble_form_draft_prompt(
     slug: FORM, body: AssembleFormDraftPromptRequest, request: Request
 ) -> AssembledPrompt:
-    state = _testing(request, slug, answers=body.answers, day=body.day, refused=NOT_ASSEMBLED)
+    state = _testing(
+        request, slug, answers=body.answers, day=body.day, refused=NOT_ASSEMBLED, prompt_only=True
+    )
     assert state.assembled is not None  # sem problemas, o prompt montou
     return AssembledPrompt.of(state.assembled)
 
@@ -384,4 +400,43 @@ def download_form_draft_test_pdf(slug: FORM, test_id: TEST_ID, request: Request)
         raise ApiError("not_found", NO_PDF) from None
     return PdfResponse(
         pdf.content, headers={"Content-Disposition": f'attachment; filename="{pdf.filename}"'}
+    )
+
+
+class CaptureTestResult(BaseModel):
+    today: date
+    scores: dict[str, Any]
+    completion: CompletionDoc
+
+
+@router.operation(
+    "POST",
+    "/forms/{slug}/draft/capture-test",
+    operation_id="test_capture_form_draft",
+    role="leitura",
+    summary="Testar captura localmente",
+    description="Valida respostas fictícias, data, pontuação e conclusão do rascunho de captura. Não persiste submissão ou teste pago e não chama IA, renderização, storage ou fila.",
+    returns="Data, notas e conclusão da versão do rascunho.",
+    response_model=CaptureTestResult,
+    errors={
+        404: "Formulário não encontrado.",
+        409: "O rascunho exige geração PDF (`state_conflict`).",
+        422: "Respostas, data ou definição inválidas.",
+    },
+)
+def test_capture_form_draft(
+    slug: FORM, body: DraftTestInput, request: Request
+) -> CaptureTestResult:
+    with get_deps().sessions() as session:
+        draft = drafts.load(session, slug)
+    if draft is None:
+        raise ApiError("not_found", NOT_FOUND)
+    try:
+        result = drafts.test_capture(draft, answers=body.answers, day=body.day, now=now(request))
+    except DefinitionError as exc:
+        raise _invalid(NOT_STARTED, exc.problems) from None
+    return CaptureTestResult(
+        today=result.today,
+        scores=result.scores,
+        completion=CompletionDoc(**vars(result.completion)),
     )

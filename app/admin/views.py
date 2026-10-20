@@ -1022,6 +1022,7 @@ class NewFormPage:
     errors: Mapping[str, str]
     address_prefix: str  # o endereço público até o slug (`https://.../p/`)
     slug_max_length: int
+    generation: str = ""
 
 
 COPY_SUFFIX = " (cópia)"
@@ -1300,7 +1301,7 @@ def reduction_view(due: Due, today: Due) -> ReductionView:
         headline=form_retention.deletion_sentence(reduction.due),
         today=(
             f"Com os prazos de hoje, seriam {_plural(today.requests, 'pedido', 'pedidos')} e "
-            f"{_plural(today.pdfs, 'arquivo de PDF', 'arquivos de PDF')}."
+            f"{_plural(today.pdfs, 'arquivo de PDF', 'arquivos de PDF')} e {_plural(today.captures, 'captura', 'capturas')}."
         ),
         seen=reduction.seen,
     )

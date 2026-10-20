@@ -4,6 +4,22 @@ O Leadkit usa PostgreSQL 16 e schema `public`. A distribuição começa na revis
 baseline estrutural explícita: banco novo ganha tabelas, índices, constraints e gatilhos, sem
 formulário, destino, contato ou outro dado de negócio. O demo é importado explicitamente.
 
+## Cadeia aditiva atual e rollback
+
+O head único é `0014_capture`: `0012` → `0013` → `0014_capture`.
+A revisão publicada `0013` acrescenta evidências de disponibilidade ao artefato PDF;
+`0014_capture_receipts.py` acrescenta somente os recibos de captura e depende de `0013`.
+As migrations e os contratos publicados `0012`/`0013` permanecem congelados. O contrato
+combinado foi conferido em referência PostgreSQL 16 própria, criada da fonte pública anterior
+antes de aplicar a migration de captura, conforme a receita abaixo. Não há head concorrente.
+
+A atualização preserva dados e versões publicadas; não transforma formulários existentes em
+captura nem reescreve conteúdo. O runtime anterior com disponibilidade PDF continua operando
+formulários PDF sobre o schema combinado. Depois de publicar captura, o rollback precisa de
+um runtime que entenda essa finalidade. Preserve o schema e os envios confirmados ao voltar
+código/configuração: downgrade destrutivo continua recusado. Esta etapa não entrega a
+notificação/outbox de captura (8-B); #8 permanece aberta.
+
 ## Instalação em banco novo
 
 Crie um banco e um usuário próprios, configure a aplicação e exporte `DATABASE_URL` no processo que
@@ -93,7 +109,7 @@ from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from app.migrations.compatibility import load_contracts, schema_signature, validate_database
 
-module = importlib.util.spec_from_file_location("draft_revision", "draft/0013_example.py")
+module = importlib.util.spec_from_file_location("draft_revision", "draft/0015_example.py")
 draft_revision = importlib.util.module_from_spec(module)
 module.loader.exec_module(draft_revision)
 

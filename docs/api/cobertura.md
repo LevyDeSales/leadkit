@@ -36,23 +36,24 @@ o OpenAPI e exigem uma operação ou justificativa para cada rota.
 | --- | ---: | ---: | ---: | ---: |
 | Acesso (login e sessão) | 3 | 3 | 0 | 3 |
 | Pedidos | 6 | 6 | 6 | 0 |
+| Capturas | 2 | 2 | 2 | 0 |
 | Destinos do webhook | 11 | 6 | 6 | 0 |
 | Formulários: cadastro, situação e retenção | 10 | 10 | 8 | 2 |
 | Versões | 3 | 3 | 3 | 0 |
 | Rascunho: editor | 6 | 6 | 5 | 1 |
 | Rascunho: PDF e prévias | 4 | 4 | 2 | 0 |
-| Rascunho: testes | 7 | 7 | 6 | 0 |
+| Rascunho: testes | 8 | 8 | 7 | 0 |
 | Rascunho: publicação | 2 | 2 | 2 | 0 |
 | Integração com o Baserow | 8 | 8 | 8 | 0 |
 | Imagens dos formulários | 5 | 5 | 5 | 0 |
 | Chaves de API | 3 | 3 | 3 | 0 |
 | Configurar o MCP | 2 | 2 | 0 | 1 |
-| **Total** | **70** | **65** | **54** | **7** |
+| **Total** | **73** | **68** | **57** | **7** |
 
-- **70 rotas** (`GET` e `POST`; o admin não usa outro método), de **65 funções**: as cinco ações dos
+- **73 rotas** (`GET` e `POST`; o admin não usa outro método), de **68 funções**: as cinco ações dos
   destinos (ver, endereço, segredo, remoção e teste) existem para o destino padrão e para o de um
   formulário, com a mesma função.
-- **63 rotas têm par na API**, em **54 operações** (algumas rotas dividem a operação: as duas dos
+- **66 rotas têm par na API**, em **57 operações** (algumas rotas dividem a operação: as duas dos
   destinos, o editor do PDF e o do formulário, que salvam o mesmo rascunho, a página do teste e o
   trecho do polling, e a criação de chave da página das chaves e a da tela do MCP). **7 rotas ficam
   fora**: o login e a saída (a chave substitui a sessão), três telas sem dado nem ação e a tela de
@@ -62,7 +63,7 @@ o OpenAPI e exigem uma operação ou justificativa para cada rota.
   ([a tabela](#operações-do-editor-48)).
 - Mais **2 operações novas**, sem rota no admin (`get_current_api_key` e `list_audit_log`): ver
   [as novas](#operações-novas-sem-rota-no-admin).
-- Total da API: **56 operações** (54 + 2), as mesmas do `docs/api/openapi.json` (o teste de cobertura
+- Total da API: **59 operações** (57 + 2), as mesmas do `docs/api/openapi.json` (o teste de cobertura
   confere). **Nenhuma linha está `falta`**: a cobertura está fechada.
 
 ## Inventário por recurso
@@ -491,3 +492,26 @@ contrato da API.
 ## Conclusão versionada
 
 O documento editado por `save_form_draft`/`patch_form_draft` inclui `completion` (modo, mensagem, rótulo do botão e URL HTTPS). Os campos do editor têm equivalência direta com esses caminhos no documento; não são novas operações de editor. Importar, duplicar, exportar e publicar preservam o bloco pela mesma versão. Mudar somente conclusão não invalida teste LLM. `render_form_draft_completion_preview` está disponível no catálogo MCP derivado do OpenAPI, sem efeitos externos.
+
+
+## Capturas sem geração
+
+A entrega 8-A inclui autoria, recibo, consulta e retenção. As notificações assíncronas às
+integrações aplicáveis e ativas pertencem à entrega 8-B da mesma issue; #8 permanece aberta.
+`generation=none` dispensa conteúdo de geração e exige conclusão local, botão ou redirect;
+`generation` ausente na definição preserva PDF; em `create_form`, herda a finalidade da origem
+quando informada. Copiar captura com `generation=pdf` prepara o conteúdo de geração pelo modelo
+inicial no novo rascunho, mantendo perguntas e respostas de exemplo; a origem não muda.
+
+O detalhe HTML distingue somente captura e não mostra plano, prompt ou templates inexistentes,
+antes ou depois da publicação. A montagem do prompt confere a finalidade no mesmo rascunho usado
+na montagem; uma edição concorrente passa a valer na próxima operação. Se o rascunho lido é captura,
+a montagem retorna `409 state_conflict`. O teste local de captura em HTML/API/MCP usa
+`drafts.test_capture` e recusa rascunho PDF com `409`; não persiste submissão nem usa provedor.
+As regressões públicas estão em `tests_app/test_capture_review_fixes.py`.
+
+| Rota atual | O que faz | Serviço hoje | Operação da API | `operation_id` | Papel | Marcas | Status |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `GET /admin/captures` | Lista estado sem PII; dados exigem total e opt-in | `queries.captures.listing` | `GET /captures` | `list_captures` | leitura | lead | feita · tests_app/test_capture.py::test_capture_is_consultable_without_disclosing_lead_data |
+| `GET /admin/captures/{submission_id}` | Identidade histórica; sem token de recibo | `queries.captures.detail` | `GET /captures/{submission_id}` | `get_capture` | leitura | lead | feita · tests_app/test_capture.py::test_capture_is_consultable_without_disclosing_lead_data |
+| `POST /admin/forms/{slug}/draft/capture-test` | Testa respostas, data, pontuação e conclusão | `drafts.test_capture` | `POST /forms/{slug}/draft/capture-test` | `test_capture_form_draft` | leitura | — | feita · tests_app/test_capture.py::test_capture_local_test_and_inapplicable_generation_operations |

@@ -20,7 +20,7 @@ from app.admin.api.common import ApiInput, ConfirmedInput, VersionedInput
 from app.admin.api.schemas.forms import DraftState
 from app.forms import drafts
 from app.forms import stored as stored_forms
-from app.forms.definition.document import FormDocument
+from app.forms.definition.document import DefinitionDocument as FormDocument
 from app.forms.draft_patch import MAX_OPERATIONS, MAX_VALUE_DEPTH, depth_of
 
 
@@ -45,6 +45,12 @@ DOCUMENT_FIELDS = (
 class CreateFormRequest(ApiInput):
     """Um formulário novo: o título, o endereço e, se quiser, o formulário de onde copiar."""
 
+    generation: Literal["pdf", "none"] | None = Field(
+        default=None,
+        description="Finalidade: pdf gera plano; none apenas salva respostas. Ausente preserva a "
+        "origem ou usa PDF. Copiar uma captura com pdf prepara os blocos de geração do modelo "
+        "inicial no novo rascunho, mantendo perguntas e respostas de exemplo da origem.",
+    )
     title: str = Field(
         max_length=drafts.TITLE_MAX_LENGTH,
         description="O nome do formulário no admin e o título da página pública dele. Vira o título "

@@ -110,6 +110,9 @@ def template_preview(
             raise UnknownForm(slug)
         library = {name: asset.ref for name, asset in form_assets.visible(session, slug).items()}
         tests = draft_tests.recent(session, draft, now=now) if source == draft_previews.TEST else []
+    from app.forms.definition import compile_definition
+
+    compile_definition(draft.document).require_generation()
     return draft_previews.preview_of(
         draft,
         changes.applied(drafts.template_texts_of(draft.document)),

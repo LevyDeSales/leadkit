@@ -169,7 +169,7 @@ DEMO_ANSWERS: dict[str, Any] = {
 DEMO_CONSENT: dict[str, Any] = {"privacy": True, "text_version": "demo-v1"}
 TABLES = (
     "audit_log, api_keys, integration_syncs, integrations, deliveries, artifacts, plans, jobs, "
-    "submissions, leads, webhook_destinations, webhook_env_seed, draft_tests, form_drafts, "
+    "capture_receipts, submissions, leads, webhook_destinations, webhook_env_seed, draft_tests, form_drafts, "
     "form_version_assets, form_assets, form_versions, forms"
 )
 # Destino padrão dos testes que só precisam de "há webhook": o domínio .invalid nunca resolve.
@@ -342,6 +342,14 @@ def database_url() -> str:
     config = Config(str(Path(__file__).resolve().parents[1] / "app" / "alembic.ini"))
     reset_test_schema(TEST_DATABASE_URL)
     command.upgrade(config, "head")
+    engine = make_engine(TEST_DATABASE_URL)
+    try:
+        with engine.connect() as connection:
+            assert connection.exec_driver_sql(
+                "SELECT version_num FROM alembic_version"
+            ).scalars().all() == ["0014_capture"]
+    finally:
+        engine.dispose()
     return TEST_DATABASE_URL
 
 

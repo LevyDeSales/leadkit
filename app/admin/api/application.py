@@ -44,6 +44,7 @@ from app.admin.api import (
     api_keys,
     assets,
     audit,
+    captures,
     destinations,
     draft_tests,
     drafts,
@@ -130,6 +131,7 @@ ferramenta, em erro nem em log.
 # dela vêm do próprio roteador (`OperationRouter`), e a lista de tags do OpenAPI sai desta.
 ROUTERS = (
     api_keys.router,
+    captures.router,
     assets.router,
     audit.router,
     destinations.router,

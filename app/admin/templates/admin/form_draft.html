@@ -82,9 +82,19 @@
 
       {% include "admin/_form_structure.html" %}
 
+      <section class="box" id="geracao" aria-labelledby="geracao-titulo">
+        <h2 id="geracao-titulo">Finalidade do formulário</h2>
+        <label for="{{ s.field_id('generation') }}">Geração</label>
+        <select class="select" name="generation" id="{{ s.field_id('generation') }}" aria-describedby="geracao-dica{% if s.errors.get('generation') %} {{ s.field_id('generation') }}-erro{% endif %}">
+          <option value="pdf"{% if s.edit.generation == 'pdf' %} selected{% endif %}>Gerar plano e PDF</option>
+          <option value="none"{% if s.edit.generation == 'none' %} selected{% endif %}>Somente salvar respostas</option>
+        </select>
+        <p id="geracao-dica">Somente captura dispensa IA, plano e PDF. Escolha uma confirmação, botão ou encaminhamento para concluir. Ao salvar como captura, a configuração de geração sai deste rascunho; versões publicadas são preservadas. Ao voltar para PDF, você começa pela configuração do modelo inicial e pode editá-la antes de publicar.</p>
+        {{ f.error_for('generation') }}
+      </section>
       <section class="box" id="conclusao" aria-labelledby="conclusao-titulo">
         <h2 id="conclusao-titulo">Depois de salvar as respostas</h2>
-        <p class="muted">Esta escolha define o próximo passo da participante. O PDF continua sendo gerado; a conclusão não controla quem pode acessá-lo.</p>
+        <p class="muted">Esta escolha define o próximo passo da participante. A finalidade do formulário define se haverá geração; a conclusão não controla acesso ao PDF.</p>
         <div class="form-stack">
           <div class="field">
             <label for="{{ s.field_id('completion.mode') }}">Conclusão</label>
@@ -107,7 +117,7 @@
         <h2 id="consentimento-titulo">Consentimento</h2>
         <p class="muted">O que a lead lê e autoriza antes de enviar. A versão do texto sobe sozinha na publicação quando o texto muda, e cada envio guarda a versão que a lead leu.</p>
         <div class="form-stack">
-          {{ f.field("consent.processing", "Autorização do processamento", s.edit.consent.processing, hint="Obrigatória para gerar o plano.", area=True, rows=2) }}
+          {{ f.field("consent.processing", "Autorização do processamento", s.edit.consent.processing, hint="Obrigatória para processar suas respostas.", area=True, rows=2) }}
           {{ f.field("consent.notice", "Aviso sobre o uso dos dados", s.edit.consent.notice, area=True, rows=3) }}
           {%- for channel, offer, label in s.channels %}
           {%- set name = "consent.marketing." ~ channel %}
@@ -120,7 +130,7 @@
         </div>
       </section>
 
-      {% include "admin/_plan_editor.html" %}
+      {% if s.edit.generation == "pdf" %}{% include "admin/_plan_editor.html" %}{% endif %}
 
       {% include "admin/_data_editor.html" %}
 
@@ -129,8 +139,10 @@
       <section class="box" id="textos" aria-labelledby="textos-titulo">
         <h2 id="textos-titulo">Instruções, prompt e o resto</h2>
         <div class="form-stack">
+          {% if s.edit.generation == "pdf" %}
           {{ editor_field("instructions", "Instruções", "O papel e as regras fixas que o LLM recebe, iguais para toda lead. Template Jinja: lê os dados do formulário em data.", 12) }}
           {{ editor_field("prompt", "Prompt", "Montado a cada pedido com as respostas da lead. Template Jinja: answers, labels, today e data. Só as respostas que ele cita saem para o LLM.", 14) }}
+          {% endif %}
           {{ editor_field("definition", "O resto da definição (JSON)", "A versão do formato (format) e o plano de exemplo. O modelo do plano, os dados, a pontuação, as etapas, as perguntas, os pontos de cada opção, a identidade e o consentimento ficam nos campos acima; o PDF, a prévia da página de resultado e as notas do PDF, no editor do PDF.", 18) }}
         </div>
       </section>

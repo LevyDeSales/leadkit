@@ -182,6 +182,7 @@ def test_each_run_leaves_an_audit_record_with_counts_and_periods_only(deps: Deps
     assert (first.actor, first.action, first.target_id) == ("retention", "retention.purge", None)
     assert first.details == {
         "requests_deleted": 1,
+        "captures_deleted": 0,
         "leads_deleted": 1,
         "pdfs_deleted": 1,
         "storage_errors": 0,

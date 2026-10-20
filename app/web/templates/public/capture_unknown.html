@@ -1,0 +1,11 @@
+{% extends "public/base.html" %}
+{% import "public/_macros.html" as ui %}
+{#- Mesma resposta para código inexistente e acesso inválido: não revela quais pedidos existem. -#}
+{% block title %}Não encontramos este recibo{% endblock %}
+{% block main %}
+<main id="conteudo" class="container container--narrow page">
+  <div class="statusicon statusicon--neutral">{{ ui.icon("info") }}</div>
+  <h1>Não encontramos este recibo</h1>
+  <p class="lead">Abra o link do seu recibo no mesmo aparelho e navegador em que você preencheu o diagnóstico, ou use o link que a equipe da {{ site_brand() }} enviou para você.</p>
+</main>
+{% endblock %}

@@ -1,0 +1,208 @@
+{
+  "format": 1,
+  "slug": "pesquisa-exemplo",
+  "title": "Pesquisa de exemplo",
+  "intro": "Conte suas respostas. Elas serão salvas ao concluir o envio.",
+  "minutes": 4,
+  "steps": [
+    {
+      "title": "Vamos começar por você",
+      "help": "Estes dados identificam seu plano. Você pode deixar os campos opcionais em branco.",
+      "questions": [
+        {
+          "name": "nome",
+          "kind": "text",
+          "label": "Seu nome",
+          "contact": true,
+          "autocomplete": "name",
+          "min_length": 2,
+          "max_length": 120
+        },
+        {
+          "name": "email",
+          "kind": "email",
+          "label": "Seu e-mail",
+          "help": "Use um e-mail que você confere com frequência.",
+          "autocomplete": "email"
+        },
+        {
+          "name": "whatsapp",
+          "kind": "tel",
+          "label": "Seu WhatsApp, com DDD",
+          "required": false,
+          "placeholder": "(11) 91234-5678",
+          "autocomplete": "tel"
+        },
+        {
+          "name": "escritorio",
+          "kind": "text",
+          "label": "Nome do projeto",
+          "required": false,
+          "contact": true,
+          "autocomplete": "organization",
+          "max_length": 160
+        }
+      ]
+    },
+    {
+      "title": "Seu projeto hoje",
+      "help": "Pense no projeto que você pretende organizar, mesmo que ele ainda esteja começando.",
+      "questions": [
+        {
+          "name": "equipe",
+          "kind": "choice",
+          "label": "Quantas pessoas participam do projeto com você?",
+          "options": [
+            {
+              "value": "so_eu",
+              "label": "Trabalho sozinha"
+            },
+            {
+              "value": "2_a_5",
+              "label": "Somos de 2 a 5 pessoas"
+            },
+            {
+              "value": "6_a_15",
+              "label": "Somos de 6 a 15 pessoas"
+            },
+            {
+              "value": "mais_de_15",
+              "label": "Somos mais de 15 pessoas"
+            }
+          ]
+        },
+        {
+          "name": "carteira",
+          "kind": "choice",
+          "label": "Quantas atividades vocês acompanham atualmente?",
+          "options": [
+            {
+              "value": "ate_30",
+              "label": "Até 30 atividades"
+            },
+            {
+              "value": "31_a_80",
+              "label": "De 31 a 80 atividades"
+            },
+            {
+              "value": "81_a_200",
+              "label": "De 81 a 200 atividades"
+            },
+            {
+              "value": "mais_de_200",
+              "label": "Mais de 200 atividades"
+            }
+          ]
+        },
+        {
+          "name": "desafio",
+          "kind": "choice",
+          "label": "Qual parte da organização mais precisa de atenção?",
+          "options": [
+            {
+              "value": "captacao",
+              "label": "Convidar participantes"
+            },
+            {
+              "value": "precificacao",
+              "label": "Planejar recursos"
+            },
+            {
+              "value": "processos",
+              "label": "Acompanhar as atividades"
+            },
+            {
+              "value": "equipe",
+              "label": "Dividir responsabilidades"
+            },
+            {
+              "value": "tempo",
+              "label": "Encontrar tempo para planejar"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "O caminho que você quer experimentar",
+      "questions": [
+        {
+          "name": "focos",
+          "kind": "choices",
+          "label": "O que você deseja organizar primeiro?",
+          "help": "Escolha até 3.",
+          "options": [
+            {
+              "value": "comercial",
+              "label": "Participação"
+            },
+            {
+              "value": "precos",
+              "label": "Recursos disponíveis"
+            },
+            {
+              "value": "rotina",
+              "label": "Rotina das atividades"
+            },
+            {
+              "value": "pessoas",
+              "label": "Responsabilidades"
+            },
+            {
+              "value": "atendimento",
+              "label": "Comunicação"
+            },
+            {
+              "value": "tecnologia",
+              "label": "Ferramentas de apoio"
+            }
+          ],
+          "max_choices": 3
+        },
+        {
+          "name": "objetivo",
+          "kind": "textarea",
+          "label": "O que você gostaria de experimentar ou concluir nos próximos 90 dias?",
+          "help": "Descreva uma mudança observável, sem incluir informações pessoais de outras pessoas.",
+          "min_length": 10,
+          "max_length": 600
+        }
+      ]
+    }
+  ],
+  "identity": {
+    "email": "email",
+    "name": "nome",
+    "phone": "whatsapp"
+  },
+  "consent": {
+    "version": "pesquisa-exemplo-v1",
+    "processing": "Concordo com o tratamento das minhas respostas para esta pesquisa.",
+    "notice": "A operadora armazena suas respostas e contato. Consulte a política da instalação para conhecer os prazos e como solicitar a exclusão dos dados.",
+    "marketing": {
+      "email": "Quero receber novidades deste projeto por e-mail.",
+      "whatsapp": "Quero receber novidades deste projeto pelo WhatsApp."
+    }
+  },
+  "data": {},
+  "examples": {
+    "answers": {
+      "nome": "Marina Exemplo",
+      "email": "marina@example.test",
+      "whatsapp": "11900000000",
+      "escritorio": "Clube de leitura Aurora (fictício)",
+      "equipe": "2_a_5",
+      "carteira": "ate_30",
+      "desafio": "processos",
+      "focos": [
+        "rotina",
+        "pessoas"
+      ],
+      "objetivo": "Organizar os encontros do clube fictício e dividir a preparação entre as participantes."
+    }
+  },
+  "generation": "none",
+  "completion": {
+    "mode": "confirmation"
+  }
+}
