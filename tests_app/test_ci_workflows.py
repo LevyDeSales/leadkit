@@ -1072,3 +1072,115 @@ elif args[0]=='exec': print('1:blocked' if fault=='adoption_contract' else '1:ve
 else:
     sys.stderr.write('SYNTHETIC_PRIVATE_DAEMON_ERROR'); raise SystemExit(2)
 """
+
+
+@pytest.mark.parametrize(
+    "fault,status,deploys",
+    [
+        ("normal", 0, 1),
+        ("same_content", 1, 0),
+        ("empty_state", 1, 1),
+        ("wrong_image", 1, 1),
+        ("no_replacement", 1, 1),
+        ("unhealthy", 1, 1),
+        ("no_tasks", 1, 1),
+        ("db_replaced", 1, 1),
+    ],
+)
+def test_rolling_rehearsal_uses_distinct_content_before_expecting_completed(
+    tmp_path: Path, fault: str, status: int, deploys: int
+) -> None:
+    run_distinct_rolling_rehearsal(tmp_path, fault, status=status, deploys=deploys)
+
+
+def run_distinct_rolling_rehearsal(
+    tmp_path: Path, fault: str, *, status: int, deploys: int
+) -> None:
+    import json
+
+    state = tmp_path / "rolling.json"
+    state.write_text(
+        json.dumps(
+            {
+                "images": {"gerador-planos:ci": "sha256:" + "a" * 64},
+                "current": "sha256:" + "a" * 64,
+                "updated": False,
+                "deploys": 0,
+            }
+        )
+    )
+    binary = tmp_path / "bin"
+    binary.mkdir()
+    docker = binary / "docker"
+    docker.write_text(f"#!{sys.executable}\n" + DISTINCT_ROLLING_DOCKER)
+    docker.chmod(0o700)
+    deploy = tmp_path / "deploy.sh"
+    deploy.write_text(
+        f"#!{sys.executable}\n"
+        + """import json,os
+from pathlib import Path
+p=Path(os.environ['ROLLING_STATE']); state=json.loads(p.read_text())
+target=state['images'][os.environ['IMAGE']]
+state['updated']=target!=state['current']; state['current']=target; state['deploys']+=1
+p.write_text(json.dumps(state))
+"""
+    )
+    deploy.chmod(0o700)
+    full = next(
+        step["run"]
+        for step in steps_of("swarm")
+        if step.get("name", "").startswith("Update, break and go back")
+    )
+    start = full.index('echo "::group::1.')
+    helpers = full[full.index("state() {") : start]
+    group = full[start : full.index('echo "::group::2.', start)]
+    result = subprocess.run(
+        ["bash", "-e", "-o", "pipefail", "-c", 'cd "$CONF"\n' + helpers + group],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={
+            **os.environ,
+            "CONF": str(tmp_path),
+            "PATH": f"{binary}:{os.environ['PATH']}",
+            "ROLLING_STATE": str(state),
+            "ROLLING_FAULT": fault,
+        },
+    )
+    assert result.returncode == status, result.stdout + result.stderr
+    recorded = json.loads(state.read_text())
+    assert recorded["deploys"] == deploys
+    if status == 0:
+        assert (
+            recorded["images"]["gerador-planos:ci-novo"] != recorded["images"]["gerador-planos:ci"]
+        )
+
+
+DISTINCT_ROLLING_DOCKER = r"""
+import hashlib,json,os,sys
+from pathlib import Path
+p=Path(os.environ['ROLLING_STATE']); state=json.loads(p.read_text()); a=sys.argv[1:]
+fault=os.environ['ROLLING_FAULT']; original='sha256:'+'a'*64
+def task(role):
+    changed=state['updated'] and ((role in {'api','worker'} and fault!='no_replacement') or (role=='db' and fault=='db_replaced'))
+    return role+('-new-task' if changed else '-task')
+if a[0]=='tag': state['images'][a[-1]]=state['images'][a[-2]]
+elif a[0]=='build':
+    definition=sys.stdin.read()
+    assert 'FROM gerador-planos:ci\n' in definition and 'LABEL ci.build=' in definition
+    state['images']['gerador-planos:ci-novo']=original if fault=='same_content' else 'sha256:'+'b'*64
+    print(state['images']['gerador-planos:ci-novo'])
+elif a[:2]==['image','inspect']: print(state['images'][a[-1]])
+elif a[:2]==['service','inspect']:
+    fmt=a[a.index('--format')+1]
+    print(('completed' if state['updated'] and fault!='empty_state' else '') if 'UpdateStatus' in fmt else 'leadkit-local:'+state['current'].split(':')[1])
+elif a[:2]==['service','ps']:
+    role=a[-1].rsplit('_',1)[-1]
+    if not (state['updated'] and role=='worker' and fault=='no_tasks'): print(task(role))
+elif a[:2]==['inspect','--type']:
+    if a[2]=='task': print(hashlib.sha256(a[-1].encode()).hexdigest())
+    elif 'Health.Status' in a[a.index('--format')+1]: print('unhealthy' if fault=='unhealthy' else 'healthy')
+    else: print(original if fault=='wrong_image' and a[-1]==hashlib.sha256(task('worker').encode()).hexdigest() else state['current'])
+else: raise SystemExit(2)
+p.write_text(json.dumps(state))
+"""

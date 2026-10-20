@@ -1103,21 +1103,34 @@ jobs:
           }
           db() { docker ps -q -f label=com.docker.swarm.service.name=gerador-planos_db | head -n 1; }
           psql_db() { docker exec "$(db)" sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "$1"' sh "$1"; }
+          role_tasks() { docker service ps -q --no-trunc --filter desired-state=running "gerador-planos_$1" | sort; }
           assert_image() {
             expected=$(docker image inspect --format '{{.Id}}' "$1")
             for role in api worker; do
-              for task in $(docker service ps -q --filter desired-state=running "gerador-planos_$role"); do
+              tasks=$(role_tasks "$role")
+              test -n "$tasks"
+              for task in $tasks; do
                 container=$(docker inspect --type task --format '{{.Status.ContainerStatus.ContainerID}}' "$task")
                 test -n "$container"
                 test "$(docker inspect --type container --format '{{.Image}}' "$container")" = "$expected"
+                test "$(docker inspect --type container --format '{{.State.Health.Status}}' "$container")" = healthy
               done
             done
           }
           versions() { docker service inspect --format '{{.Spec.Name}} {{.Version.Index}}' gerador-planos_api gerador-planos_worker; }
 
           echo "::group::1. versão nova: troca sem queda"
-          docker tag gerador-planos:ci gerador-planos:ci-novo
+          # Outra tag do mesmo conteúdo vira o mesmo pin; o ensaio precisa de uma imagem distinta.
+          printf 'FROM gerador-planos:ci\nLABEL ci.build=atualizacao\n' | docker build --quiet --tag gerador-planos:ci-novo - > /dev/null
+          test "$(docker image inspect --format '{{.Id}}' gerador-planos:ci-novo)" != "$(docker image inspect --format '{{.Id}}' gerador-planos:ci)"
+          api_before=$(role_tasks api)
+          worker_before=$(role_tasks worker)
+          db_before=$(role_tasks db)
+          test -n "$api_before" && test -n "$worker_before" && test -n "$db_before"
           IMAGE=gerador-planos:ci-novo ./deploy.sh
+          test "$(role_tasks api)" != "$api_before"
+          test "$(role_tasks worker)" != "$worker_before"
+          test "$(role_tasks db)" = "$db_before"
           for service in api worker; do
             echo "$service: $(state "$service"), $(image "$service")"
             test "$(state "$service")" = completed
