@@ -37,10 +37,11 @@ capturas de pedidos e arquivos PDF. A contagem `seen` aceita `pedidos:PDFs:captu
 `pedidos:PDFs` equivale a zero capturas e não confirma uma redução que já apague capturas.
 A exclusão remove recibo e respostas e conserva a lead enquanto houver outra submissão válida.
 
-As integrações aplicáveis e ativas recebem as respostas pelo evento `submissao.persistida`,
-de forma assíncrona após o commit da captura. A intenção fica persistida com o destino e a revisão
+Após o commit da captura, o sistema agenda a entrega assíncrona das respostas às integrações
+aplicáveis e ativas, pelo evento `submissao.persistida`. A intenção fica persistida com o destino e a revisão
 autorizados, e o reconciliador recupera falhas de disparo. Falha ou timeout do transporte conserva
-a captura confirmada e sua conclusão; esse fluxo funciona sem IA, plano ou PDF. Reenvio da mesma
+a captura confirmada e sua conclusão; a entrega fica pendente ou com falha para consulta e
+repetição. Esse fluxo funciona sem IA, plano ou PDF. Reenvio da mesma
 submissão conserva as intenções originais, e ativar uma conexão depois não faz envio retroativo.
 
 Prepare o perfil de captura no Baserow com `submission.id` como chave; a ativação da conexão segue
