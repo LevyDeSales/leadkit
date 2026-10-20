@@ -4,6 +4,7 @@ fixou, e recusa a que não existe ou que o storage não entrega."""
 from __future__ import annotations
 
 import io
+import random
 import socket
 from io import BytesIO
 from pathlib import Path
@@ -67,6 +68,23 @@ def test_the_pdf_shows_an_image_of_the_form_by_its_name(library: Library, form: 
     rendered = library.renderer().render(spec, EXAMPLE_PLAN, context())
 
     assert images_of(rendered.content) == 1 and "Plano" in text_of(rendered.content)
+
+
+def test_a_pdf_larger_than_the_ipc_buffer_is_received_before_waiting_for_the_engine(
+    library: Library,
+) -> None:
+    """Ruído sintético incompressível faz o recurso e o PDF excederem o buffer do socket."""
+    output = io.BytesIO()
+    pixels = random.Random(17).randbytes(800 * 800 * 3)
+    Image.frombytes("RGB", (800, 800), pixels).save(output, "PNG")
+    ref = library.add(output.getvalue())
+    spec = spec_with('<p>Plano grande</p><img src="asset:large">', {"large": ref})
+
+    rendered = library.renderer().render(spec, EXAMPLE_PLAN, context())
+
+    assert len(rendered.content) > 512 * 1024
+    assert images_of(rendered.content) == 1
+    assert "Plano grande" in text_of(rendered.content)
 
 
 def test_the_css_can_ask_for_an_image_too(library: Library) -> None:

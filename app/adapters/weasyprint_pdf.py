@@ -17,26 +17,24 @@ from urllib.parse import unquote, urlsplit
 from urllib.request import url2pathname
 
 from pydantic import ValidationError
-from weasyprint import CSS, HTML
-from weasyprint.text.fonts import FontConfiguration
 from weasyprint.urls import FatalURLFetchingError, URLFetcher, URLFetcherResponse
 
 from app.adapters.assets import AssetStore, AssetUnavailable
 from app.adapters.pdf import RenderedPdf
+from app.adapters.pdf_process import render_pdf
 from app.branding import BrandProblem, installation_brand
 from app.errors import FailureCode, RetryableError, TerminalError
 from app.forms import FormSpec
 from app.forms.dates import long_date
 from app.forms.definition.images import SCHEME, AssetRef
-from app.forms.render_guard import RenderLimit, run_within_limits
+from app.forms.render_guard import RenderLimit
 from app.forms.sandbox import TemplateProblem
 from app.settings import Settings
 
 ASSETS_DIR = Path(__file__).resolve().parents[1] / "assets"
 FONTS_CSS = ASSETS_DIR / "fonts" / "fonts.css"
-# O WeasyPrint (Pango/GLib) não é thread-safe e o worker roda tasks síncronas num pool de threads:
-# a PoC mediu corrupção de memória com 8 threads e nenhuma com o lock. Uma renderização por vez no
-# processo; para renderizar mais em paralelo, suba mais processos de worker.
+# Uma renderização por vez conserva o orçamento de memória do worker. O motor usa um processo
+# descartável: cortar o prazo não injeta exceções em callbacks de limpeza da thread solicitante.
 _RENDER_LOCK = threading.Lock()
 # O prazo e o crescimento de memória do processo que o motor pode levar com o lock na mão (ver
 # `app.forms.render_guard`). Um plano normal leva de décimos de segundo a poucos segundos; sem prazo,
@@ -133,7 +131,6 @@ class WeasyPrintRenderer:
         """`assets` é de onde vêm as imagens do formulário (`asset:<nome>`); sem ele, o PDF que
         pede uma falha."""
         self._assets = assets
-        self._fonts: FontConfiguration | None = None  # criado na 1ª renderização, sob o lock
 
     @classmethod
     def from_settings(
@@ -148,22 +145,24 @@ class WeasyPrintRenderer:
         mensagem fixa e sem a exceção original encadeada (ela pode trazer dados do lead)."""
         html = self._html(spec, document, context)
         fetcher = AssetsOnlyFetcher(spec.templates.assets, self._assets)
+
+        def fetch(url: str) -> URLFetcherResponse:
+            try:
+                return fetcher.fetch(url)
+            except Exception as exc:
+                raise FatalURLFetchingError("recurso do PDF indisponível") from exc
+
         try:
             with _RENDER_LOCK:
-                if self._fonts is None:
-                    self._fonts = FontConfiguration()
-                try:
-                    rendered, content = run_within_limits(
-                        lambda: self._engine(html, spec, fetcher),
-                        seconds=PDF_SECONDS,
-                        memory=PDF_MEMORY,
-                    )
-                except RenderLimit:
-                    # O corte pode ter caído no meio do registro das fontes da marca (o `@font-face`
-                    # do `fonts.css`): a configuração fica pela metade e os PDFs seguintes sairiam
-                    # sem elas. Ainda com o lock, a próxima renderização refaz uma nova.
-                    self._fonts = None
-                    raise
+                content, pages = render_pdf(
+                    html,
+                    spec.templates.pdf_css,
+                    FONTS_CSS.read_text(),
+                    str(ASSETS_DIR),
+                    fetch,
+                    seconds=PDF_SECONDS,
+                    memory=PDF_MEMORY,
+                )
         except FatalURLFetchingError as exc:
             raise _fetch_failure(exc.__cause__) from None
         except RenderLimit as exc:  # a mensagem é fixa, sem dado da lead
@@ -172,14 +171,7 @@ class WeasyPrintRenderer:
             raise TerminalError(
                 FailureCode.RENDER_FAILED, f"WeasyPrint falhou ({type(exc).__name__})"
             ) from None
-        return RenderedPdf(content=content, renderer="weasyprint", page_count=len(rendered.pages))
-
-    def _engine(self, html: str, spec: FormSpec, fetcher: AssetsOnlyFetcher) -> tuple[Any, bytes]:
-        """O motor: o CSS, o layout e o PDF. Roda com o lock e dentro do prazo e do teto de memória."""
-        rendered = HTML(string=html, base_url=str(ASSETS_DIR), url_fetcher=fetcher).render(
-            stylesheets=self._stylesheets(spec, fetcher), font_config=self._fonts
-        )
-        return rendered, rendered.write_pdf()
+        return RenderedPdf(content=content, renderer="weasyprint", page_count=pages)
 
     def _html(self, spec: FormSpec, document: dict[str, Any], context: dict[str, Any]) -> str:
         try:
@@ -205,16 +197,3 @@ class WeasyPrintRenderer:
             raise TerminalError(
                 FailureCode.RENDER_FAILED, f"template do PDF falhou ({type(exc).__name__})"
             ) from None
-
-    def _stylesheets(self, spec: FormSpec, fetcher: AssetsOnlyFetcher) -> list[CSS]:
-        """Fontes do app e o CSS da definição. As URLs relativas do CSS apontam para `app/assets/`.
-        Usa a configuração de fontes do lock."""
-        sheets = [CSS(filename=FONTS_CSS, url_fetcher=fetcher, font_config=self._fonts)]
-        options: dict[str, Any] = {
-            "base_url": str(ASSETS_DIR),
-            "url_fetcher": fetcher,
-            "font_config": self._fonts,
-        }
-        if spec.templates.pdf_css.strip():
-            sheets.append(CSS(string=spec.templates.pdf_css, **options))
-        return sheets
