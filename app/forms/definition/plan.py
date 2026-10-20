@@ -27,6 +27,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 import unicodedata
 from collections.abc import Callable, Iterator, Mapping
@@ -480,12 +481,27 @@ def plan_projector(
             if field.name is not None and not field.internal
         }
 
+    def json_value(value: Any) -> bool:
+        # Instâncias de modelos podem ter sido alteradas após validar e não são documentos JSON.
+        if type(value) in (str, int, bool, type(None)):
+            return True
+        if type(value) is float:
+            return math.isfinite(value)
+        if type(value) is list:
+            return all(json_value(item) for item in value)
+        if type(value) is dict:
+            return all(type(key) is str and json_value(item) for key, item in value.items())
+        return False
+
     def project(document: Mapping[str, Any], audience: str) -> dict[str, Any]:
         if audience not in ("internal", "participant") or not isinstance(document, Mapping):
             raise PlanProjectionError("plan_projection_invalid")
         try:
-            validated = model.model_validate(dict(document), strict=True).model_dump(mode="json")
-        except (ValidationError, TypeError, ValueError):
+            raw = dict(document)
+            if not json_value(raw):
+                raise PlanProjectionError("plan_projection_invalid")
+            validated = model.model_validate(raw, strict=True).model_dump(mode="json")
+        except (ValidationError, TypeError, ValueError, RecursionError):
             raise PlanProjectionError("plan_projection_invalid") from None
         return validated if audience == "internal" else group(classified.fields, validated)
 

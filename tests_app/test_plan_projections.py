@@ -218,3 +218,24 @@ def test_pdf_template_revalidates_constructed_model_without_serialization_echo()
         spec.templates.render_pdf(forged, generated_date="", **context)
     assert SENTINEL not in "".join(str(item.message) for item in recorded)
     assert SENTINEL not in "".join(traceback.format_exception(raised.value))
+
+
+def test_nested_model_instances_are_rejected_before_serialization_without_warning():
+    import traceback
+    import warnings
+
+    from app.forms import PlanProjectionError
+
+    spec = compile_definition(projection_definition())
+    document = projection_definition()["examples"]["plan"]
+    validated = spec.plan_model.model_validate(document)
+    # Uma instância aceita pelo Pydantic pode ter sido modificada depois da validação.
+    validated.group.empty = {"private": SENTINEL}
+    document["group"] = validated.group
+    with warnings.catch_warnings(record=True) as emitted:
+        warnings.simplefilter("always")
+        with pytest.raises(PlanProjectionError) as raised:
+            spec.project_plan(document)
+    assert emitted == []
+    assert raised.value.code == "plan_projection_invalid"
+    assert SENTINEL not in "".join(traceback.format_exception(raised.value))
