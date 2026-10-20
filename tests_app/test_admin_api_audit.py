@@ -604,7 +604,11 @@ def test_the_audit_of_a_destination_keeps_the_host_and_not_the_path_of_the_url(
     ).json()["items"]
 
     assert item["target_type"] == "webhook_destination"
-    assert item["details"] == {"form_slug": "demo", "host": "hooks.example.test"}
+    assert item["details"] == {
+        "form_slug": "demo",
+        "host": "hooks.example.test",
+        "events": ["plano.concluido"],
+    }
 
 
 @pytest.fixture
@@ -700,7 +704,11 @@ def test_what_the_database_holds_beyond_what_is_known_safe_never_leaves(
     response = read_log(api_client("leitura"), actor="hostil")
 
     (item,) = response.json()["items"]
-    assert item["details"] == {"form_slug": "demo", "host": "hooks.example.test"}
+    assert item["details"] == {
+        "form_slug": "demo",
+        "host": "hooks.example.test",
+        "events": ["plano.concluido"],
+    }
     for leaked in (secret, hashed, email):
         assert leaked not in response.text
 
