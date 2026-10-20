@@ -518,3 +518,63 @@ def test_historical_migration_failure_reports_only_safe_category_and_keeps_failu
     assert result.stderr == ""
     assert sentinel not in result.stdout + result.stderr
     assert "private" not in result.stdout + result.stderr
+
+
+def test_historical_source_is_readable_by_image_user_before_build_without_opening_config(
+    tmp_path: Path,
+) -> None:
+    """Usa tar real e o prefixo real do workflow sob umask077, sem Docker ou download."""
+    import io
+    import json
+    import shlex
+    import shutil
+    import stat
+    import tarfile
+
+    archive = tmp_path / "public-source.tar.gz"
+    with tarfile.open(archive, "w:gz") as package:
+        for name in ("public-source", "public-source/app"):
+            entry = tarfile.TarInfo(name)
+            entry.type, entry.mode = tarfile.DIRTYPE, 0o755
+            package.addfile(entry)
+        entry = tarfile.TarInfo("public-source/app/alembic.ini")
+        content = b"[alembic]\nscript_location = app/migrations\n"
+        entry.size, entry.mode = len(content), 0o644
+        package.addfile(entry, io.BytesIO(content))
+    configuration = tmp_path / "private-config"
+    configuration.mkdir(mode=0o700)
+    env_file = configuration / "app.env"
+    env_file.touch(mode=0o600)
+    rehearsal = next(
+        step["run"]
+        for step in steps_of("swarm")
+        if step.get("name") == "Rehearse real pre-projection bootstrap and forward recovery"
+    )
+    prefix = rehearsal[: rehearsal.index('cp "$CONF/stack.yaml"')]
+    probe = (
+        "import json,stat,sys; from pathlib import Path; p=Path(sys.argv[1]); "
+        "print(json.dumps({name:stat.S_IMODE((p/name).stat().st_mode) "
+        "for name in ('app','app/alembic.ini')}))"
+    )
+    script = (
+        'curl() { cp "$SYNTHETIC_ARCHIVE" "$RUNNER_TEMP/compat-old.tar.gz"; }\n'
+        'tar() { "$TEST_TAR" "$@"; }\n'
+        f'docker() {{ "$TEST_PYTHON" -c {shlex.quote(probe)} "$source"; }}\n' + prefix
+    )
+    result = subprocess.run(
+        ["bash", "-e", "-c", script],
+        env={
+            **os.environ,
+            "RUNNER_TEMP": str(tmp_path),
+            "SYNTHETIC_ARCHIVE": str(archive),
+            "TEST_TAR": shutil.which("gtar") or shutil.which("tar"),
+            "TEST_PYTHON": sys.executable,
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {"app": 0o755, "app/alembic.ini": 0o644}
+    assert stat.S_IMODE(configuration.stat().st_mode) == 0o700
+    assert stat.S_IMODE(env_file.stat().st_mode) == 0o600

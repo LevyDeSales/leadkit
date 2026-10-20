@@ -418,6 +418,10 @@ jobs:
             "https://github.com/LevyDeSales/leadkit/archive/$old_sha.tar.gz" \
             --output "$RUNNER_TEMP/compat-old.tar.gz"
           tar -xzf "$RUNNER_TEMP/compat-old.tar.gz" --strip-components=1 -C "$source"
+          # Só a fonte pública: COPY preserva modos e a imagem termina em USER app.
+          # O umask077 deve proteger a configuração, sem tornar o código ilegível ao UID10001.
+          find "$source" -type d -exec chmod 755 {} +
+          find "$source" -type f -exec chmod 644 {} +
           docker build --quiet --tag "$old_image" "$source"
           cp "$CONF/stack.yaml" "$CONF/deploy.sh" "$CONF/rollout.py" "$CONF/app.env" "$CONF/db.env" "$folder/"
           python3 - "$folder/app.env" "$compat" <<'PY'
