@@ -1263,16 +1263,36 @@ jobs:
       - name: Remove the stack, keep the volume and deploy again with deploy.sh
         run: |
           docker stack rm gerador-planos
+          stack_removed() {
+            local containers services networks
+            cleanup_state=containers_unavailable
+            containers=$(docker ps -aq --no-trunc -f label=com.docker.stack.namespace=gerador-planos 2>/dev/null) || return 1
+            cleanup_state=services_unavailable
+            services=$(docker service ls --filter label=com.docker.stack.namespace=gerador-planos --format '{{.Name}}' 2>/dev/null) || return 1
+            cleanup_state=networks_unavailable
+            networks=$(docker network ls --format '{{.Name}}' 2>/dev/null) || return 1
+            cleanup_state=containers_pending
+            test -z "$containers" || return 1
+            cleanup_state=services_pending
+            test -z "$services" || return 1
+            cleanup_state=network_pending
+            if grep -Fxq gerador-planos_internal <<< "$networks"; then return 1; fi
+            cleanup_state=removed
+            return 0
+          }
           for _ in $(seq 1 60); do
-            if [ -z "$(docker ps -q -f label=com.docker.stack.namespace=gerador-planos)" ] \
-              && ! docker network inspect gerador-planos_internal >/dev/null 2>&1; then
-              break
-            fi
+            if stack_removed; then break; fi
             sleep 2
           done
+          if ! stack_removed; then
+            printf '{"stage":"stack_removal","reason":"%s"}\n' "$cleanup_state"
+            echo 'A remoção da stack não foi comprovada; não recrie os serviços.'
+            exit 1
+          fi
+          printf '{"stage":"stack_removal","reason":"removed"}\n'
           docker volume inspect --format '{{.Name}} continua' gerador-planos_pgdata
-          # Primeiro deploy pelo deploy.sh: sem a rede interna, ele sobe a stack e só depois roda as
-          # migrations, aqui sem nada a fazer, porque o banco do volume já está migrado.
+          # O volume mantém piso1. Sem rede, o helper cria API/worker pausados, aguarda DB/migration
+          # e só depois sobe os runtimes compatíveis; a limpeza anterior não ignora órfãos parados.
           cd "$CONF"
           IMAGE=gerador-planos:ci ./deploy.sh
           for _ in $(seq 1 30); do

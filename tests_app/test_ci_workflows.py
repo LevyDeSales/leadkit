@@ -1334,3 +1334,122 @@ def test_preflight_unavailable_database_never_calls_begin_or_migrate(tmp_path: P
         call.startswith(("stack deploy", "service scale", "service update"))
         for call in server.calls
     )
+
+
+@pytest.mark.parametrize(
+    "fault,status",
+    [
+        ("delayed", 0),
+        ("permanent", 1),
+        ("list_error", 1),
+        ("network_error", 1),
+        ("network_pending", 1),
+        ("service_pending", 1),
+        ("service_error", 1),
+    ],
+)
+def test_volume_redeploy_requires_confirmed_cleanup(
+    tmp_path: Path, fault: str, status: int
+) -> None:
+    run_volume_redeploy_cleanup(tmp_path, fault, status=status)
+
+
+def run_volume_redeploy_cleanup(tmp_path: Path, fault: str, *, status: int) -> None:
+    import json
+
+    from test_swarm_scripts import Server, Staging, rollout_state
+
+    stage = tmp_path / "stage"
+    stage.mkdir()
+    server = Server(tmp_path, Staging(stage))
+    docker = server.bin_dir / "docker"
+    docker.rename(server.bin_dir / "docker-stub")
+    docker.write_text(f"#!{sys.executable}\n" + VOLUME_CLEANUP_DOCKER)
+    docker.chmod(0o700)
+    for name, content in (("sleep", "exit 0"), ("seq", "printf '1\\n2\\n3\\n'")):
+        path = server.bin_dir / name
+        path.write_text("#!/usr/bin/env bash\n" + content + "\n")
+        path.chmod(0o700)
+    full = next(
+        step["run"]
+        for step in steps_of("swarm")
+        if step.get("name", "").startswith("Remove the stack, keep the volume")
+    )
+    script = full.split("for _ in $(seq 1 30)", 1)[0]
+    launcher = server.folder / "redeploy.sh"
+    launcher.write_text("#!/usr/bin/env bash\nset -euo pipefail\n" + script)
+    launcher.chmod(0o700)
+    result = server.run(
+        "redeploy.sh",
+        CONF=str(server.folder),
+        STUB_NETWORK="1",
+        STUB_CONTRACT_FLOOR="1",
+        CLEANUP_FAULT=fault,
+    )
+    assert result.returncode == status, result.stdout + result.stderr
+    expected_reason = {
+        "delayed": "removed",
+        "permanent": "containers_pending",
+        "list_error": "containers_unavailable",
+        "network_error": "networks_unavailable",
+        "network_pending": "network_pending",
+        "service_pending": "services_pending",
+        "service_error": "services_unavailable",
+    }[fault]
+    events = [
+        json.loads(line) for line in result.stdout.splitlines() if line.startswith('{"stage":')
+    ]
+    assert events == [{"stage": "stack_removal", "reason": expected_reason}]
+    assert "SYNTHETIC_PRIVATE" not in result.stdout + result.stderr
+    state = rollout_state(server)
+    if status == 0:
+        assert not state["cleanup_pending"]
+        assert state["cleanup_queries"] >= 2
+        assert state["floor"] == 1
+        assert state["phase"] == "verified"
+        assert any(call.startswith("run ") and call.endswith(" migrate") for call in server.calls)
+    else:
+        assert not any(call.startswith("run ") for call in server.calls)
+        assert not any(call.startswith("stack deploy") for call in server.calls)
+
+
+VOLUME_CLEANUP_DOCKER = r"""
+import json,os,subprocess,sys
+from pathlib import Path
+args=sys.argv[1:]; calls=Path(os.environ['STUB_CALLS']); state_path=Path(str(calls)+'.state')
+real=Path(__file__).with_name('docker-stub'); fault=os.environ['CLEANUP_FAULT']
+if not state_path.exists(): subprocess.run([str(real),'info'],check=True,capture_output=True)
+state=json.loads(state_path.read_text()); handled=True; out=''; code=0
+if args[:2]==['stack','rm']:
+    state['cleanup_pending']={task['Status']['ContainerStatus']['ContainerID']:task['role'] for task in state['tasks'].values()}
+    for container in state['containers'].values(): container['State']['Running']=False
+    state['services']={}; state['tasks']={}; state['network']=False
+elif args[0]=='ps' and any('com.docker.stack.namespace=' in a for a in args):
+    if fault=='list_error': code=1
+    if '-aq' in args:
+        state['cleanup_queries']=state.get('cleanup_queries',0)+1
+        if state['cleanup_queries']>=2 and fault!='permanent':
+            for cid in state['cleanup_pending']: state['containers'].pop(cid,None)
+            state['cleanup_pending']={}
+        out='\n'.join(state['cleanup_pending'])
+elif args[0]=='ps' and state.get('cleanup_pending'):
+    role=args[-1].rsplit('_',1)[-1]
+    out='\n'.join(cid for cid,r in state['cleanup_pending'].items() if r==role)
+elif args[:2]==['network','ls']:
+    if fault=='network_error': code=1
+    out='traefik-public\n'+('gerador-planos_internal' if fault=='network_pending' else '')
+elif args[:2]==['service','ls'] and any('com.docker.stack.namespace=' in a for a in args):
+    if fault=='service_error': code=1
+    if fault=='service_pending': out='gerador-planos_api'
+elif args[:2]==['network','inspect'] and not state['network'] and 'gerador-planos_internal' in args:
+    code=1
+elif args[:2]==['volume','inspect']: out='gerador-planos_pgdata continua'
+else: handled=False
+if handled:
+    with calls.open('a') as file: file.write(' '.join(args)+'\n')
+    state_path.write_text(json.dumps(state))
+    if out: print(out)
+    if code: sys.stderr.write('SYNTHETIC_PRIVATE_DAEMON_ERROR')
+    raise SystemExit(code)
+os.execv(str(real),[str(real),*args])
+"""
