@@ -171,6 +171,14 @@ class Rollout:
             "service", "ps", "-q", "--no-trunc", f"{self.stack}_{role}"
         ).stdout.split()
         tasks = self.decoded("inspect", "--type", "task", *ids) if ids else []
+        try:
+            observed = [task["ID"] for task in tasks]
+            if len(ids) != len(set(ids)) or len(observed) != len(ids) or set(observed) != set(ids):
+                raise ValueError
+        except (KeyError, TypeError, ValueError):
+            raise RolloutError(
+                "O inventário de tasks está incompleto; mantenha o gate bloqueado."
+            ) from None
         # O inventário local também acha containers que já saíram do desired-state=running.
         containers = self.docker(
             "ps",
@@ -295,10 +303,13 @@ class Rollout:
         }
         return {"Image": image, "State": {"Running": False}}, "remove"
 
-    def container(self, task, present):
+    def container(self, role, task):
         cid = task["Status"]["ContainerStatus"]["ContainerID"]
         raw = self.docker("inspect", "--type", "container", cid, optional=True)
         if raw.returncode:
+            # A task pode ter saído durante wait ou entre o inventário e inspect.
+            present = {item["ID"] for item in self.tasks(role)}
+            task = self.tracked[role][task["ID"]]
             return self.removed_container(task, present)
         try:
             container = json.loads(raw.stdout)[0]
@@ -307,20 +318,26 @@ class Rollout:
                 raise ValueError
         except (ValueError, KeyError, IndexError, TypeError):
             raise RolloutError("Um container não tem identidade de imagem comprovada.") from None
-        self.observed_images[cid] = image
+        if cid in self.observed_images and self.observed_images[cid] != image:
+            raise RolloutError(
+                "A imagem de um container observado mudou; mantenha o gate bloqueado."
+            )
+        self.observed_images.setdefault(cid, image)
         return container, task["Status"]["State"]
 
     def observe(self, role, *, wait=False, wait_ids=None):
-        present = {task["ID"] for task in self.tasks(role)}
+        self.tasks(role)
         observations = []
-        for task in self.tracked[role].values():
+        for task in list(self.tracked[role].values()):
             cid = task["Status"]["ContainerStatus"]["ContainerID"]
-            container, state = self.container(task, present)
+            container, state = self.container(role, task)
             running = container["State"]["Running"]
             if wait and running and (wait_ids is None or task["ID"] in wait_ids):
                 # O Docker espera o processo efetivamente sair, inclusive durante o grace period.
                 self.docker("container", "wait", cid, optional=True)
-                container, state = self.container(task, present)
+                self.tasks(role)
+                task = self.tracked[role][task["ID"]]
+                container, state = self.container(role, task)
                 running = container["State"]["Running"]
             image = container["Image"]
             if not DIGEST.fullmatch(image):

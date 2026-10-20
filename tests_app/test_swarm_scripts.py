@@ -58,6 +58,29 @@ def apply(state, role, image, replicas):
                               'Status':{'State':'running','ContainerStatus':{'ContainerID':cid}}}
         state['containers'][cid] = {'Image':image_id(image), 'State':{'Running':True,'Health':{'Status':'healthy'}}}
 
+def reap_during_observation(state, cid):
+    state['containers'].pop(cid, None)
+    state.setdefault('destroyed', []).append(cid)
+    state.setdefault('destroyed_at', {})[cid] = time.time_ns()
+    state['removed_during_observation'] = True
+    for tid, task in list(state['tasks'].items()):
+        if task['Status']['ContainerStatus']['ContainerID'] == cid:
+            outcome=os.getenv('STUB_RACE_OUTCOME','removed')
+            if outcome in {'active','terminal'}:
+                task['DesiredState']='remove'
+                task['Status']['State']='running' if outcome=='active' else 'shutdown'
+            else:
+                del state['tasks'][tid]
+            if outcome=='extra':
+                extra=copy.deepcopy(task)
+                extra['ID']=task['role']+'-refresh'
+                extra['DesiredState']='running'
+                extra['Status']['State']='running'
+                extra_cid=hashlib.sha256(extra['ID'].encode()).hexdigest()
+                extra['Status']['ContainerStatus']['ContainerID']=extra_cid
+                state['tasks'][extra['ID']]=extra
+                state['containers'][extra_cid]={'Image':b,'State':{'Running':True,'Health':{'Status':'healthy'}}}
+
 if state_path.exists():
     state = json.loads(state_path.read_text())
 else:
@@ -108,6 +131,8 @@ elif head == ['service','ls']:
 elif head == ['service','ps']:
     role = args[-1].rsplit('_',1)[-1]
     out = '\n'.join(t['ID'] for t in state['tasks'].values() if t['role']==role)
+    if state.get('removed_during_observation') and os.getenv('STUB_REFRESH_FAIL'): code=1
+    if state.get('removed_during_observation') and os.getenv('STUB_REFRESH_PARTIAL')=='requested_duplicate': out+='\n'+out
 elif head == ['service','scale']:
     for setting in args[2:]:
         if '=' in setting and not setting.startswith('--'):
@@ -115,6 +140,12 @@ elif head == ['service','scale']:
             role = name.rsplit('_',1)[-1]
             apply(state, role, state['services'][role]['Spec']['TaskTemplate']['ContainerSpec']['Image'],int(replicas))
     if os.getenv('STUB_SCALE_FAIL'): code=1
+    state['scaled'] = True
+    if os.getenv('STUB_REAP_RACE'):
+        for task in state['tasks'].values():
+            if task['DesiredState'] == 'shutdown':
+                task['Status']['State'] = 'running'
+                state['containers'][task['Status']['ContainerStatus']['ContainerID']]['State']['Running'] = True
     if os.getenv('STUB_REAP'):
         for tid, task in list(state['tasks'].items()):
             if task['DesiredState'] == 'shutdown':
@@ -166,15 +197,29 @@ elif args[:1] == ['inspect']:
             for value in values: value['NodeID']='remote-node'
         if os.getenv('STUB_MISSING_CONTAINER'):
             for value in values: value['Status']['ContainerStatus']['ContainerID']=''
+        if state.get('removed_during_observation') and os.getenv('STUB_REFRESH_INSPECT_FAIL'): code=1
+        if state.get('removed_during_observation'):
+            fault=os.getenv('STUB_REFRESH_PARTIAL')
+            if fault=='omitted': values=[]
+            if fault=='duplicate': values=values*2
+            if fault=='wrong':
+                for value in values: value['ID']='different-task'
     else:
+        if os.getenv('STUB_REAP_RACE') == 'inspect' and state.get('scaled') and state['floor'] == 0:
+            for cid in names:
+                if cid in state['containers']:
+                    reap_during_observation(state, cid)
         if os.getenv('STUB_INITIAL_INSPECT_FAIL') or any(x not in state['containers'] for x in names) or (os.getenv('STUB_REAP')=='visible' and state.get('destroyed')):
             code=1
             values=[]
         else:
-            values=[state['containers'][x] for x in names]
+            values=[copy.deepcopy(state['containers'][x]) for x in names]
+            if os.getenv('STUB_OBSERVED_IMAGE_DRIFT') and state.get('scaled'):
+                for value in values: value['Image']=a if value['Image']==b else b
     out=json.dumps(values)
 elif head == ['container','wait']:
     out='0'
+    if os.getenv('STUB_REAP_RACE') == 'wait': reap_during_observation(state, args[-1])
 elif args[:1] == ['ps']:
     if '-aq' in args:
         if args[-1].startswith('id='):
@@ -184,6 +229,7 @@ elif args[:1] == ['ps']:
         else:
             role=args[-1].rsplit('_',1)[-1]
             out='\n'.join(t['Status']['ContainerStatus']['ContainerID'] if '--no-trunc' in args else t['Status']['ContainerStatus']['ContainerID'][:12] for t in state['tasks'].values() if t['role']==role and t['Status']['ContainerStatus']['ContainerID'] in state['containers'])
+            if state.get('removed_during_observation') and os.getenv('STUB_REFRESH_LOCAL_FAIL'): code=1
     elif 'service.name='+os.getenv('STUB_DB_SERVICE','never') in ' '.join(args):
         out='container'
 elif args[:1] == ['events']:
@@ -791,6 +837,73 @@ def test_first_adoption_proves_exit_when_swarm_reaps_stopped_containers(server, 
     assert any(call.startswith("events ") for call in server.calls)
     retired = rollout_state(server)["attested"]["services"]["api"]["retired"]
     assert retired and all(not row["running"] for row in retired)
+
+
+@pytest.mark.parametrize("boundary", ["wait", "inspect"])
+@pytest.mark.parametrize("outcome", ["removed", "terminal"])
+def test_first_adoption_refreshes_inventory_when_container_disappears_during_observation(
+    server, boundary, outcome
+):
+    result = deploy(
+        server,
+        STUB_NETWORK="1",
+        STUB_CONTRACT_FLOOR="0",
+        STUB_REAP_RACE=boundary,
+        STUB_RACE_OUTCOME=outcome,
+    )
+    assert result.returncode == 0, result.stderr
+    state = rollout_state(server)
+    assert state["removed_during_observation"]
+    assert state["phase"] == "verified"
+    assert any(call.startswith("events ") for call in server.calls)
+
+
+@pytest.mark.parametrize("boundary", ["wait", "inspect"])
+@pytest.mark.parametrize(
+    "fault",
+    [
+        {"STUB_RACE_OUTCOME": "active"},
+        {"STUB_RACE_OUTCOME": "extra"},
+        {"STUB_REFRESH_FAIL": "1"},
+        {"STUB_REFRESH_INSPECT_FAIL": "1", "STUB_RACE_OUTCOME": "terminal"},
+        {"STUB_REFRESH_LOCAL_FAIL": "1"},
+    ],
+)
+def test_disappearance_race_with_active_or_unobserved_inventory_keeps_gate_closed(
+    server, boundary, fault
+):
+    result = deploy(
+        server, STUB_NETWORK="1", STUB_CONTRACT_FLOOR="0", STUB_REAP_RACE=boundary, **fault
+    )
+    assert result.returncode == 1
+    assert rollout_state(server)["removed_during_observation"]
+    assert not any(call.startswith("run ") and call.endswith(" migrate") for call in server.calls)
+    assert "attested" not in rollout_state(server)
+    assert "Traceback" not in result.stdout + result.stderr
+
+
+def test_first_adoption_refuses_changed_image_for_previously_observed_container(server):
+    result = deploy(
+        server, STUB_NETWORK="1", STUB_CONTRACT_FLOOR="0", STUB_OBSERVED_IMAGE_DRIFT="1"
+    )
+    assert result.returncode == 1
+    assert not any(call.startswith("run ") and call.endswith(" migrate") for call in server.calls)
+    assert "attested" not in rollout_state(server)
+
+
+@pytest.mark.parametrize("partial", ["omitted", "duplicate", "wrong", "requested_duplicate"])
+def test_disappearance_race_refuses_partial_task_inventory_even_with_zero_exit(server, partial):
+    result = deploy(
+        server,
+        STUB_NETWORK="1",
+        STUB_CONTRACT_FLOOR="0",
+        STUB_REAP_RACE="wait",
+        STUB_RACE_OUTCOME="terminal",
+        STUB_REFRESH_PARTIAL=partial,
+    )
+    assert result.returncode == 1
+    assert not any(call.startswith("run ") and call.endswith(" migrate") for call in server.calls)
+    assert "attested" not in rollout_state(server)
 
 
 def test_first_adoption_keeps_positive_proof_after_event_history_rotates(server):

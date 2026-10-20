@@ -137,6 +137,10 @@ Isso exige nó disponível, listagem local bem-sucedida sem aquele container e e
 `destroy` do mesmo ID, com `timeNano` dentro da janela iniciada antes da observação. A consulta
 de eventos tem fim absoluto; falha de `inspect`, ausência ou `DesiredState=remove` isolados
 não comprovam parada. O ensaio CI reutiliza essa prova também antes do DDL e após a retomada.
+Depois de `wait` ou de um `inspect` que falhe, o helper renova o inventário antes de decidir
+se a task terminou ou foi removida. Os objetos recebidos precisam corresponder exatamente aos
+IDs de tasks solicitados, sem omissões ou duplicados. Uma imagem diferente para um container
+já observado é inconsistência e bloqueia o roteiro; não substitui a identidade conservada.
 
 Eventos Docker guardam somente os últimos 256 registros globais; não são um histórico durável.
 Evento ausente, antigo, perdido após restart, inválido ou de outro ID mantém o bloqueio.
