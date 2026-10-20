@@ -22,6 +22,12 @@ adapte apenas o que for compatível com Codex/Orca, sem lançar Claude.
 Leia a skill pertinente antes de agir; use somente as necessárias ao escopo, sem ritual de rodar
 todas nem refatoração de arquitetura automática.
 
+Algumas skills upstream exigem invocação explícita e podem não aparecer no catálogo automático.
+A coordenadora seleciona a pertinente e a nomeia explicitamente no prompt da Task, por exemplo
+`$to-tickets`, indicando o caminho compartilhado se necessário. Levy não precisa memorizar nomes.
+A disponibilidade de uma skill não concede autoridade de execução; preserve o escopo autorizado,
+sem modificar upstream nem habilitar hooks, scripts ou Claude.
+
 | Situação | Skills e resultado esperado |
 | --- | --- |
 | Decisão de produto genuinamente aberta | `grill-with-docs` / `grilling`: investigar documentos e código primeiro, depois formular perguntas claras sobre as alternativas ainda abertas. Não reabrir decisões tomadas nem transferir investigação técnica a quem solicita. |
@@ -43,6 +49,7 @@ O mapeamento é por função, sem promessa de equivalência de desempenho entre 
 | --- | --- | --- |
 | Coordenadora: escopo, delegação, síntese e decisões | `gpt-6-astra` | `ultra` |
 | Implementadora de mudança delimitada | `gpt-6.1-sol` | `medium` |
+| Revisora independente de alterações | `gpt-6.1-sol` | `high` |
 | Gestora de issues | `gpt-6.1-sol` | `medium` |
 | Guardiã: revisão de admin/API/MCP e serviços compartilhados | `gpt-6.1-sol` | `high` |
 | Operadora: execução de roteiro e tarefas mecânicas | `gpt-6-luna` | `medium` |
