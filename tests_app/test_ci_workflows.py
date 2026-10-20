@@ -12,6 +12,7 @@ from typing import Any
 import pytest
 import sqlalchemy as sa
 import yaml
+from test_deployment_contract import rollout_engine  # noqa: F401 — fixture PostgreSQL compartilhada
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOWS = ROOT / ".github/workflows"
@@ -177,6 +178,7 @@ def test_the_swarm_runs_on_pushes_and_on_pull_requests_that_touch_what_it_tests(
     for path in (
         "deploy/swarm/stack.yaml",
         "deploy/swarm/deploy.sh",
+        "deploy/swarm/rollout.py",
         "deploy/entrypoint.sh",
         "Dockerfile",
         ".dockerignore",
@@ -185,6 +187,7 @@ def test_the_swarm_runs_on_pushes_and_on_pull_requests_that_touch_what_it_tests(
         ".github/workflows/deploy-image.yml",
         "app/migrations/versions/0008_legacy_forms_as_version_one.py",
         "app/settings.py",
+        "app/deployment_contract.py",
         "app/worker.py",
         "app/api/main.py",
     ):
@@ -366,15 +369,15 @@ def test_publisher_rejects_forks_prs_other_shas_and_missing_or_failed_checks(
     assert not publisher_allowed({"vars.LEADKIT_PUBLISH_ENABLED": "true", **overrides})
 
 
-def test_swarm_rehearsal_accepts_the_real_guard_refusal(
-    shared_engine, database_url: str, tmp_path: Path
-) -> None:
+def test_swarm_rehearsal_accepts_the_real_guard_refusal(request, tmp_path: Path) -> None:
     """O ensaio precisa reconhecer a recusa real e ainda permitir rollback sem migrar.
 
     Só o transporte Docker é substituído: o deploy.sh e o Alembic/guard usam código real
     e PostgreSQL 16. Não há Swarm local; versões e disponibilidade ficam no ensaio remoto.
     """
     from test_swarm_scripts import Server, Staging
+
+    engine = request.getfixturevalue("rollout_engine")
 
     staging_dir = tmp_path / "staging"
     staging_dir.mkdir()
@@ -383,13 +386,14 @@ def test_swarm_rehearsal_accepts_the_real_guard_refusal(
     docker.rename(server.bin_dir / "docker-stub")
     docker.write_text(
         "#!/usr/bin/env bash\n"
-        'if [[ "$1" == run ]]; then\n'
+        'if [[ "$1" == run && "${@: -1}" == migrate ]]; then\n'
         '  echo "$*" >> "$STUB_CALLS"\n'
         '  exec "$GUARD_PYTHON" -m alembic -c "$GUARD_ROOT/app/alembic.ini" upgrade head\n'
         "fi\n"
         'exec "$(dirname "$0")/docker-stub" "$@"\n'
     )
     docker.chmod(0o755)
+    database_url = str(engine.url)
     env = {
         "STUB_NETWORK": "1",
         "GUARD_PYTHON": sys.executable,
@@ -398,7 +402,7 @@ def test_swarm_rehearsal_accepts_the_real_guard_refusal(
         "PYTHONPATH": str(ROOT),
         "IMAGE": "gerador-planos:ci",
     }
-    with shared_engine.begin() as connection:
+    with engine.begin() as connection:
         original = connection.exec_driver_sql(
             "SELECT version_num FROM alembic_version"
         ).scalar_one()
@@ -434,14 +438,16 @@ def test_swarm_rehearsal_accepts_the_real_guard_refusal(
         assert rollback.returncode == 0, rollback.stdout + rollback.stderr
         assert "sem migrations" in rollback.stdout
         assert any(call.startswith("stack deploy") for call in server.calls)
-        assert not any(call.startswith("run ") for call in server.calls)
-        with shared_engine.connect() as connection:
+        assert not any(
+            call.startswith("run ") and call.endswith(" migrate") for call in server.calls
+        )
+        with engine.connect() as connection:
             assert (
                 connection.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one()
                 == "ci_futura"
             )
     finally:
-        with shared_engine.begin() as connection:
+        with engine.begin() as connection:
             connection.execute(
                 sa.text("UPDATE alembic_version SET version_num = :revision"),
                 {"revision": original},

@@ -50,6 +50,7 @@ jobs:
               - 'app/migrations/**'
               - 'app/settings.py'
               - 'app/db.py'
+              - 'app/deployment_contract.py'
               - 'app/hatchet_client.py'
               - 'app/worker.py'
               - 'app/api/main.py'
@@ -331,14 +332,14 @@ jobs:
 
       - name: Write the config folder like the server's
         run: |
-          # Como ~/gerador-de-planos/swarm: cópias do stack.yaml e do deploy.sh, e o app.env e o
+          # Como ~/gerador-de-planos/swarm: stack.yaml, deploy.sh, rollout.py, app.env e
           # db.env feitos dos modelos. Escritos dentro da imagem, que tem o argon2. Os segredos são
           # sorteados a cada execução, então nada com cara de segredo entra no repositório; o hash
           # do admin entra sem aspas, como o guia pede.
           conf="$RUNNER_TEMP/swarm"
           echo "CONF=$conf" >> "$GITHUB_ENV"
           mkdir -p "$conf"
-          cp deploy/swarm/stack.yaml deploy/swarm/deploy.sh "$conf/"
+          cp deploy/swarm/stack.yaml deploy/swarm/deploy.sh deploy/swarm/rollout.py "$conf/"
           docker run --rm -i --user "$(id -u):$(id -g)" --env DOMAIN --env CI_STACK_NAME \
             -v "$PWD/deploy/swarm:/modelos:ro" -v "$conf:/conf" -v "$RUNNER_TEMP:/out" \
             gerador-planos:ci python - /modelos /conf /out <<'PY'
@@ -745,6 +746,16 @@ jobs:
           }
           db() { docker ps -q -f label=com.docker.swarm.service.name=gerador-planos_db | head -n 1; }
           psql_db() { docker exec "$(db)" sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "$1"' sh "$1"; }
+          assert_image() {
+            expected=$(docker image inspect --format '{{.Id}}' "$1")
+            for role in api worker; do
+              for task in $(docker service ps -q --filter desired-state=running "gerador-planos_$role"); do
+                container=$(docker inspect --type task --format '{{.Status.ContainerStatus.ContainerID}}' "$task")
+                test -n "$container"
+                test "$(docker inspect --type container --format '{{.Image}}' "$container")" = "$expected"
+              done
+            done
+          }
           versions() { docker service inspect --format '{{.Spec.Name}} {{.Version.Index}}' gerador-planos_api gerador-planos_worker; }
 
           echo "::group::1. versão nova: troca sem queda"
@@ -753,7 +764,7 @@ jobs:
           for service in api worker; do
             echo "$service: $(state "$service"), $(image "$service")"
             test "$(state "$service")" = completed
-            case "$(image "$service")" in gerador-planos:ci-novo*) ;; *) exit 1 ;; esac
+            assert_image gerador-planos:ci-novo
           done
           echo "::endgroup::"
 
@@ -813,7 +824,7 @@ jobs:
           for service in api worker; do
             echo "$service: $(state "$service"), $(image "$service")"
             test "$(state "$service")" = completed
-            case "$(image "$service")" in gerador-planos:ci@*|gerador-planos:ci) ;; *) exit 1 ;; esac
+            assert_image gerador-planos:ci
           done
           echo "::endgroup::"
 
@@ -843,16 +854,15 @@ jobs:
           test "$(versions)" = "$before"
           echo "::endgroup::"
 
-          echo "::group::7. tag reaproveitada para outra imagem: o Swarm não troca, e o deploy.sh acusa"
-          # Mesmo nome, imagem nova: com --resolve-image changed o Swarm fica com a que já tinha.
+          echo "::group::7. tag reaproveitada: o conteúdo verificado fica fixado por identidade"
+          # Mesmo nome e imagem nova: o helper usa referência de conteúdo e confere o ID real.
+          previous=$(docker image inspect --format '{{.Id}}' gerador-planos:ci)
           printf 'FROM gerador-planos:ci\nLABEL ci.build=reaproveitada\n' | docker build --quiet --tag gerador-planos:ci - > /dev/null
-          if IMAGE=gerador-planos:ci ./deploy.sh > "$RUNNER_TEMP/stale.log" 2>&1; then
-            cat "$RUNNER_TEMP/stale.log"
-            echo "o deploy.sh devia ter acusado a réplica com a imagem antiga"
-            exit 1
-          fi
+          test "$(docker image inspect --format '{{.Id}}' gerador-planos:ci)" != "$previous"
+          IMAGE=gerador-planos:ci ./deploy.sh > "$RUNNER_TEMP/stale.log" 2>&1 || { cat "$RUNNER_TEMP/stale.log"; exit 1; }
           cat "$RUNNER_TEMP/stale.log"
-          grep -F 'continua com outra imagem' "$RUNNER_TEMP/stale.log"
+          assert_image gerador-planos:ci
+          grep -F 'contrato participante verificado' "$RUNNER_TEMP/stale.log"
           echo "::endgroup::"
 
           touch "$RUNNER_TEMP/stop-probe"
@@ -903,7 +913,7 @@ jobs:
           conf_b="$RUNNER_TEMP/swarm-b"
           echo "CONF_B=$conf_b" >> "$GITHUB_ENV"
           mkdir -p "$conf_b"
-          cp "$CONF/stack.yaml" "$CONF/deploy.sh" "$CONF/app.env" "$CONF/db.env" "$conf_b/"
+          cp "$CONF/stack.yaml" "$CONF/deploy.sh" "$CONF/rollout.py" "$CONF/app.env" "$CONF/db.env" "$conf_b/"
           python3 - "$conf_b/app.env" "$DOMAIN_B" gerador-planos-b <<'PY'
           import re
           import sys
