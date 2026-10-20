@@ -265,6 +265,27 @@ class FormSpec:
     # os lê, na tela do pedido. Campo sem rótulo não consta, e o admin mostra o nome dele.
     plan_labels: Mapping[str, str] = field(default_factory=dict)
 
+    # Ausente em contratos manuais: nenhuma saída recebe dados sem classificação recuperável.
+    plan_projector: Callable[[Mapping[str, Any], str], dict[str, Any]] | None = None
+
+    def project_plan(
+        self,
+        document: Mapping[str, Any],
+        *,
+        audience: Literal["internal", "participant"] = "participant",
+    ) -> dict[str, Any]:
+        """Cópia JSON validada pela versão deste contrato, destinada à audiência pedida."""
+        if (
+            self.generation != "pdf"
+            or self.plan_model is None
+            or self.plan_projector is None
+            or not self.version
+            or not isinstance(self.version_number, int)
+            or self.version_number < 1
+        ):
+            raise PlanProjectionError("plan_projection_unavailable")
+        return self.plan_projector(document, audience)
+
     def require_generation(self) -> None:
         """Recusa operações de geração em uma captura, antes de chamar provedores."""
         if self.generation != "pdf":
@@ -312,6 +333,18 @@ class FormSpec:
         # Tela inconsistente com `Answers` quebra na importação, não no navegador do lead.
         if self.screen is not None:
             _check_screen(self, self.screen)
+
+
+class PlanProjectionError(ValueError):
+    """Projeção recusada sem incluir valores ou erros de validação do documento."""
+
+    def __init__(self, code: str) -> None:
+        self.code = code
+        super().__init__(
+            "A projeção do plano está indisponível."
+            if code == "plan_projection_unavailable"
+            else "Não foi possível projetar o plano informado."
+        )
 
 
 class GenerationUnavailable(ValueError):

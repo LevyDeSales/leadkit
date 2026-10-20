@@ -95,6 +95,7 @@ def compile_definition(
         if definition.generation == "pdf"
         else None
     )
+    projector = plan_tree.plan_projector(definition.plan, plan) if plan is not None else None
     problems: list[Problem] = []
     example_answers = _example(answers, definition.examples.answers, "examples.answers", problems)
     example_plan = (
@@ -113,6 +114,7 @@ def compile_definition(
         templates, instructions = compile_templates(
             definition,
             plan_model=plan,
+            project_plan=projector,
             example_answers=example_answers,
             example_plan=example_plan,
             lead_name=identity(example_answers).name,
@@ -129,6 +131,7 @@ def compile_definition(
         answers_model=answers,
         conditions=conditions,
         plan_model=plan,
+        plan_projector=projector,
         plan_labels=plan_tree.plan_labels(definition.plan.fields) if definition.plan else {},
         identity=identity,
         instructions=instructions,
