@@ -2201,6 +2201,93 @@
         "title": "CreatedApiKey",
         "type": "object"
       },
+      "CurrentPdf": {
+        "description": "Evidência técnica da tentativa atual; disponibilidade não concede acesso ao documento.",
+        "properties": {
+          "accessible": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Leitura limitada comprovada para o objeto atual; HEAD isolado não basta.",
+            "title": "Accessible"
+          },
+          "attempt": {
+            "title": "Attempt",
+            "type": "integer"
+          },
+          "available": {
+            "description": "PDF atual verificado e acessível; não é autorização.",
+            "title": "Available",
+            "type": "boolean"
+          },
+          "exists": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Existência no storage; nulo se não foi possível conferir.",
+            "title": "Exists"
+          },
+          "state": {
+            "description": "available, missing, removed, unavailable, unknown ou invalid.",
+            "enum": [
+              "available",
+              "missing",
+              "removed",
+              "unavailable",
+              "unknown",
+              "invalid"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "valid": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Validade estrutural mínima; nulo sem evidência confiável.",
+            "title": "Valid"
+          },
+          "verified_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Verificação real dos bytes; históricos ficam nulos.",
+            "title": "Verified At"
+          }
+        },
+        "required": [
+          "attempt",
+          "state",
+          "available",
+          "exists",
+          "valid",
+          "accessible",
+          "verified_at"
+        ],
+        "title": "CurrentPdf",
+        "type": "object"
+      },
       "DeactivateFormIntegrationRequest": {
         "additionalProperties": false,
         "description": "O pedido de desativação: só a versão que você viu. Desligar não tem marca: não escreve fora do\nsistema, e as sincronizações que repetiam esperam a reativação.",
@@ -4820,6 +4907,9 @@
             "title": "Created At",
             "type": "string"
           },
+          "current_pdf": {
+            "$ref": "#/components/schemas/CurrentPdf"
+          },
           "deliveries": {
             "description": "As entregas ao webhook, da mais antiga para a mais nova.",
             "items": {
@@ -4959,6 +5049,7 @@
           "link_expires_at",
           "link_expired",
           "run_url",
+          "current_pdf",
           "pdfs",
           "deliveries",
           "syncs",
@@ -5341,7 +5432,7 @@
                 "type": "null"
               }
             ],
-            "description": "Quando o prazo de retenção apagou o arquivo (o registro fica). Nulo: o arquivo ainda existe.",
+            "description": "Quando a retenção registrou a remoção do arquivo. Nulo não comprova existência nem acesso; consulte `current_pdf` para a tentativa atual.",
             "title": "Purged At"
           },
           "version": {
@@ -7572,6 +7663,9 @@
             "title": "Created At",
             "type": "string"
           },
+          "current_pdf": {
+            "$ref": "#/components/schemas/CurrentPdf"
+          },
           "deliveries": {
             "description": "As entregas ao webhook, da mais antiga para a mais nova.",
             "items": {
@@ -7705,6 +7799,7 @@
           "link_expires_at",
           "link_expired",
           "run_url",
+          "current_pdf",
           "pdfs",
           "deliveries",
           "syncs",
@@ -16279,7 +16374,7 @@
     },
     "/jobs/{public_id}": {
       "get": {
-        "description": "O pedido de código `public_id`: situação, etapa, tentativa atual, formulário e versão, datas, até quando o link da lead vale, o código da falha, os PDFs de cada tentativa, as entregas ao webhook, as sincronizações com a planilha e a linha do tempo, tentativa por tentativa (o que aconteceu e quando, sem texto livre). É o que se lê para saber o que falhou e o que fazer. **Nada disso diz quem é a lead.** `include_lead_data=true`, só com chave `total`, acrescenta o bloco `lead_data`: nome, e-mail, telefone, prioridade e persona, pontuação, respostas, consentimento, o plano da última tentativa e os textos livres dos motivos (o motivo de um reprocessamento, o detalhe da falha e o último erro de cada entrega e sincronização, que podem citar a lead). Com chave `leitura`, pedir o bloco é `403 forbidden_role`, antes mesmo de procurar o pedido; sem o parâmetro, nem a chave `total` o recebe. Não grava nada.",
+        "description": "O pedido de código `public_id`: situação, etapa, tentativa atual, formulário e versão, datas, até quando o link da lead vale, o código da falha, os PDFs de cada tentativa, as evidências técnicas em `current_pdf` (tentativa atual, existência, validade estrutural, acesso ao storage e verificação, sem conceder autorização), as entregas ao webhook, as sincronizações com a planilha e a linha do tempo, tentativa por tentativa (o que aconteceu e quando, sem texto livre). É o que se lê para saber o que falhou e o que fazer. **Nada disso diz quem é a lead.** `include_lead_data=true`, só com chave `total`, acrescenta o bloco `lead_data`: nome, e-mail, telefone, prioridade e persona, pontuação, respostas, consentimento, o plano da última tentativa e os textos livres dos motivos (o motivo de um reprocessamento, o detalhe da falha e o último erro de cada entrega e sincronização, que podem citar a lead). Com chave `leitura`, pedir o bloco é `403 forbidden_role`, antes mesmo de procurar o pedido; sem o parâmetro, nem a chave `total` o recebe. Não grava nada.",
         "operationId": "get_job",
         "parameters": [
           {
@@ -16547,7 +16642,7 @@
     },
     "/jobs/{public_id}/pdf": {
       "get": {
-        "description": "Baixa o PDF do plano da lead: os bytes do arquivo (`application/pdf`), da última tentativa ou da que `version` pedir, e **nunca uma URL assinada** (a assinatura seria um segundo segredo, fora da chave e da auditoria). O plano é dado da lead, por isso só a chave `total` baixa. `404 not_found` se o pedido não existe ou ainda não tem o PDF dessa tentativa; `410 gone` se o prazo de retenção já apagou o arquivo; `502 upstream_failed` se o armazenamento não respondeu. Conta 5 fichas do limite de uso. Não grava nada.",
+        "description": "Baixa o PDF do plano da lead: os bytes do arquivo (`application/pdf`), da tentativa atual ou da que `version` pedir, e **nunca uma URL assinada** (a assinatura seria um segundo segredo, fora da chave e da auditoria). O plano é dado da lead, por isso só a chave `total` baixa. `404 not_found` se o pedido não existe ou ainda não tem o PDF dessa tentativa; `410 gone` se o prazo de retenção já apagou o arquivo; `502 upstream_failed` se o PDF não pôde ser verificado ou acessado. Conta 5 fichas do limite de uso. Um histórico sem evidência é validado neste download autorizado: se os bytes, hash, tamanho, páginas e vínculo forem corretos, persiste somente a prova técnica, sem alterar o processamento nem chamar IA. Sem `version`, nunca entrega uma tentativa anterior.",
         "operationId": "download_job_pdf",
         "parameters": [
           {
@@ -16562,7 +16657,7 @@
             }
           },
           {
-            "description": "A tentativa do PDF (`version` de `get_job.pdfs`). Ausente: a mais recente.",
+            "description": "A tentativa do PDF (`version` de `get_job.pdfs`). Ausente: a tentativa atual, sem fallback para uma anterior.",
             "in": "query",
             "name": "version",
             "required": false,
@@ -16576,7 +16671,7 @@
                   "type": "null"
                 }
               ],
-              "description": "A tentativa do PDF (`version` de `get_job.pdfs`). Ausente: a mais recente.",
+              "description": "A tentativa do PDF (`version` de `get_job.pdfs`). Ausente: a tentativa atual, sem fallback para uma anterior.",
               "title": "Version"
             }
           }

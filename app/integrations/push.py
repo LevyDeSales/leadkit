@@ -137,7 +137,9 @@ def _row_data(deps: Deps, session: Session, sync: IntegrationSync) -> RowData:
     submission = session.get_one(Submission, job.submission_id)
     spec = submission_form(deps.forms, submission)
     lead = identity_from_answers(submission, spec)
-    links = pipeline.lead_links(deps, job)
+    # O mapeamento é do pedido/submissão, sem documento ou hash de uma tentativa antiga.
+    # O link fixa a tentativa observada; se ficar obsoleto, o endpoint recusa outro PDF.
+    links = pipeline.lead_links(deps, job, pdf_attempt=job.attempt)
     return RowData(
         public_id=job.public_id,
         form_version=submission.form_version,

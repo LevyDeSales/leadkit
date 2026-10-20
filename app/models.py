@@ -170,6 +170,8 @@ class Artifact(Base):
     renderer: Mapped[str] = mapped_column(sa.Text)
     created_at: Mapped[datetime] = _created_at()
     purged_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    verified_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    storage_revision: Mapped[str | None] = mapped_column(sa.Text)
 
 
 class Delivery(Base):

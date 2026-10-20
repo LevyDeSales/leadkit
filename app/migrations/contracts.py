@@ -2461,8 +2461,16 @@ SIGNATURES = {
     }
 }
 
-SIGNATURES["0013_capture"] = {
+# Delta aditivo conferido contra o catálogo PostgreSQL 16; 0012 permanece congelada.
+SIGNATURES["0013"] = {
     **SIGNATURES["0012"],
+    "column:public.artifacts.verified_at": ["timestamp with time zone", "false", "", "", "", ""],
+    "column:public.artifacts.storage_revision": ["text", "false", "", "", "", "pg_catalog.default"],
+}
+
+# Captura aditiva sobre a disponibilidade PDF; contratos publicados preservados.
+SIGNATURES["0014_capture"] = {
+    **SIGNATURES["0013"],
     "column:public.capture_receipts.expires_at": [
         "timestamp with time zone",
         "true",

@@ -21,14 +21,17 @@ from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ValidationError
+from pydantic import AwareDatetime, BaseModel, ValidationError
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app import admin, destinations, jobs, pipeline
+from app.admin.actions.jobs import NoPdf, PdfRemoved, pdf_file
 from app.admin.api import errors as admin_api_errors
 from app.admin.api.application import create_admin_api
+from app.admin.api.schemas.jobs import CurrentPdf
 from app.admin.auth import instant
 from app.deps import Deps, get_deps
+from app.errors import RetryableError, TerminalError
 from app.forms import FormSpec, InactiveForm, UnknownForm
 from app.forms.data_notices import log_data_notices
 from app.forms.definition.document import CompletionDoc
@@ -44,7 +47,8 @@ from app.intake import (
     submission_spec,
 )
 from app.integrations import config as integration_config
-from app.models import Artifact, Job
+from app.models import Job
+from app.pdf_availability import availability_dict, current_pdf
 from app.submission_launch import launch_after_commit, stop_launches
 from app.tokens import TokenError
 from app.web import router as web_router
@@ -104,6 +108,21 @@ class CaptureSubmissionAccepted(BaseModel):
     receipt_url: str
     replay: bool
     completion: SubmissionCompletion
+
+
+class PublicJobStatus(BaseModel):
+    """Estado autenticado; disponibilidade técnica não concede nova autorização."""
+
+    public_id: str
+    status: str
+    stage: str
+    attempt: int
+    created_at: AwareDatetime
+    completed_at: AwareDatetime | None
+    expires_at: AwareDatetime
+    current_pdf: CurrentPdf
+    pdf_url: str | None = None
+    failure: dict[str, str | None] | None = None
 
 
 # Dispara o teste do rascunho (`app.forms.drafts`) pelo id; None: o engine não recebeu.
@@ -497,7 +516,7 @@ def create_app(
             headers=PRIVATE_HEADERS,
         )
 
-    @app.get("/v1/jobs/{public_id}")
+    @app.get("/v1/jobs/{public_id}", response_model=PublicJobStatus)
     def job_status(
         public_id: str,
         authorization: Annotated[str | None, Header()] = None,
@@ -514,7 +533,11 @@ def create_app(
             "completed_at": job.completed_at.isoformat() if job.completed_at else None,
             "expires_at": job.expires_at.isoformat(),
         }
-        if status == "completed":
+        with deps.sessions() as session:
+            availability = current_pdf(session, deps.storage, job)
+        body["attempt"] = job.attempt
+        body["current_pdf"] = availability_dict(availability)
+        if availability.available:
             body["pdf_url"] = pipeline.lead_links(deps, job)["pdf_url"]
         if status == "failed":
             body["failure"] = {"code": job.failure_code}
@@ -523,37 +546,45 @@ def create_app(
     @app.get("/v1/jobs/{public_id}/pdf")
     def job_pdf(
         public_id: str,
+        attempt: Annotated[int | None, Query(ge=1)] = None,
         authorization: Annotated[str | None, Header()] = None,
         t: Annotated[str | None, Query(max_length=128)] = None,
     ) -> Response:
         deps = get_deps()
         job = _authorized_job(deps, public_id, _token_from(authorization, t))
+        if attempt is not None and job.attempt != attempt:
+            raise HTTPException(409, "tentativa desatualizada", headers=PRIVATE_HEADERS)
         if job.status != "completed":
             raise HTTPException(
                 status_code=409, detail="o plano ainda não está pronto", headers=PRIVATE_HEADERS
             )
-        with deps.sessions() as session:
-            artifact = session.scalar(
-                sa.select(Artifact).where(
-                    Artifact.job_id == job.id,
-                    Artifact.kind == "pdf",
-                    Artifact.version == job.attempt,
-                )
+        try:
+            pdf = pdf_file(
+                deps,
+                public_id,
+                None,
+                signed_url=True,
+                filename=f"plano-{job.public_id}.pdf",
+                authorized_job=job,
             )
-        if artifact is None:
+        except NoPdf:
+            raise HTTPException(404, "PDF não encontrado", headers=PRIVATE_HEADERS) from None
+        except PdfRemoved:
             raise HTTPException(
-                status_code=404, detail="PDF não encontrado", headers=PRIVATE_HEADERS
-            )
-        filename = f"plano-{job.public_id}.pdf"
-        url = deps.storage.presigned_url(artifact.storage_key, ttl_seconds=300, filename=filename)
-        if url:
-            return RedirectResponse(url, status_code=302, headers=PRIVATE_HEADERS)
+                410, "PDF removido pela retenção", headers=PRIVATE_HEADERS
+            ) from None
+        except (RetryableError, TerminalError, OSError):
+            raise HTTPException(
+                502, "PDF indisponível no momento", headers=PRIVATE_HEADERS
+            ) from None
+        if pdf.url:
+            return RedirectResponse(pdf.url, status_code=302, headers=PRIVATE_HEADERS)
         return Response(
-            deps.storage.get(artifact.storage_key),
+            pdf.content,
             media_type="application/pdf",
             headers={
                 **PRIVATE_HEADERS,
-                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Content-Disposition": f'attachment; filename="plano-{job.public_id}.pdf"',
             },
         )
 

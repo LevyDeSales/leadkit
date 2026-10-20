@@ -1048,6 +1048,7 @@ STATE_FIELDS = {
     "syncs",
     "timeline",
     "lead_data",
+    "current_pdf",
 }
 RUN_URL = "https://hatchet.example.test/runs/{run_id}"
 

@@ -23,6 +23,8 @@ from app.errors import FailureCode, RetryableError, TerminalError
 from app.forms import FormSpec
 from app.integrations import syncs
 from app.models import Artifact, Delivery, Job, Plan, Submission, utcnow
+from app.pdf_availability import current_pdf, verify_completion
+from app.pdf_validation import validate_pdf
 from app.submission_identity import identity_from_answers, resolve_identity, submission_form
 
 WEBHOOK_DESTINATION = "webhook"
@@ -104,42 +106,32 @@ def render_pdf(
     }
 
     pdf = deps.pdf.render(spec, plan.document, context)
-    if not pdf.content.startswith(b"%PDF"):
-        raise TerminalError(
-            FailureCode.RENDER_FAILED, "renderizador devolveu conteúdo que não é PDF"
-        )
+    validate_pdf(pdf.content)
     sha256 = hashlib.sha256(pdf.content).hexdigest()
     key = f"plans/{job_id}/v{attempt}.pdf"
-    deps.storage.put(key, pdf.content, "application/pdf")
-
     with deps.sessions.begin() as session:
-        try:
-            with session.begin_nested():
-                artifact = Artifact(
-                    job_id=job_id,
-                    plan_id=plan_id,
-                    kind="pdf",
-                    version=attempt,
-                    storage_key=key,
-                    sha256=sha256,
-                    byte_size=len(pdf.content),
-                    renderer=pdf.renderer,
-                )
-                session.add(artifact)
-                session.flush()
-                return artifact.id, False
-        except IntegrityError:
-            winner = _artifact_of(session, job_id, attempt)
-            if winner is None:
-                raise
-            winner_id, winner_key = winner
-    # Outra execução da mesma tentativa registrou o artefato primeiro. A chave costuma ser a mesma;
-    # difere se o vencedor veio de um código com outra chave (o hash no nome). Aí o arquivo desta
-    # execução não tem linha e a retenção nunca o apagaria. Com a mesma chave, apagar levaria o
-    # arquivo do vencedor.
-    if winner_key != key:
-        deps.storage.delete(key)
-    return winner_id, True
+        # Serializa gravações da chave fixa com conclusão/reprocessamento. Uma duplicata que
+        # terminou de renderizar depois da vencedora nunca sobrescreve os bytes já registrados.
+        job = session.scalar(sa.select(Job).where(Job.id == job_id).with_for_update())
+        existing = _artifact_id(session, job_id, attempt)
+        if existing is not None:
+            return existing, True
+        if job is None or job.attempt != attempt or job.status != "running":
+            raise TerminalError(FailureCode.RENDER_FAILED, "tentativa não está em processamento")
+        deps.storage.put(key, pdf.content, "application/pdf")
+        artifact = Artifact(
+            job_id=job_id,
+            plan_id=plan_id,
+            kind="pdf",
+            version=attempt,
+            storage_key=key,
+            sha256=sha256,
+            byte_size=len(pdf.content),
+            renderer=pdf.renderer,
+        )
+        session.add(artifact)
+        session.flush()
+        return artifact.id, False
 
 
 def finalize(
@@ -152,8 +144,25 @@ def finalize(
     ou sem destino do webhook: são outra saída do pedido, e `pending_syncs` devolve as que a task
     dispara."""
     with deps.sessions.begin() as session:
+        job = session.scalar(sa.select(Job).where(Job.id == job_id).with_for_update())
+        if job is None or job.attempt != attempt or job.status not in ("running", "completed"):
+            return []
+        artifact = session.get(Artifact, artifact_id)
+        plan = session.get(Plan, artifact.plan_id) if artifact is not None else None
+        if (
+            artifact is None
+            or artifact.job_id != job_id
+            or artifact.version != attempt
+            or artifact.kind != "pdf"
+            or plan is None
+            or plan.job_id != job_id
+            or plan.version != attempt
+        ):
+            raise TerminalError(FailureCode.RENDER_FAILED, "artefato incompatível com a tentativa")
+        if job.status == "running":
+            verify_completion(session, deps.storage, job, attempt, artifact_id)
         jobs.complete(session, job_id, attempt)
-        job = session.get_one(Job, job_id)
+        session.refresh(job)
         if job.status != "completed" or job.attempt != attempt:
             return []
         submission = session.get_one(Submission, job.submission_id)
@@ -286,12 +295,13 @@ def mark_delivery_failed(deps: Deps, delivery_id: uuid.UUID, code: str) -> None:
         )
 
 
-def lead_links(deps: Deps, job: Job) -> dict[str, str]:
+def lead_links(deps: Deps, job: Job, *, pdf_attempt: int | None = None) -> dict[str, str]:
     token = deps.signer.issue(job.public_id, job.token_version)
     base = deps.settings.public_base_url.rstrip("/")
+    suffix = f"&attempt={pdf_attempt}" if pdf_attempt is not None else ""
     return {
         "status_url": f"{base}/v1/jobs/{job.public_id}?t={token}",
-        "pdf_url": f"{base}/v1/jobs/{job.public_id}/pdf?t={token}",
+        "pdf_url": f"{base}/v1/jobs/{job.public_id}/pdf?t={token}{suffix}",
         # Página do lead; o `t` vira cookie no primeiro acesso (app.web.public).
         "page_url": f"{base}/d/{job.public_id}?t={token}",
     }
@@ -302,11 +312,15 @@ def build_payload(session: Any, deps: Deps, delivery: Delivery) -> dict[str, Any
     submission = session.get_one(Submission, job.submission_id)
     lead = resolve_identity(deps.forms, submission)
     artifact = session.get_one(Artifact, delivery.artifact_id)
+    if artifact.job_id != job.id or artifact.version != job.attempt:
+        raise TerminalError(
+            FailureCode.DELIVERY_REJECTED, "entrega de tentativa anterior não é atual"
+        )
     plan = session.get_one(Plan, artifact.plan_id)
-    links = lead_links(deps, job)
+    links = lead_links(deps, job, pdf_attempt=artifact.version)
     direct_url = (
         None  # a retenção já apagou o arquivo (reenvio feito muito depois)
-        if artifact.purged_at is not None
+        if artifact.version != job.attempt or not current_pdf(session, deps.storage, job).available
         else deps.storage.presigned_url(
             artifact.storage_key,
             ttl_seconds=int(DIRECT_URL_TTL.total_seconds()),
@@ -320,7 +334,7 @@ def build_payload(session: Any, deps: Deps, delivery: Delivery) -> dict[str, Any
         "form": {"slug": submission.form_slug, "version": submission.form_version},
         "job": {
             "public_id": job.public_id,
-            "attempt": job.attempt,
+            "attempt": artifact.version,
             "status_url": links["status_url"],
             "page_url": links["page_url"],
         },
@@ -358,13 +372,3 @@ def _artifact_id(session: Any, job_id: uuid.UUID, attempt: int) -> uuid.UUID | N
             Artifact.job_id == job_id, Artifact.kind == "pdf", Artifact.version == attempt
         )
     )
-
-
-def _artifact_of(session: Any, job_id: uuid.UUID, attempt: int) -> tuple[uuid.UUID, str] | None:
-    """O ID e a chave no storage do PDF desta tentativa, se já foi registrado."""
-    row = session.execute(
-        sa.select(Artifact.id, Artifact.storage_key).where(
-            Artifact.job_id == job_id, Artifact.kind == "pdf", Artifact.version == attempt
-        )
-    ).one_or_none()
-    return None if row is None else (row.id, row.storage_key)

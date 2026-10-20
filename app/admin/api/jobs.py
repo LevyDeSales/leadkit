@@ -288,6 +288,8 @@ def list_jobs(
     description=(
         "O pedido de código `public_id`: situação, etapa, tentativa atual, formulário e versão, "
         "datas, até quando o link da lead vale, o código da falha, os PDFs de cada tentativa, as "
+        "evidências técnicas em `current_pdf` (tentativa atual, existência, validade estrutural, "
+        "acesso ao storage e verificação, sem conceder autorização), as "
         "entregas ao webhook, as sincronizações com a planilha e a linha do tempo, tentativa por "
         "tentativa (o que aconteceu e quando, sem texto livre). É o que se lê para saber o que "
         "falhou e o que fazer. **Nada disso diz quem é a lead.** `include_lead_data=true`, só com "
@@ -314,7 +316,12 @@ def get_job(
     deps = get_deps()
     with deps.sessions() as session:
         found = job_queries.read_job(
-            session, public_id, forms=deps.forms, now=now(request), with_lead=include_lead_data
+            session,
+            public_id,
+            forms=deps.forms,
+            now=now(request),
+            with_lead=include_lead_data,
+            storage=deps.storage,
         )
     if found is None:
         raise ApiError("not_found", "Pedido não encontrado.")
@@ -335,12 +342,15 @@ def get_job(
     },
     summary="Baixar o PDF do plano",
     description=(
-        "Baixa o PDF do plano da lead: os bytes do arquivo (`application/pdf`), da última tentativa "
-        "ou da que `version` pedir, e **nunca uma URL assinada** (a assinatura seria um segundo "
+        "Baixa o PDF do plano da lead: os bytes do arquivo (`application/pdf`), da tentativa "
+        "atual ou da que `version` pedir, e **nunca uma URL assinada** (a assinatura seria um segundo "
         "segredo, fora da chave e da auditoria). O plano é dado da lead, por isso só a chave `total` "
         "baixa. `404 not_found` se o pedido não existe ou ainda não tem o PDF dessa tentativa; "
         "`410 gone` se o prazo de retenção já apagou o arquivo; `502 upstream_failed` se o "
-        "armazenamento não respondeu. Conta 5 fichas do limite de uso. Não grava nada."
+        "PDF não pôde ser verificado ou acessado. Conta 5 fichas do limite de uso. "
+        "Um histórico sem evidência é validado neste download autorizado: se os bytes, hash, "
+        "tamanho, páginas e vínculo forem corretos, persiste somente a prova técnica, sem alterar "
+        "o processamento nem chamar IA. Sem `version`, nunca entrega uma tentativa anterior."
     ),
     returns="O arquivo PDF do plano, como anexo (`Content-Disposition: attachment`).",
     response_model=None,
@@ -354,7 +364,7 @@ def download_job_pdf(
         int | None,
         Query(
             ge=1,
-            description="A tentativa do PDF (`version` de `get_job.pdfs`). Ausente: a mais recente.",
+            description="A tentativa do PDF (`version` de `get_job.pdfs`). Ausente: a tentativa atual, sem fallback para uma anterior.",
         ),
     ] = None,
 ) -> PdfResponse:
@@ -376,7 +386,8 @@ def download_job_pdf(
             type(failure).__name__,
         )
         raise ApiError(
-            "upstream_failed", "O armazenamento não entregou o PDF. Tente de novo em instantes."
+            "upstream_failed",
+            "O PDF não pôde ser verificado ou acessado. Consulte a disponibilidade e tente novamente.",
         ) from None
     assert pdf.content is not None  # sem `signed_url`, a ação sempre devolve os bytes
     return PdfResponse(
@@ -398,7 +409,12 @@ def _state_after(request: Request, public_id: str) -> job_queries.JobState:
     """O estado do pedido depois da ação, lido de novo (sem o dado da lead)."""
     with get_deps().sessions() as session:
         found = job_queries.read_job(
-            session, public_id, forms=get_deps().forms, now=now(request), with_lead=False
+            session,
+            public_id,
+            forms=get_deps().forms,
+            now=now(request),
+            with_lead=False,
+            storage=get_deps().storage,
         )
     if found is None:
         raise ApiError("not_found", JOB_NOT_FOUND)
