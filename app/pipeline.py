@@ -148,12 +148,15 @@ def finalize(
 
         configuration_lock(session, shared=True)
         metadata = session.execute(
-            sa.select(Submission.form_slug)
+            sa.select(Submission.form_slug, Job.status, Job.attempt)
             .join(Job, Job.submission_id == Submission.id)
             .where(Job.id == job_id)
-        ).scalar()
-        if metadata is not None:
-            configured = destinations.serving(destinations.listing(session), metadata)
+        ).first()
+        replay = (
+            metadata is not None and metadata.status == "completed" and metadata.attempt == attempt
+        )
+        if metadata is not None and not replay:
+            configured = destinations.serving(destinations.listing(session), metadata.form_slug)
             if configured is not None and configured.purpose == "participant":
                 from app.destination_purposes import require_participant_capability
 
@@ -173,8 +176,10 @@ def finalize(
             or plan.version != attempt
         ):
             raise TerminalError(FailureCode.RENDER_FAILED, "artefato incompatível com a tentativa")
-        if job.status == "running":
-            verify_completion(session, deps.storage, job, attempt, artifact_id)
+        if job.status == "completed":
+            # A conclusão e suas intenções originais são atômicas; ausência também é definitiva.
+            return _pending_delivery_ids(session, artifact_id)
+        verify_completion(session, deps.storage, job, attempt, artifact_id)
         jobs.complete(session, job_id, attempt)
         session.refresh(job)
         if job.status != "completed" or job.attempt != attempt:
@@ -208,13 +213,17 @@ def finalize(
             )
             .on_conflict_do_nothing(constraint="uq_deliveries_artifact_destination")
         )
-        return list(
-            session.scalars(
-                sa.select(Delivery.id).where(
-                    Delivery.artifact_id == artifact_id, Delivery.status == "pending"
-                )
+        return _pending_delivery_ids(session, artifact_id)
+
+
+def _pending_delivery_ids(session: Any, artifact_id: uuid.UUID) -> list[uuid.UUID]:
+    return list(
+        session.scalars(
+            sa.select(Delivery.id).where(
+                Delivery.artifact_id == artifact_id, Delivery.status == "pending"
             )
         )
+    )
 
 
 def pending_syncs(deps: Deps, artifact_id: uuid.UUID) -> list[uuid.UUID]:

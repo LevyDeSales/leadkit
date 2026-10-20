@@ -148,3 +148,16 @@ def test_purpose_change_waits_for_authorized_transport_to_finish(deps, enabled):
     assert errors == [] and changed.is_set()
     assert SENTINEL in json.dumps(transport.calls[0][2]["plan"])
     assert pipeline.deliver(deps, delivery_id) == "already_succeeded"
+
+
+def test_finalize_replay_returns_only_original_pending_intents_even_with_gate_blocked(
+    deps, enabled
+):
+    configure(deps, "participant")
+    transport = record_webhook(deps)
+    job, delivery_id = finalized(deps)
+    with deps.sessions.begin() as session:
+        artifact_id = session.get_one(Delivery, delivery_id).artifact_id
+        begin_rollout(session, epoch=uuid4())
+    assert pipeline.finalize(deps, job.id, 1, artifact_id) == [delivery_id]
+    assert transport.calls == []

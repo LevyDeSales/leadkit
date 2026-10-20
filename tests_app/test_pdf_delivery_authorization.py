@@ -98,3 +98,62 @@ def test_delivery_does_not_wait_for_a_response_body_after_receiving_status():
     ) as client:
         sender = WebhookSender("https://example.test/hook", "synthetic", client=client)
         assert sender.send("plano.concluido", "synthetic-id", {}) == 204
+
+
+def test_finalize_replay_never_adopts_a_receiver_created_after_completion(deps):
+    import sqlalchemy as sa
+
+    from app.admin.queries.jobs import read_job
+    from app.models import Artifact, Job, utcnow
+
+    job_id, deliveries = run_until_finalize(deps)
+    assert deliveries == []
+    with deps.sessions() as session:
+        job = session.get_one(Job, job_id)
+        artifact = session.scalar(sa.select(Artifact).where(Artifact.job_id == job_id))
+    record_webhook(deps)
+    assert pipeline.finalize(deps, job_id, 1, artifact.id) == []
+    with deps.sessions() as session:
+        detail = read_job(
+            session,
+            job.public_id,
+            forms=deps.forms,
+            now=utcnow(),
+            with_lead=False,
+            storage=deps.storage,
+        )
+    assert detail.state.deliveries == ()
+
+
+def test_finalize_replay_never_enqueues_an_integration_activated_after_completion(deps):
+    import sqlalchemy as sa
+    from conftest import FakeBaserow
+    from test_integrations import connect_form
+
+    from app.models import Artifact
+
+    job_id, deliveries = run_until_finalize(deps)
+    assert deliveries == []
+    with deps.sessions() as session:
+        artifact = session.scalar(sa.select(Artifact).where(Artifact.job_id == job_id))
+    FakeBaserow().install(deps)
+    connect_form(deps)
+    assert pipeline.finalize(deps, job_id, 1, artifact.id) == []
+    assert pipeline.pending_syncs(deps, artifact.id) == []
+
+
+def test_finalize_replay_still_rejects_an_artifact_outside_the_authorized_attempt(deps):
+    from uuid import uuid4
+
+    import sqlalchemy as sa
+
+    from app.errors import TerminalError
+    from app.models import Artifact
+
+    record_webhook(deps)
+    job_id, deliveries = run_until_finalize(deps)
+    with pytest.raises(TerminalError):
+        pipeline.finalize(deps, job_id, 1, uuid4())
+    with deps.sessions() as session:
+        artifact = session.scalar(sa.select(Artifact).where(Artifact.job_id == job_id))
+    assert pipeline.finalize(deps, job_id, 1, artifact.id) == deliveries
