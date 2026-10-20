@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -15,9 +16,18 @@ class StoredObject:
     revision: str
 
 
+def _local_object(stat: os.stat_result) -> StoredObject:
+    revision = f"{stat.st_dev}:{stat.st_ino}:{stat.st_mtime_ns}:{stat.st_ctime_ns}"
+    return StoredObject(stat.st_size, revision)
+
+
 class ArtifactStorage(Protocol):
     def head(self, key: str) -> StoredObject:
         """Consulta leve; ausência levanta FileNotFoundError, acesso negado não é ausência."""
+        ...
+
+    def probe(self, key: str) -> StoredObject:
+        """Lê no máximo um byte e retorna a identidade observada; fecha o stream."""
         ...
 
     def put(self, key: str, content: bytes, content_type: str) -> None: ...
@@ -58,11 +68,18 @@ class LocalStorage:
 
     def head(self, key: str) -> StoredObject:
         with self._path(key).open("rb") as stream:
-            import os
-
             stat = os.fstat(stream.fileno())
-        revision = f"{stat.st_dev}:{stat.st_ino}:{stat.st_mtime_ns}:{stat.st_ctime_ns}"
-        return StoredObject(stat.st_size, revision)
+        return _local_object(stat)
+
+    def probe(self, key: str) -> StoredObject:
+        with self._path(key).open("rb", buffering=0) as stream:
+            before = _local_object(os.fstat(stream.fileno()))
+            if not stream.read(1):
+                raise RetryableError(FailureCode.STORAGE_FAILED, "objeto vazio no storage")
+            after = _local_object(os.fstat(stream.fileno()))
+        if before != after:
+            raise RetryableError(FailureCode.STORAGE_FAILED, "objeto alterado durante leitura")
+        return after
 
     def presigned_url(self, key: str, *, ttl_seconds: int, filename: str) -> str | None:
         return None

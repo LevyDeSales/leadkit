@@ -111,7 +111,7 @@ O processamento (`status`/`stage`) é separado de `current_pdf` e da autorizaç�
 continua sendo o registro da geração, mesmo se o arquivo tiver sido removido. A consulta autenticada
 `GET /v1/jobs/{public_id}` e `get_job` no admin/API/MCP usam o mesmo serviço, com a tentativa atual,
 existência no storage, validade técnica, acessibilidade e instante da verificação dos bytes.
-A consulta de estado não baixa o arquivo nem inicia uma geração. A lista de pedidos conserva
+A consulta de estado lê no máximo um byte do arquivo e não inicia uma geração. A lista de pedidos conserva
 seu contrato e não consulta storage; abra o detalhe para conferir a disponibilidade atual.
 
 | `current_pdf.state` | Significado |
@@ -133,12 +133,18 @@ A política adicional de liberação por tentativa é tratada na #13.
 Na conclusão, o serviço confere o vínculo pedido/tentativa/plano, lê o objeto, verifica hash SHA-256
 e tamanho, compara a identidade do storage antes/depois e abre o PDF em modo estrito com pypdf.
 Exige documento não criptografado, ao menos uma página com dimensões positivas e streams legíveis;
+streams de conteúdo FlateDecode passam por zlib sem recuperação permissiva, inclusive em arrays
+e cadeias de filtros, com limite de descompressão. Não altera o parser global nem usa qpdf em runtime;
 cabeçalho `%PDF` isolado é insuficiente. Isso não avalia aparência, completude do texto, segurança de
 conteúdo ativo nem qualidade semântica. pypdf já estava no lock sob BSD-3-Clause e passa a ser
 uma dependência de runtime; a versão e os avisos seguem em `THIRD_PARTY_NOTICES.md`.
 
-Consultas posteriores usam HEAD no S3 ou metadados do arquivo local, sem baixar os bytes. ETag e
-VersionId são identidades opacas, não hashes SHA-256. Essa observação não garante disponibilidade
+Consultas posteriores conferem metadados e provam acesso ao conteúdo com leitura de um byte:
+GET com `Range: bytes=0-0` no S3 e leitura limitada com identidade do descritor no storage local.
+O stream sempre é fechado; a identidade/tamanho observados devem coincidir com a prova persistida.
+HEAD isolado não prova leitura, inclusive com SSE-KMS. Provedores sem prova limitada retornam
+`unknown`, sem fallback para download integral. ETag e VersionId são identidades opacas, não hashes
+SHA-256. Essa observação não garante disponibilidade
 futura de um link: storage e retenção podem mudar depois da consulta. Downloads leem e conferem
 novamente os bytes antes de responder ou assinar a URL. Reprocessamento e gravação/conclusão são
 serializados por pedido; uma renderização duplicada não sobrescreve o arquivo da vencedora.

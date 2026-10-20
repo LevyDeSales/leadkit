@@ -1921,6 +1921,7 @@
                 "type": "null"
               }
             ],
+            "description": "Leitura limitada comprovada para o objeto atual; HEAD isolado não basta.",
             "title": "Accessible"
           },
           "attempt": {

@@ -110,6 +110,31 @@ class S3Storage:
         )
         return StoredObject(value["ContentLength"], revision)
 
+    def probe(self, key: str) -> StoredObject:
+        """Confere leitura atual com Range de um byte, sem selecionar uma versão histórica."""
+        try:
+            value = self.client.get_object(Bucket=self.bucket, Key=key, Range="bytes=0-0")
+            with value["Body"] as body:
+                content_range = value.get("ContentRange", "")
+                if (
+                    value.get("ResponseMetadata", {}).get("HTTPStatusCode") != 206
+                    or not content_range.startswith("bytes 0-0/")
+                    or value.get("ContentLength") != 1
+                ):
+                    # Provedor que ignora Range não autoriza download integral no status.
+                    raise NotImplementedError("storage sem prova de leitura limitada")
+                size = int(content_range.removeprefix("bytes 0-0/"))
+                if size < 1 or len(body.read(1)) != 1:
+                    raise ValueError("leitura incompleta")
+        except (ClientError, BotoCoreError, ValueError, OSError):
+            raise RetryableError(
+                FailureCode.STORAGE_FAILED, "leitura de storage indisponível"
+            ) from None
+        revision = json.dumps(
+            [value.get("VersionId"), value.get("ETag"), str(value.get("LastModified"))]
+        )
+        return StoredObject(size, revision)
+
     def delete(self, key: str) -> None:
         """Chave inexistente não é erro no S3. Em bucket com versionamento isto só cria um
         marcador de exclusão: as versões antigas precisam de regra de ciclo de vida."""

@@ -498,7 +498,9 @@ class CurrentPdf(BaseModel):
     valid: bool | None = Field(
         description="Validade estrutural mínima; nulo sem evidência confiável."
     )
-    accessible: bool | None
+    accessible: bool | None = Field(
+        description="Leitura limitada comprovada para o objeto atual; HEAD isolado não basta."
+    )
     verified_at: AwareDatetime | None = Field(
         description="Verificação real dos bytes; históricos ficam nulos."
     )

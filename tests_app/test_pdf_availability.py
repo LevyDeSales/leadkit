@@ -466,3 +466,138 @@ def test_delivery_pdf_link_is_bound_to_its_bytes_and_a_stale_delivery_is_refused
         pipeline.deliver(deps, old_delivery)
     assert len(webhook.calls) == 1
     assert client.get(sent_url, headers={"Authorization": ""}).status_code == 409
+
+
+@pytest.mark.parametrize("corruption", ["invalid", "truncated"])
+@pytest.mark.parametrize("historical", [False, True])
+def test_corrupt_flate_page_cannot_be_certified_or_downloaded(
+    deps: Deps, api_client, monkeypatch, caplog, corruption: str, historical: bool
+) -> None:
+    import hashlib
+    import zlib
+    from io import BytesIO
+
+    import sqlalchemy as sa
+    from pypdf import PdfWriter
+    from pypdf.generic import ArrayObject, EncodedStreamObject, NameObject
+    from test_admin import finish
+
+    from app.models import Artifact
+
+    writer = PdfWriter()
+    page = writer.add_blank_page(width=100, height=100)
+    stream = EncodedStreamObject()
+    stream._data = (
+        b"PRIVATE-invalid-zlib-stream"
+        if corruption == "invalid"
+        else zlib.compress(b"q 1 0 0 1 0 0 cm Q")[:-2]
+    )
+    stream[NameObject("/Filter")] = NameObject("/FlateDecode")
+    page[NameObject("/Contents")] = ArrayObject([writer._add_object(stream)])
+    buffer = BytesIO()
+    writer.write(buffer)
+    content = buffer.getvalue()
+    with pytest.raises(zlib.error):
+        zlib.decompress(stream._data)
+    job = submit(deps).job
+    if historical:
+        finish(deps, job.id)
+        with deps.sessions.begin() as session:
+            artifact = session.scalar(sa.select(Artifact).where(Artifact.job_id == job.id))
+            deps.storage.put(artifact.storage_key, content, "application/pdf")
+            artifact.byte_size = len(content)
+            artifact.sha256 = hashlib.sha256(content).hexdigest()
+            artifact.verified_at = artifact.storage_revision = None
+
+        def forbidden(*args, **kwargs):
+            raise AssertionError("histórico não pode gerar novamente")
+
+        monkeypatch.setattr(deps.llm, "generate", forbidden)
+        monkeypatch.setattr(deps.pdf, "render", forbidden)
+        client = api_client("total")
+        response = client.get(f"/admin/api/v1/jobs/{job.public_id}/pdf")
+        assert response.status_code == 502
+        result = client.get(f"/admin/api/v1/jobs/{job.public_id}").json()
+        assert result["status"] == "completed"
+        assert result["current_pdf"]["available"] is False
+        assert result["current_pdf"]["verified_at"] is None
+        assert "PRIVATE" not in response.text + caplog.text
+    else:
+        original = deps.pdf
+
+        class CorruptRenderer:
+            def render(self, spec, document, context):
+                return replace(original.render(spec, document, context), content=content)
+
+        deps.pdf = CorruptRenderer()
+        with deps.sessions.begin() as session:
+            jobs.claim(session, job.id, 1, "synthetic")
+        plan, _ = pipeline.generate_plan(deps, job.id, 1)
+        with pytest.raises(TerminalError, match="PDF estruturalmente inválido"):
+            artifact, _ = pipeline.render_pdf(deps, job.id, 1, plan)
+            pipeline.finalize(deps, job.id, 1, artifact)
+        assert "PRIVATE" not in caplog.text
+
+
+@pytest.mark.parametrize("chain", [False, True])
+def test_valid_flate_content_remains_available_with_optional_filter_chain(deps: Deps, chain: bool):
+    import zlib
+    from base64 import a85encode
+    from io import BytesIO
+
+    from pypdf import PdfWriter
+    from pypdf.generic import ArrayObject, EncodedStreamObject, NameObject
+
+    from app.models import Job
+    from app.pdf_availability import current_pdf
+
+    writer = PdfWriter()
+    page = writer.add_blank_page(width=100, height=100)
+    stream = EncodedStreamObject()
+    stream._data = zlib.compress(b"q 1 0 0 1 0 0 cm Q")
+    filters = [NameObject("/FlateDecode")]
+    if chain:
+        stream._data = a85encode(stream._data) + b"~>"
+        filters.insert(0, NameObject("/ASCII85Decode"))
+    stream[NameObject("/Filter")] = ArrayObject(filters)
+    page[NameObject("/Contents")] = writer._add_object(stream)
+    buffer = BytesIO()
+    writer.write(buffer)
+    original = deps.pdf
+
+    class CompressedRenderer:
+        def render(self, spec, document, context):
+            return replace(original.render(spec, document, context), content=buffer.getvalue())
+
+    deps.pdf = CompressedRenderer()
+    job = submit(deps).job
+    with deps.sessions.begin() as session:
+        jobs.claim(session, job.id, 1, "synthetic")
+    plan, _ = pipeline.generate_plan(deps, job.id, 1)
+    artifact, _ = pipeline.render_pdf(deps, job.id, 1, plan)
+    pipeline.finalize(deps, job.id, 1, artifact)
+    with deps.sessions() as session:
+        assert current_pdf(session, deps.storage, session.get_one(Job, job.id)).available
+
+
+@pytest.mark.parametrize("probe_support", ["absent", "unsupported"])
+def test_metadata_without_read_proof_keeps_access_unknown(deps: Deps, probe_support: str):
+    from types import SimpleNamespace
+
+    from test_admin import finish
+
+    from app.models import Job
+    from app.pdf_availability import current_pdf
+
+    job = submit(deps).job
+    finish(deps, job.id)
+    storage = SimpleNamespace(head=deps.storage.head)
+    if probe_support == "unsupported":
+
+        def unsupported(key):
+            raise NotImplementedError
+
+        storage.probe = unsupported
+    with deps.sessions() as session:
+        state = current_pdf(session, storage, session.get_one(Job, job.id))
+    assert state.state == "unknown" and state.accessible is None and not state.available

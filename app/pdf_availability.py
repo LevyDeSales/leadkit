@@ -46,9 +46,19 @@ def artifact_availability(storage: ArtifactStorage | None, artifact: Artifact) -
         # Falhas transitórias e acesso negado não provam inexistência; nenhum erro bruto sai.
         return PdfAvailability(attempt, "unavailable", None, None, False, verified)
     if verified is None or artifact.storage_revision is None:
-        return PdfAvailability(attempt, "unknown", True, None, True)
+        return PdfAvailability(attempt, "unknown", True, None, None)
     if obj.byte_size != artifact.byte_size or obj.revision != artifact.storage_revision:
-        return PdfAvailability(attempt, "invalid", True, False, True, verified)
+        return PdfAvailability(attempt, "invalid", True, False, None, verified)
+    if not hasattr(storage, "probe"):
+        return PdfAvailability(attempt, "unknown", True, True, None, verified)
+    try:
+        readable = storage.probe(artifact.storage_key)
+    except NotImplementedError:
+        return PdfAvailability(attempt, "unknown", True, True, None, verified)
+    except Exception:  # noqa: BLE001 — fronteira de storage com erro seguro
+        return PdfAvailability(attempt, "unavailable", True, True, False, verified)
+    if readable != obj:
+        return PdfAvailability(attempt, "invalid", True, False, None, verified)
     return PdfAvailability(attempt, "available", True, True, True, verified)
 
 

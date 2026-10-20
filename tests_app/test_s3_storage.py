@@ -314,7 +314,7 @@ def test_pdf_head_distinguishes_missing_from_unavailable_without_provider_detail
     assert "PRIVATE-PROVIDER-DETAIL" not in str(caught.value)
 
 
-def test_s3_availability_uses_head_and_detects_replaced_bytes_without_downloading(
+def test_s3_availability_detects_replaced_bytes_without_downloading_the_full_pdf(
     deps: Deps, bucket: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from app.models import Artifact
@@ -327,7 +327,7 @@ def test_s3_availability_uses_head_and_detects_replaced_bytes_without_downloadin
         key = artifact.storage_key
 
     def no_download(key):
-        raise AssertionError("status must use HEAD")
+        raise AssertionError("status must never download the full PDF")
 
     monkeypatch.setattr(deps.storage, "get", no_download)
     with deps.sessions() as session:
@@ -339,3 +339,115 @@ def test_s3_availability_uses_head_and_detects_replaced_bytes_without_downloadin
     deps.storage.delete(key)
     with deps.sessions() as session:
         assert current_pdf(session, deps.storage, session.get_one(Job, job_id)).state == "missing"
+
+
+def test_head_success_with_persistent_get_denial_is_unavailable_on_every_surface(
+    deps: Deps, bucket: Any, api_client, tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from admin_mcp_live import Live
+    from botocore.exceptions import ClientError
+    from test_admin import login
+    from test_pipeline import CountingLlm
+
+    llm = CountingLlm(deps.llm)
+    deps.llm = llm
+    deps.storage = S3Storage(bucket, BUCKET)
+    job_id, _ = run_until_finalize(deps)
+    with deps.sessions() as session:
+        job = session.get_one(Job, job_id)
+    client = api_client("total")
+    url = f"/admin/api/v1/jobs/{job.public_id}"
+    assert client.get(url).json()["current_pdf"]["available"] is True
+
+    def deny_get(**kwargs):
+        raise ClientError(
+            {
+                "Error": {"Code": "AccessDenied", "Message": "PRIVATE-GET-DENIED"},
+                "ResponseMetadata": {"HTTPStatusCode": 403},
+            },
+            "GetObject",
+        )
+
+    monkeypatch.setattr(bucket, "get_object", deny_get)
+    denied = client.get(f"{url}/pdf")
+    assert denied.status_code == 502 and "PRIVATE-GET-DENIED" not in denied.text
+    response = client.get(url)
+    result = response.json()
+    state = result["current_pdf"]
+    assert result["status"] == "completed"
+    assert state["state"] == "unavailable"
+    assert state["available"] is False and state["accessible"] is False
+    assert "PRIVATE-GET-DENIED" not in response.text
+    live = Live(client, tmp_path)
+    try:
+        assert live.ok("get_job", {"public_id": job.public_id})["current_pdf"] == state
+    finally:
+        live.close()
+    token = deps.signer.issue(job.public_id, job.token_version)
+    public = client.get(
+        f"/v1/jobs/{job.public_id}", params={"t": token}, headers={"Authorization": ""}
+    )
+    assert public.json()["current_pdf"] == state and "pdf_url" not in public.json()
+    assert login(client).status_code == 303
+    html = client.get(f"/admin/jobs/{job.public_id}")
+    assert html.status_code == 200 and "Indisponível no momento" in html.text
+    assert f'href="/admin/jobs/{job.public_id}/pdf"' not in html.text
+    assert llm.calls == 1
+
+
+@pytest.mark.parametrize(
+    ("condition", "expected"),
+    [
+        ("readable", "available"),
+        ("changed", "invalid"),
+        ("ignored_range", "unknown"),
+        ("empty_read", "unavailable"),
+    ],
+)
+def test_availability_reads_at_most_one_byte_and_closes_the_s3_stream(
+    deps: Deps, bucket: Any, monkeypatch: pytest.MonkeyPatch, condition: str, expected: str
+) -> None:
+    from app.pdf_availability import current_pdf
+
+    deps.storage = S3Storage(bucket, BUCKET)
+    job_id, _ = run_until_finalize(deps)
+    get_object = bucket.get_object
+    reads, closed = [], []
+
+    class GuardedBody:
+        def __init__(self, body):
+            self.body = body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            self.body.close()
+            closed.append(True)
+
+        def read(self, amount):
+            reads.append(amount)
+            assert amount == 1
+            return b"" if condition == "empty_read" else self.body.read(amount)
+
+    def limited_get(**kwargs):
+        assert kwargs["Range"] == "bytes=0-0"
+        assert "VersionId" not in kwargs  # Mesma permissão do GET da versão atual.
+        value = get_object(**kwargs)
+        value["Body"] = GuardedBody(value["Body"])
+        if condition == "changed":
+            value["ETag"] = '"other-revision"'
+        elif condition == "ignored_range":
+            value["ResponseMetadata"]["HTTPStatusCode"] = 200
+            value.pop("ContentRange")
+        return value
+
+    monkeypatch.setattr(bucket, "get_object", limited_get)
+    with deps.sessions() as session:
+        state = current_pdf(session, deps.storage, session.get_one(Job, job_id))
+    assert state.state == expected
+    assert state.available is (condition == "readable")
+    assert reads == ([] if condition == "ignored_range" else [1])
+    assert closed == [True]
+    if condition in ("changed", "ignored_range"):
+        assert state.accessible is None
