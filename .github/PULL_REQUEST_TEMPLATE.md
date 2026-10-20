@@ -12,7 +12,7 @@ O problema, o que mudou e o efeito para a lead, a operadora ou quem desenvolve.
 Use o menor visual que explique: pseudocódigo, árvore de chamadas, árvore de arquivos, diagrama ou diff do fluxo.
 -->
 
-Ticket ou issue: <!-- .scratch/<feature>/issues/NN-slug.md ou #123 -->
+Ticket ou issue: <!-- #123 em LevyDeSales/leadkit; specs e tickets vivem no GitHub Issues -->
 
 ## Como foi testado
 
@@ -27,8 +27,9 @@ Ticket ou issue: <!-- .scratch/<feature>/issues/NN-slug.md ou #123 -->
 
 ## Checklist
 
-- [ ] A suíte passa: `python -m pytest -q`, com `TEST_DATABASE_URL` num banco terminado em `_test`
-- [ ] `ruff check app tests_app` e `ruff format app tests_app` sem pendências
+- [ ] Validação adequada ao escopo: só documentação valida links e diff sem pytest local; código executa a suíte com `TEST_DATABASE_URL` num banco terminado em `_test`
+- [ ] Se mudou código: `ruff check app tests_app` e `ruff format --check app tests_app` sem pendências
+- [ ] Antes do merge: todos os checks aplicáveis do mesmo commit verdes, incluindo `Tests / app-tests` e `ci-ready`
 - [ ] Nenhum segredo, token ou dado real de lead no diff, nos testes, nos prints ou nesta descrição
 - [ ] Documentação atualizada onde o comportamento mudou (README, `app/README.md`, `CONTRIBUTING.md`, `GLOSSARY.md` ou uma ADR)
 - [ ] Mudou o formato da definição ou o compilador: uma versão já publicada continua compilando (`format` só muda quando a versão anterior não lê), e a chave nova entrou no editor ([regras](https://github.com/LevyDeSales/leadkit/blob/main/CONTRIBUTING.md#formulários))
