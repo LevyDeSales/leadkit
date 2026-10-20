@@ -224,6 +224,8 @@ def main(argv=None) -> int:
                 expected = {"epoch", "evidence"} if action == "attest" else {"epoch"}
                 if not isinstance(document, dict) or set(document) != expected:
                     raise ValueError
+                if not isinstance(document["epoch"], str):
+                    raise TypeError
                 document["epoch"] = uuid.UUID(document["epoch"])
                 if action == "attest":
                     document["evidence"] = _validate_evidence(document["evidence"])

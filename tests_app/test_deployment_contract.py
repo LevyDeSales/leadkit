@@ -162,7 +162,10 @@ def test_capability_needs_neither_configuration_nor_database():
     assert json.loads(result.stdout) == {"contract": 1}
 
 
-def test_cli_does_not_echo_invalid_input_or_configuration():
+@pytest.mark.parametrize(
+    "document", ['{"private":"private-input"}', '{"epoch":{}}', '{"epoch":42}']
+)
+def test_cli_does_not_echo_invalid_input_or_configuration(document):
     import json
     import os
     import subprocess
@@ -171,7 +174,7 @@ def test_cli_does_not_echo_invalid_input_or_configuration():
     result = subprocess.run(
         [sys.executable, "-m", "app.deployment_contract", "begin"],
         env={"PATH": os.environ["PATH"], "DATABASE_URL": "private-invalid-value"},
-        input='{"private":"private-input"}',
+        input=document,
         capture_output=True,
         text=True,
         check=False,
