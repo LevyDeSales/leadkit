@@ -374,7 +374,7 @@ def create_app(
                 with deps.sessions() as session:
                     return submission_spec(session, deps.forms, slug, key)
 
-            spec = await run_in_threadpool(_spec)
+            await run_in_threadpool(_spec)
         except InactiveForm:  # desativado no admin: não recebe envios novos
             return JSONResponse(
                 {"code": "form_unavailable", "detail": "formulário indisponível"}, status_code=410
@@ -392,9 +392,11 @@ def create_app(
 
         def _accept() -> Any:
             with deps.sessions.begin() as session:
+                # Conserva a trava da chave da resolução da versão até confirmar o envio.
+                resolved = submission_spec(session, deps.forms, slug, key)
                 accepted = accept_submission(
                     session,
-                    spec,
+                    resolved,
                     body,
                     idempotency_key=key,
                     signer=deps.signer,
@@ -406,6 +408,12 @@ def create_app(
 
         try:
             accepted, job_id, attempt, public_id = await run_in_threadpool(_accept)
+        except InactiveForm:
+            return JSONResponse(
+                {"code": "form_unavailable", "detail": "formulário indisponível"}, status_code=410
+            )
+        except UnknownForm:
+            raise HTTPException(status_code=404, detail="formulário não encontrado") from None
         except sa.exc.SQLAlchemyError:
             return _refusal(
                 503, "unavailable", "não foi possível confirmar o envio; tente de novo", 5

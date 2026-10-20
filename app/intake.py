@@ -107,11 +107,25 @@ class Accepted:
 
 
 def submission_spec(session: Session, forms: FormRegistry, slug: str, key: str) -> FormSpec:
-    """Replay usa a versão fixada no envio, antes de validar perguntas e consentimento."""
+    """Resolve a versão sob a trava da chave, mantida até o commit de quem recebe o envio.
+
+    A chamada e toda validação dependente da versão devem usar a mesma transação. Assim um
+    reenvio aguarda o envio original confirmar antes de consultar perguntas e consentimento.
+    """
+    _lock_submission(session, slug, key)
     previous = _find_submission(session, slug, key)
     if previous is not None:
         return forms.get(slug, previous.form_version_number)
     return forms.current(slug)
+
+
+def _lock_submission(session: Session, slug: str, key: str) -> None:
+    # A chave tem namespace próprio; não trava o formulário nem depende da identidade da lead,
+    # que só pode ser extraída depois de resolver a versão e validar as respostas.
+    session.execute(
+        sa.text("select pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+        {"key": f"submission:{slug}:{key}"},
+    )
 
 
 def clean_tracking(raw: dict[str, str]) -> dict[str, str]:
@@ -177,6 +191,7 @@ def accept_submission(
 
     Reenviar uma chave já gravada devolve o resultado de antes sem passar pelos limites: o replay
     não cria pedido nem conta como envio."""
+    _lock_submission(session, spec.slug, idempotency_key)
     existing = _find_submission(session, spec.slug, idempotency_key)
     if existing is not None and forms is not None:
         spec = forms.get(spec.slug, existing.form_version_number)

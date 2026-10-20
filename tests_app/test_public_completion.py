@@ -1,9 +1,10 @@
 """Conclusão após commit pelas fronteiras HTML e JSON, sem serviços externos."""
 
 import asyncio
+import threading
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from datetime import timedelta
 
 import pytest
@@ -15,7 +16,9 @@ from test_public import VALID_FORM, tags
 from app import crons
 from app.api.main import create_app
 from app.deps import Deps
-from app.forms.definition import compile_definition
+from app.forms.definition import compile_definition, fingerprint
+from app.forms.stored import StoredRegistry
+from app.models import Form, FormVersion
 
 
 def configured(deps: Deps, mode: str = "confirmation", **values) -> None:
@@ -169,6 +172,134 @@ def test_concurrent_api_replay_does_not_duplicate_the_submission_or_dispatch(dep
         assert first.json()["public_id"] == second.json()["public_id"]
         assert sorted([first.json()["replay"], second.json()["replay"]]) == [False, True]
         assert len(calls) == 1
+
+
+@pytest.mark.parametrize("surface", ["api", "html"])
+@pytest.mark.parametrize("divergent", [False, True], ids=["same-data", "conflicting-data"])
+def test_concurrent_replay_waits_for_the_original_version_across_publication(
+    deps: Deps, surface: str, divergent: bool
+) -> None:
+    def publish_document(document, number):
+        # Cenário com versões imutáveis reais: só o setup escreve; as requisições usam o registro
+        # de produção e a visibilidade transacional do PostgreSQL, sem trocar o registro em memória.
+        compile_definition(document, version_number=number)
+        with deps.sessions.begin() as session:
+            session.add(
+                FormVersion(
+                    form_id=session.scalar(sa.select(Form.id).where(Form.slug == "demo")),
+                    number=number,
+                    definition=document,
+                    fingerprint=fingerprint(document),
+                    note="Publicação fictícia para concorrência",
+                    published_by="testes",
+                )
+            )
+
+    publish_document(
+        {
+            **legacy_definition("demo"),
+            "completion": {"mode": "confirmation", "message": "Recibo original."},
+        },
+        2,
+    )
+    deps.forms = StoredRegistry(deps.sessions)
+    pending_commit = threading.Event()
+    release_commit = threading.Event()
+    replay_started = threading.Event()
+    winner_thread = None
+    calls = []
+
+    def pause_database(connection, cursor, statement, parameters, context, executemany):
+        nonlocal winner_thread
+        if statement.startswith("INSERT INTO jobs") and not pending_commit.is_set():
+            winner_thread = threading.get_ident()
+            pending_commit.set()
+            assert release_commit.wait(10), "O teste não liberou o commit original."
+        elif pending_commit.is_set() and threading.get_ident() != winner_thread:
+            if "submissions" in statement or "pg_advisory_xact_lock" in statement:
+                replay_started.set()
+
+    async def track(job_id, attempt):
+        calls.append((job_id, attempt))
+        return "fake-run"
+
+    engine = deps.sessions.kw["bind"]
+    sa.event.listen(engine, "before_cursor_execute", pause_database)
+    try:
+        with TestClient(create_app(trigger=track), follow_redirects=False) as client:
+
+            def send(*, changed=False, independent=False):
+                answers = dict(DEMO_ANSWERS)
+                form = dict(VALID_FORM)
+                consent = dict(DEMO_CONSENT)
+                key = "publication-race"
+                if changed:
+                    answers["email"] = form["email"] = "changed@example.test"
+                if independent:
+                    answers["email"] = form["email"] = "independent@example.test"
+                    answers["new_required"] = form["new_required"] = "Resposta nova"
+                    consent["text_version"] = form["_consent_version"] = "demo-v3"
+                    form["_idem"] = key = "independent-request"
+                if surface == "html":
+                    return client.post("/p/demo", data=form)
+                return client.post(
+                    "/v1/forms/demo/submissions",
+                    json={"answers": answers, "consent": consent},
+                    headers={"Idempotency-Key": key},
+                )
+
+            with ThreadPoolExecutor(max_workers=3) as pool:
+                original_future = pool.submit(send)
+                try:
+                    assert pending_commit.wait(5), "O envio original não chegou à persistência."
+                    document = legacy_definition("demo")
+                    document["consent"]["version"] = "demo-v3"
+                    document["steps"][0]["questions"].append(
+                        {
+                            "name": "new_required",
+                            "kind": "text",
+                            "label": "Novo campo obrigatório",
+                            "max_length": 100,
+                        }
+                    )
+                    document["completion"] = {"mode": "button", "url": "https://example.test/new"}
+                    document["examples"]["answers"]["new_required"] = "Exemplo fictício"
+                    publish_document(document, 3)
+                    replay_future = pool.submit(send, changed=divergent)
+                    assert replay_started.wait(5), "O reenvio não consultou o banco."
+                    # Deixa a segunda requisição avançar até bloquear ou devolver a recusa errada.
+                    try:
+                        replay_future.result(timeout=0.3)
+                    except TimeoutError:
+                        pass
+                    # Outra chave/lead usa a publicação atual e conclui com a primeira ainda
+                    # sem commit; a serialização não pode ser uma trava do formulário inteiro.
+                    independent = pool.submit(send, independent=True).result(timeout=3)
+                    assert independent.status_code == (202 if surface == "api" else 303)
+                    if surface == "api":
+                        assert independent.json()["completion"]["url"] == "https://example.test/new"
+                    else:
+                        receipt = client.get(independent.headers["location"])
+                        assert tags(receipt.text, "a", href="https://example.test/new")
+                finally:
+                    release_commit.set()
+                original, replay = original_future.result(), replay_future.result()
+            if divergent:
+                assert original.status_code == (202 if surface == "api" else 303)
+                assert replay.status_code == 409
+            elif surface == "api":
+                assert original.status_code == replay.status_code == 202
+                assert replay.json()["public_id"] == original.json()["public_id"]
+                assert replay.json()["completion"] == original.json()["completion"]
+                assert replay.json()["replay"]
+            else:
+                assert original.status_code == replay.status_code == 303
+                assert replay.headers["location"] == original.headers["location"]
+                assert "Recibo original." in client.get(replay.headers["location"]).text
+            assert len(calls) == 2
+    finally:
+        release_commit.set()
+        sa.event.remove(engine, "before_cursor_execute", pause_database)
 
 
 def test_a_failed_commit_returns_a_recoverable_form_without_success_or_dispatch(

@@ -24,6 +24,7 @@ from fastapi.routing import APIRoute
 from markupsafe import Markup
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
+from starlette.datastructures import FormData
 
 from app.deps import Deps, get_deps
 from app.errors import TerminalError
@@ -144,7 +145,7 @@ def _page(request: Request, name: str, status_code: int = 200, **context: object
 
 
 def _screen_form(
-    request: Request, slug: str, key: str | None = None
+    request: Request, slug: str, key: str | None = None, session: Session | None = None
 ) -> tuple[FormSpec, Screen] | Response:
     """A versão atual do formulário, se ele tem página pública e recebe envios: um envio novo usa
     sempre ela. Senão, a página que diz por quê. Inativo, ele está indisponível (410): a lead sabe
@@ -153,9 +154,11 @@ def _screen_form(
         deps = get_deps()
         if key is None:
             spec = deps.forms.current(slug)
+        elif session is not None:
+            spec = submission_spec(session, deps.forms, slug, key)
         else:
-            with deps.sessions() as session:
-                spec = submission_spec(session, deps.forms, slug, key)
+            with deps.sessions() as lookup:
+                spec = submission_spec(lookup, deps.forms, slug, key)
     except InactiveForm:
         return _page(request, "unavailable", 410, submitted=request.method == "POST")
     except UnknownForm:
@@ -233,7 +236,24 @@ def _grant_access(response: Response, request: Request, job: Job, token: str) ->
 @router.post("/p/{slug}")
 async def submit_form(slug: str, request: Request) -> Response:
     raw = await request.form()
-    found = await run_in_threadpool(_screen_form, request, slug, f"web:{raw.get('_idem', '')}")
+    accepted = await run_in_threadpool(_submit_form, slug, request, raw)
+    if isinstance(accepted, Response):
+        return accepted
+    job = accepted.job
+    if not accepted.replay:
+        # Falha no disparo não perde o pedido: o reconciliador dispara depois.
+        launch_after_commit(request.app, job.id, job.attempt)
+    suffix = "/conclusao" if accepted.form.completion.mode != "result" else ""
+    response = RedirectResponse(f"/d/{job.public_id}{suffix}", status_code=303)
+    _grant_access(response, request, job, accepted.token)
+    return response
+
+
+def _prepare_form_submission(
+    slug: str, request: Request, raw: FormData, session: Session
+) -> Accepted | Response:
+    """Escolhe a versão, lê e valida a página sob a mesma trava usada para persistir o envio."""
+    found = _screen_form(request, slug, f"web:{raw.get('_idem', '')}", session)
     if isinstance(found, Response):
         return found
     spec, screen = found
@@ -256,25 +276,17 @@ async def submit_form(slug: str, request: Request) -> Response:
     body = SubmissionIn(answers=post.answers, consent=consent, tracking=post.tracking)
     deps = get_deps()
 
-    def _accept() -> Accepted:
-        with deps.sessions.begin() as session:
-            return accept_submission(
-                session,
-                spec,
-                body,
-                idempotency_key=f"web:{post.idempotency_key}",
-                signer=deps.signer,
-                link_ttl=deps.link_ttl,
-                limits=deps.submission_limits,
-                forms=deps.forms,
-            )
-
     try:
-        accepted = await run_in_threadpool(_accept)
-    except sa.exc.SQLAlchemyError:
-        response = _form_page(request, spec, screen, post, banner=SEND_FAILED, status_code=503)
-        response.headers["Retry-After"] = "5"
-        return response
+        accepted = accept_submission(
+            session,
+            spec,
+            body,
+            idempotency_key=f"web:{post.idempotency_key}",
+            signer=deps.signer,
+            link_ttl=deps.link_ttl,
+            limits=deps.submission_limits,
+            forms=deps.forms,
+        )
     except ValidationError as exc:
         # As respostas já passaram por `form_errors`: sobra o canal de marketing que a página não
         # pede (página velha ou envio forjado). O erro vai no campo do consentimento.
@@ -298,14 +310,25 @@ async def submit_form(slug: str, request: Request) -> Response:
         )
         response.headers["Retry-After"] = str(exc.retry_after)
         return response
-    job = accepted.job
-    if not accepted.replay:
-        # Falha no disparo não perde o pedido: o reconciliador dispara depois.
-        launch_after_commit(request.app, job.id, job.attempt)
-    suffix = "/conclusao" if accepted.form.completion.mode != "result" else ""
-    response = RedirectResponse(f"/d/{job.public_id}{suffix}", status_code=303)
-    _grant_access(response, request, job, accepted.token)
-    return response
+    return accepted
+
+
+def _submit_form(slug: str, request: Request, raw: FormData) -> Accepted | Response:
+    deps = get_deps()
+    try:
+        with deps.sessions.begin() as session:
+            accepted = _prepare_form_submission(slug, request, raw, session)
+    except sa.exc.SQLAlchemyError:
+        # Também cobre falha no commit: nenhum recibo ou disparo antecede sua confirmação.
+        found = _screen_form(request, slug)
+        if isinstance(found, Response):
+            return found
+        spec, screen = found
+        post = read_post(screen, raw, spec.conditions)
+        response = _form_page(request, spec, screen, post, banner=SEND_FAILED, status_code=503)
+        response.headers["Retry-After"] = "5"
+        return response
+    return accepted
 
 
 # --- página do pedido -------------------------------------------------------------------------
