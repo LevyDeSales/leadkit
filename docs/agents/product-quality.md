@@ -26,8 +26,12 @@ os aceites abaixo são adaptações ao Leadkit, sem instalar ou copiar framework
   à participante; a projeção interna segue disponível à integração explicitamente autorizada.
   Registre as saídas afetadas e cobertas; logs, erros e Hatchet preservam a política de dados.
 - **Compatibilidade:** preserve FastAPI, Jinja/JS, PostgreSQL e Hatchet, formulário por versão,
-  versões publicadas imutáveis, compilador, macros e identificadores. Migrações são aditivas:
-  código anterior continua operando com o banco migrado; publique nova versão para nova definição.
+  versões publicadas imutáveis, compilador, macros e identificadores. Migrações são aditivas;
+  nas revisões sem piso de runtime, o código anterior continua operando com o banco migrado.
+  Após a `0016`, a exceção deliberada da [ADR 0017](../adr/0017-projecoes-e-finalidade-de-receptores.md)
+  exige adoção com escritoras antigas interrompidas e drenadas, seguida de imagens compatíveis
+  com o piso persistido; retorno usa somente imagem compatível, conforme o [roteiro Swarm](../../deploy/swarm/README.md).
+  Publique nova versão para nova definição.
 - **Prova proporcional:** teste comportamentos principais com exemplos sintéticos e execute os
   checks existentes aplicáveis em [ci.md](../ci.md). O ticket/PR informa cenário, evidência e limite;
   documentação isolada valida links e diff, sem pytest. Aplique ao delta, sem auditoria universal,
