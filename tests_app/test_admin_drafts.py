@@ -446,7 +446,8 @@ def test_a_draft_test_runs_in_the_worker_and_shows_the_plan_the_pdf_the_time_and
     for fact in ("3.120 de entrada", "980 de saída", "4.100 no total", "1 rodada de reparo"):
         assert fact in shown, fact
     assert "acoes:too_short" in shown and "gpt-teste" in shown
-    assert re.search(r"LLM em \d+ ms", shown) and re.search(r"PDF em \d+ ms", shown)
+    for stage in ("LLM", "PDF"):
+        assert re.search(rf"{stage} em (?:\d+ ms|\d+,\d s)\b", shown), shown
     assert "Hoje é 1º de março de 2027." in llm.prompts[0]  # a data simulada chega ao LLM
     pdf = client.get(f"{result}/pdf")
     assert pdf.status_code == 200 and pdf.headers["content-type"] == "application/pdf"
