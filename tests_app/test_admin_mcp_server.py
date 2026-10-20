@@ -87,7 +87,7 @@ def test_the_server_lists_one_tool_per_operation_the_key_allows(world: World) ->
 
     names = {tool.name for tool in listed.tools}
     assert names == operation_ids(world.api.document) - {"download_job_pdf"}
-    assert len(listed.tools) == 54
+    assert len(listed.tools) == 55
     for tool in listed.tools:
         spec = world.tools[tool.name]
         assert tool.description == spec.description and tool.title == spec.summary
@@ -116,7 +116,7 @@ def test_a_leitura_key_gets_only_the_leitura_tools(tmp_path: Path) -> None:
 
     listed = session_run(reader, lambda session: session.list_tools())
 
-    assert len(listed.tools) == 25
+    assert len(listed.tools) == 26
     assert all(tool.annotations.readOnlyHint for tool in listed.tools)
     assert {"publish_form_draft", "upload_asset", "download_job_pdf"}.isdisjoint(
         tool.name for tool in listed.tools

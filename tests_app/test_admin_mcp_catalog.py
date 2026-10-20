@@ -48,7 +48,7 @@ def selected(role: str, lead_data: bool = False) -> dict[str, ToolSpec]:
 def test_the_catalog_has_exactly_the_operation_ids_of_the_file() -> None:
     assert LOADED.skipped == {}
     assert set(TOOLS) == operation_ids(DOCUMENT)
-    assert len(TOOLS) == 55
+    assert len(TOOLS) == 56
 
 
 def test_the_list_of_exceptions_starts_empty() -> None:
@@ -116,7 +116,7 @@ def test_a_leitura_key_registers_only_the_leitura_tools() -> None:
     found = selected("leitura")
 
     assert set(found) == LEITURA
-    assert len(found) == 25
+    assert len(found) == 26
     assert all(tool.role == "leitura" for tool in found.values())
     assert {"publish_form_draft", "upload_asset", "download_job_pdf"}.isdisjoint(found)
 
@@ -125,14 +125,14 @@ def test_a_total_key_registers_all_but_the_lead_pdf_while_the_option_is_off() ->
     found = selected("total")
 
     assert set(found) == operation_ids(DOCUMENT) - {"download_job_pdf"}
-    assert len(found) == 54
+    assert len(found) == 55
 
 
 def test_the_lead_data_option_registers_the_lead_pdf_for_a_total_key() -> None:
     found = selected("total", lead_data=True)
 
     assert set(found) == operation_ids(DOCUMENT)
-    assert len(found) == 55
+    assert len(found) == 56
 
 
 def test_the_option_does_nothing_for_a_leitura_key() -> None:
@@ -356,6 +356,7 @@ def test_the_responses_that_are_not_json_are_the_downloads_and_the_previews() ->
         "render_form_draft_pdf_preview": ("application/pdf",),
         "render_form_draft_public_page": ("text/html",),
         "render_form_draft_result_preview": ("text/html",),
+        "render_form_draft_completion_preview": ("text/html",),
     }
     for name in non_json:
         assert "salva num arquivo" in TOOLS[name].description

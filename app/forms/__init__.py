@@ -221,6 +221,16 @@ def _check_screen(spec: FormSpec, screen: Screen) -> None:
 
 
 @dataclass(frozen=True)
+class Completion:
+    """Próximo passo após salvar respostas; não altera geração nem autorização do PDF."""
+
+    mode: Literal["result", "confirmation", "button", "redirect"] = "result"
+    message: str = "Recebemos suas respostas. Obrigada por participar."
+    button_label: str = "Continuar"
+    url: str | None = None
+
+
+@dataclass(frozen=True)
 class FormSpec:
     slug: str
     version: str
@@ -235,6 +245,7 @@ class FormSpec:
     example_plan: dict[str, Any]
     # O prompt, o PDF e a prévia, já compilados no ambiente isolado (`app.forms.sandbox`).
     templates: FormTemplates
+    completion: Completion = Completion()
     # As condições das perguntas e das opções: o avaliador que diz o que aparece para certas
     # respostas. O modelo das respostas já as aplica; quem lê o envio ou grava as respostas usa o
     # mesmo resultado (`Conditions.evaluate`).

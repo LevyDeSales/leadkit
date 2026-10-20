@@ -214,6 +214,7 @@ STRUCTURED = (
     "data",
     "scoring",
     "notices",
+    "completion",
 )
 TEXT_FIELDS = ("instructions", "prompt", "definition")  # os campos de texto do editor
 FIELD_NAMES = {
@@ -235,6 +236,15 @@ FIELD_NAMES = {
     "value": "valor",
     "points": "pontos",
     "example": "resposta de exemplo",
+}
+COMPLETION_NAMES = {
+    "mode": "modo",
+    "message": "mensagem de confirmação",
+    "button_label": "rótulo do botão",
+    "url": "destino HTTPS",
+}
+PLACE_NAMES_COMPLETION = {
+    f"completion.{key}": f"Conclusão · {value}" for key, value in COMPLETION_NAMES.items()
 }
 PLACE_NAMES = {
     "title": "Título",
@@ -326,6 +336,18 @@ def place_of(problem: Problem, edit: FormEdit, *, slug_field: bool = False) -> s
     instruções, o do prompt ou o JSON do resto (`definition`). O endereço só tem campo antes da
     primeira publicação (`slug_field`); depois, o problema nele vem do JSON."""
     path = problem.path
+    if path.startswith("completion"):
+        return (
+            path
+            if path
+            in {
+                "completion.mode",
+                "completion.message",
+                "completion.button_label",
+                "completion.url",
+            }
+            else "completion.mode"
+        )
     if path == "slug" and not slug_field:
         return "definition"
     if template_place(path) is not None:
@@ -369,6 +391,8 @@ def place_of(problem: Problem, edit: FormEdit, *, slug_field: bool = False) -> s
 def where(problem: Problem, edit: FormEdit, *, slug_field: bool = False) -> str:
     """Onde está o problema, como a operadora lê: "Etapa 1 · pergunta 2 · rótulo"."""
     path = problem.path
+    if path in PLACE_NAMES_COMPLETION:
+        return PLACE_NAMES_COMPLETION[path]
     parts = path.split(".")
     if path == "slug" and not slug_field:
         return path

@@ -24,6 +24,7 @@ from typing import Any
 from pydantic import TypeAdapter, ValidationError
 
 from app.forms.definition.document import (
+    CompletionDoc,
     ConsentDoc,
     DataBlockDoc,
     IdentityDoc,
@@ -52,10 +53,11 @@ PARTS: dict[str, TypeAdapter[Any]] = {
     "data": TypeAdapter(dict[Name, DataBlockDoc]),
     "scoring": TypeAdapter(ScoringDoc),
     "notices": TypeAdapter(NoticesDoc),
+    "completion": TypeAdapter(CompletionDoc),
     "pdf": TypeAdapter(PdfDoc),
 }
 # As partes opcionais: ausentes, nulas ou vazias, dizem o mesmo (nada).
-OPTIONAL_PARTS = ("scoring", "phases", "notices", "data")
+OPTIONAL_PARTS = ("scoring", "phases", "notices", "data", "completion")
 
 
 def part(key: str, value: Any) -> Any:

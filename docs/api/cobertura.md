@@ -39,7 +39,7 @@ o OpenAPI e exigem uma operação ou justificativa para cada rota.
 | Destinos do webhook | 11 | 6 | 6 | 0 |
 | Formulários: cadastro, situação e retenção | 10 | 10 | 8 | 2 |
 | Versões | 3 | 3 | 3 | 0 |
-| Rascunho: editor | 5 | 5 | 4 | 1 |
+| Rascunho: editor | 6 | 6 | 5 | 1 |
 | Rascunho: PDF e prévias | 4 | 4 | 2 | 0 |
 | Rascunho: testes | 7 | 7 | 6 | 0 |
 | Rascunho: publicação | 2 | 2 | 2 | 0 |
@@ -47,12 +47,12 @@ o OpenAPI e exigem uma operação ou justificativa para cada rota.
 | Imagens dos formulários | 5 | 5 | 5 | 0 |
 | Chaves de API | 3 | 3 | 3 | 0 |
 | Configurar o MCP | 2 | 2 | 0 | 1 |
-| **Total** | **69** | **64** | **53** | **7** |
+| **Total** | **70** | **65** | **54** | **7** |
 
-- **69 rotas** (`GET` e `POST`; o admin não usa outro método), de **64 funções**: as cinco ações dos
+- **70 rotas** (`GET` e `POST`; o admin não usa outro método), de **65 funções**: as cinco ações dos
   destinos (ver, endereço, segredo, remoção e teste) existem para o destino padrão e para o de um
   formulário, com a mesma função.
-- **62 rotas têm par na API**, em **53 operações** (algumas rotas dividem a operação: as duas dos
+- **63 rotas têm par na API**, em **54 operações** (algumas rotas dividem a operação: as duas dos
   destinos, o editor do PDF e o do formulário, que salvam o mesmo rascunho, a página do teste e o
   trecho do polling, e a criação de chave da página das chaves e a da tela do MCP). **7 rotas ficam
   fora**: o login e a saída (a chave substitui a sessão), três telas sem dado nem ação e a tela de
@@ -62,7 +62,7 @@ o OpenAPI e exigem uma operação ou justificativa para cada rota.
   ([a tabela](#operações-do-editor-48)).
 - Mais **2 operações novas**, sem rota no admin (`get_current_api_key` e `list_audit_log`): ver
   [as novas](#operações-novas-sem-rota-no-admin).
-- Total da API: **55 operações** (53 + 2), as mesmas do `docs/api/openapi.json` (o teste de cobertura
+- Total da API: **56 operações** (54 + 2), as mesmas do `docs/api/openapi.json` (o teste de cobertura
   confere). **Nenhuma linha está `falta`**: a cobertura está fechada.
 
 ## Inventário por recurso
@@ -147,6 +147,7 @@ O escopo é o destino padrão ou o de um formulário. Na API o escopo é o parâ
 | `POST /admin/forms/{slug}/draft/edit` | Uma operação do editor estruturado sobre o que a página mandou, sem gravar (ver [as 48](#operações-do-editor-48)) | `FormEdit.apply`, `PlanEdit`, `DataEdit`, `ScoringEdit`: presa na rota, e feita sobre o estado do formulário HTML | `PATCH /forms/{slug}/draft` | `patch_form_draft` | total | — | feita · tests_app/test_admin_api_drafts.py::test_patch_form_draft_edits_the_draft_and_answers_with_the_new_document |
 | `GET /admin/forms/{slug}/draft/preview` | Moldura (um `iframe` de 375 px) para a prévia da página pública | `draft_pages.preview_page` (só tela) | — | — | — | — | fora (B) |
 | `GET /admin/forms/{slug}/draft/preview/frame` | A página pública do rascunho inteira, como a lead a veria, a partir da etapa `etapa` | `actions.previews.public_page` (o contexto do template: as etapas, as condições e a etapa em que abre) e `render_public_page` (o HTML); a rota só lê o `?etapa=` (`draft_pages.step_of`) | `GET /forms/{slug}/draft/public-page` | `render_form_draft_public_page` | leitura | — | feita · tests_app/test_admin_api_previews.py::test_the_public_page_of_the_api_is_the_page_the_admin_shows_for_the_same_data |
+| `GET /admin/forms/{slug}/draft/completion-preview` | Recibo de exemplo da conclusão salva, com botão externo desativado e texto escapado | `actions.previews.completion_preview` e `web.completion.render_completion`; não salva respostas, não navega e não chama LLM/PDF | `GET /forms/{slug}/draft/completion-preview` | `render_form_draft_completion_preview` | leitura | — | feita · tests_app/test_admin_completion.py::test_completion_preview_is_read_only_and_cannot_navigate_outside |
 
 ### Rascunho: PDF e prévias
 
@@ -486,3 +487,7 @@ não lê: os números dela são para quem lê) e cobra:
 
 São **sete regras**, as mesmas da [ADR 0015](../adr/0015-api-de-admin.md#o-teste-de-cobertura) e do
 contrato da API.
+
+## Conclusão versionada
+
+O documento editado por `save_form_draft`/`patch_form_draft` inclui `completion` (modo, mensagem, rótulo do botão e URL HTTPS). Os campos do editor têm equivalência direta com esses caminhos no documento; não são novas operações de editor. Importar, duplicar, exportar e publicar preservam o bloco pela mesma versão. Mudar somente conclusão não invalida teste LLM. `render_form_draft_completion_preview` está disponível no catálogo MCP derivado do OpenAPI, sem efeitos externos.

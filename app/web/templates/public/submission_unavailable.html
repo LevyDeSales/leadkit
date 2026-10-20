@@ -1,0 +1,11 @@
+{% extends "public/base.html" %}
+{% import "public/_macros.html" as ui %}
+{% block title %}Não conseguimos confirmar o envio{% endblock %}
+{% block main %}
+<main id="conteudo" class="container container--narrow page">
+  <div class="statusicon statusicon--neutral">{{ ui.icon("info") }}</div>
+  <h1>Não conseguimos confirmar o envio</h1>
+  <p class="lead">Aguarde alguns instantes e volte à página anterior do navegador para tentar enviar suas respostas novamente.</p>
+  <p>Se precisar começar de novo, <a href="/p/{{ slug | urlencode }}">abra o formulário</a>.</p>
+</main>
+{% endblock %}

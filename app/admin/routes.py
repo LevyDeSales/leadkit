@@ -1283,6 +1283,18 @@ def draft_preview(request: Request, slug: str) -> Response:
     return _page(request, "admin/form_preview.html", {"page": page})
 
 
+@protected.get("/forms/{slug}/draft/completion-preview")
+def draft_completion_preview(request: Request, slug: str) -> Response:
+    """Recibo de exemplo, sem link externo utilizável nem envio de respostas."""
+    try:
+        html = preview_actions.completion_preview(get_deps(), slug)
+    except UnknownForm:
+        raise NotFound(DRAFT_NOT_FOUND) from None
+    except DefinitionError:
+        raise NotFound(DRAFT_DOES_NOT_COMPILE) from None
+    return HTMLResponse(html)
+
+
 @protected.get("/forms/{slug}/draft/preview/frame")
 def draft_preview_frame(
     request: Request, slug: str, step: Annotated[str, Query(alias="etapa")] = "1"
