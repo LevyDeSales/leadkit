@@ -131,8 +131,8 @@ def test_a_total_key_gets_the_five_composites_beside_the_generated_tools(tmp_pat
     world = World(tmp_path)
 
     assert set(world.composites) == set(CALLS)
-    assert len(world.tools) == 58 and set(CALLS).isdisjoint(world.tools)
-    assert len(world.tools) + len(world.composites) == 63
+    assert len(world.tools) == 59 and set(CALLS).isdisjoint(world.tools)
+    assert len(world.tools) + len(world.composites) == 64
     world.close()
 
 
@@ -151,7 +151,7 @@ def test_the_lead_data_option_changes_no_composite_but_adds_the_lead_pdf_beside_
     on = World(tmp_path, lead_data=True)
     reader = World(folder(tmp_path, "leitura"), "leitura", lead_data=True)
 
-    assert set(on.composites) == set(CALLS) and len(on.tools) + len(on.composites) == 64
+    assert set(on.composites) == set(CALLS) and len(on.tools) + len(on.composites) == 65
     assert set(reader.composites) == READS  # a opção não faz nada para a chave `leitura`
     assert not any("download_job_pdf" in c.calls for c in on.composites.values())
     on.close()
@@ -2411,7 +2411,7 @@ def test_the_server_lists_the_composites_beside_the_generated_tools(tmp_path: Pa
     read_only = protocol(reader, lambda session: session.list_tools()).tools
 
     names = {tool.name for tool in everything}
-    assert len(everything) == 63 and set(CALLS) <= names
+    assert len(everything) == 64 and set(CALLS) <= names
     assert names - set(CALLS) == operation_ids(DOCUMENT) - {
         "download_job_pdf"
     }  # as geradas seguem lá

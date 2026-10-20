@@ -76,6 +76,8 @@ class StoredIntegration:
     updated_by: str
     updated_at: datetime
     token_changed_at: datetime
+    capture_entries: tuple[Entry, ...] = ()
+    capture_key_field_id: int | None = None
 
     @property
     def host(self) -> str:
@@ -98,6 +100,8 @@ def _stored(row: Integration) -> StoredIntegration:
         updated_by=row.updated_by,
         updated_at=row.updated_at,
         token_changed_at=row.token_changed_at,
+        capture_entries=tuple(entries_of(row.capture_mapping)),
+        capture_key_field_id=row.capture_key_field_id,
     )
 
 
@@ -266,6 +270,9 @@ def connect(
     Baserow por quem chama."""
     if cipher is None:
         raise NoCipher
+    from app.integration_readiness import configuration_lock
+
+    configuration_lock(session)
     base_url = check_base_url(base_url, production=production)
     token = token.strip()
     if expected_version == 0:
@@ -281,6 +288,7 @@ def connect(
         row.token_changed_at = row.updated_at
     if moved:
         row.mapping, row.key_field_id, row.active = [], None, False
+        row.capture_mapping, row.capture_key_field_id = [], None
     _audit(
         session,
         actor,
@@ -338,13 +346,18 @@ def save_mapping(
     actor: str,
     expected_version: int,
     deactivate: bool,
+    profile: str = "pdf",
 ) -> StoredIntegration:
     """Guarda o mapeamento, já conferido por `mapping.check_entries`. `deactivate`: o relatório
     do mapeamento novo tem pendências, e uma integração ativa não pode seguir enviando com elas."""
     row = _lock_for_change(session, form_slug, expected_version, actor)
-    key = key_entry(entries)
-    row.mapping = [entry.as_json() for entry in entries]
-    row.key_field_id = key.field_id if key else None
+    key = key_entry(entries, profile=profile)
+    if profile == "capture":
+        row.capture_mapping = [entry.as_json() for entry in entries]
+        row.capture_key_field_id = key.field_id if key else None
+    else:
+        row.mapping = [entry.as_json() for entry in entries]
+        row.key_field_id = key.field_id if key else None
     was_active = row.active
     if deactivate:
         row.active = False
@@ -354,6 +367,7 @@ def save_mapping(
         "mapping",
         row,
         fields=len(entries),
+        profile=profile,
         deactivated=bool(deactivate and was_active),
     )
     return _stored(row)
@@ -389,6 +403,9 @@ def _lock_for_change(
 ) -> Integration:
     """A integração travada para mudar, se ainda está na versão que a pessoa viu (senão
     `Conflict`), já com a versão nova e a autoria da mudança."""
+    from app.integration_readiness import configuration_lock
+
+    configuration_lock(session)
     row = session.scalar(
         sa.select(Integration)
         .where(

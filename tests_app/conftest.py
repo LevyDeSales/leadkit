@@ -347,7 +347,7 @@ def database_url() -> str:
         with engine.connect() as connection:
             assert connection.exec_driver_sql(
                 "SELECT version_num FROM alembic_version"
-            ).scalars().all() == ["0014_capture"]
+            ).scalars().all() == ["0015_capture_delivery"]
     finally:
         engine.dispose()
     return TEST_DATABASE_URL

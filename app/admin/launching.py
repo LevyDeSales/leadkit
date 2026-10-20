@@ -136,3 +136,21 @@ def _report(first: Future[bool], reached: bool) -> None:
         first.set_result(reached)
     except InvalidStateError:
         pass
+
+
+def launch_capture_later(submission_id: uuid.UUID) -> Future[None]:
+    """Usa o executor existente; a intenção persistida permite interromper o disparo local."""
+
+    def launch() -> None:
+        from app.capture_deliveries import pending_for_submission
+        from app.deps import get_deps
+        from app.workflows import launch_capture
+
+        deps = get_deps()
+        with deps.sessions() as session:
+            pending = pending_for_submission(session, submission_id)
+        for delivery_id, epoch in pending:
+            if launch_capture(delivery_id, epoch) is None:
+                break
+
+    return _LAUNCHES.submit(launch)

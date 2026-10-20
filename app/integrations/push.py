@@ -28,6 +28,7 @@ códigos do Baserow e os nomes de campos e perguntas, que são configuração.
 from __future__ import annotations
 
 import uuid
+from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Any
 
@@ -40,7 +41,7 @@ from app.destinations import UnreadableSecret
 from app.errors import FailureCode, RetryableError, TerminalError
 from app.integrations import config, mapping
 from app.integrations.baserow import Connection
-from app.integrations.mapping import Entry, RowData
+from app.integrations.mapping import CaptureRowData, Entry, MappingProfile, RowData
 from app.models import Integration, IntegrationSync, Job, Submission, utcnow
 from app.submission_identity import identity_from_answers, submission_form
 
@@ -165,22 +166,59 @@ def upsert(
     integration_id: uuid.UUID,
     key_field_id: int,
     entries: list[Entry],
-    data: RowData,
+    data: RowData | CaptureRowData,
+    record_key: str | None = None,
+    profile: MappingProfile = "pdf",
+    session: Session | None = None,
 ) -> Written:
     """Monta a linha com os campos da tabela como estão agora e a grava: atualiza a que tem o
-    código do pedido, ou cria. Levanta `RetryableError` ou `TerminalError`."""
+    registro, ou cria. Captura exige `record_key` igual ao id da submissão; PDF conserva
+    a chave e a trava antigas quando a chave explícita é omitida.
+    Com `session`, a chamadora controla a transação: deve mantê-la aberta durante o envio
+    e encerrá-la para liberar a trava. Esta função não confirma, desfaz ou fecha a sessão
+    recebida; rollback local não desfaz a escrita remota. Sem sessão, mantém a transação própria.
+    Levanta `RetryableError` ou `TerminalError`."""
     live = deps.baserow.fields(connection)
     try:
-        row = mapping.build_row(entries, live, data)
-    except mapping.MappingError as exc:
+        row = mapping.build_row(entries, live, data, profile=profile)
+        if record_key is None:
+            if not isinstance(data, RowData) or profile != "pdf":
+                raise mapping.MappingError("A captura exige a chave explícita da submissão.")
+            record_key = data.public_id
+        key_source = mapping.CAPTURE_KEY_SOURCE if profile == "capture" else mapping.KEY_SOURCE
+        if not record_key or record_key != mapping.raw_value(key_source, data, profile=profile):
+            raise mapping.MappingError("A chave explícita não corresponde ao registro enviado.")
+        if profile == "capture":
+            mapping.check_entries(
+                entries,
+                live,
+                {
+                    **{source.key: source for source in mapping.CAPTURE_SOURCES},
+                    **{
+                        f"answer:{name}": mapping.answer_source(question)
+                        for name, question in data.questions.items()
+                    },
+                },
+                profile=profile,
+            )
+            key = mapping.key_entry(entries, profile=profile)
+            if (
+                key is None
+                or key.field_id != key_field_id
+                or row.get(f"field_{key_field_id}") != record_key
+            ):
+                raise mapping.MappingError(
+                    "O campo-chave não corresponde ao mapeamento da captura."
+                )
+    except (mapping.MappingError, mapping.InvalidMapping) as exc:
         raise TerminalError(FailureCode.INTEGRATION_MAPPING, str(exc)) from None
-    lock = f"integration:{integration_id}:{data.public_id}"
+    lock = f"integration:{integration_id}:{record_key}"
     # A transação segura a trava até o fim do achar-e-escrever; sem tabela mexida, ela só espera.
-    with deps.sessions.begin() as session:
-        session.execute(
+    with nullcontext(session) if session is not None else deps.sessions.begin() as write_session:
+        write_session.execute(
             sa.text("select pg_advisory_xact_lock(hashtextextended(:key, 0))"), {"key": lock}
         )
-        found = deps.baserow.find_rows(connection, key_field_id, data.public_id)
+        found = deps.baserow.find_rows(connection, key_field_id, record_key)
         if found:
             return Written("updated", deps.baserow.update_row(connection, found[0], row))
         return Written("created", deps.baserow.create_row(connection, row))
@@ -217,7 +255,9 @@ def sample_id(form_slug: str) -> str:
     return f"{SAMPLE_PREFIX}{form_slug}"
 
 
-def send_sample(deps: Deps, form_slug: str, *, actor: str) -> SampleResult | None:
+def send_sample(
+    deps: Deps, form_slug: str, *, actor: str, profile: MappingProfile | None = None
+) -> SampleResult | None:
     """Manda para a tabela uma linha sintética do formulário (a lead de exemplo, no domínio
     `exemplo`, com respostas inventadas), pelo mesmo caminho de um pedido de verdade, e devolve o
     que aconteceu; None se o formulário não tem integração. A linha fica na tabela, para a operadora
@@ -230,11 +270,16 @@ def send_sample(deps: Deps, form_slug: str, *, actor: str) -> SampleResult | Non
         return None
     public_id = sample_id(form_slug)
     spec = config.form_spec(deps, form_slug)
+    from app.integration_readiness import profile_for
+
+    profile = profile or profile_for(spec)
+    entries = stored.capture_entries if profile == "capture" else stored.entries
+    key_field_id = stored.capture_key_field_id if profile == "capture" else stored.key_field_id
     written: Written | None = None
     error: str | None = None
     if spec is None:
         error = "o formulário não tem versão publicada para montar a linha de teste"
-    elif stored.key_field_id is None or mapping.key_entry(list(stored.entries)) is None:
+    elif key_field_id is None or mapping.key_entry(list(entries), profile=profile) is None:
         error = "o mapeamento está vazio ou sem o código do pedido"
     else:
         try:
@@ -242,9 +287,11 @@ def send_sample(deps: Deps, form_slug: str, *, actor: str) -> SampleResult | Non
                 deps,
                 connection,
                 integration_id=stored.id,
-                key_field_id=stored.key_field_id,
-                entries=list(stored.entries),
-                data=mapping.sample_data(spec, public_id),
+                key_field_id=key_field_id,
+                entries=list(entries),
+                data=mapping.sample_data(spec, public_id, profile=profile),
+                profile=profile,
+                record_key=public_id,
             )
         except (RetryableError, TerminalError) as exc:
             error = str(exc)[:300]

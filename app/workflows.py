@@ -487,3 +487,92 @@ def launch_sync(sync_id: uuid.UUID) -> str | None:
     with get_deps().sessions.begin() as session:
         syncs.set_run_id(session, sync_id, run_id)
     return run_id
+
+
+class CaptureInput(BaseModel):
+    """Referências operacionais; nenhum dado ou capacidade da participante."""
+
+    model_config = ConfigDict(frozen=True)
+    delivery_id: uuid.UUID
+    dispatch_no: int
+    run_key: str
+
+    @classmethod
+    def for_delivery(cls, delivery_id, dispatch_no):
+        return cls(
+            delivery_id=delivery_id,
+            dispatch_no=dispatch_no,
+            run_key=f"leadkit:capture:{delivery_id}:{dispatch_no}",
+        )
+
+
+class CaptureOutput(BaseModel):
+    """IDs e contagens distinguem transporte confirmado de callback ou execução sem trabalho."""
+
+    delivery_id: uuid.UUID
+    delivered_count: int = 0
+    skipped_count: int = 0
+    failed_count: int = 0
+
+
+deliver_capture = hatchet.workflow(
+    name="deliver_capture",
+    description="Entrega uma captura persistida ao destino autorizado",
+    input_validator=CaptureInput,
+    idempotency=StatusBasedIdempotencyConfig(
+        key_expression="input.run_key", fallback_ttl=timedelta(hours=12)
+    ),
+)
+
+
+@deliver_capture.task(
+    execution_timeout=timedelta(minutes=2),
+    schedule_timeout=timedelta(hours=6),
+    retries=8,
+    backoff_factor=4.0,
+    backoff_max_seconds=3600,
+)
+def send_capture(input: CaptureInput, ctx: Context) -> CaptureOutput:
+    from app import capture_deliveries
+
+    try:
+        status = capture_deliveries.dispatch(get_deps(), input.delivery_id, input.dispatch_no)
+    except Exception as exc:  # noqa: BLE001 — fronteira de provedor; somente código seguro sai.
+        raise _task_failure("send_capture", exc) from None
+    return CaptureOutput(
+        delivery_id=input.delivery_id,
+        delivered_count=int(status == "succeeded"),
+        skipped_count=int(status in ("obsolete", "already_succeeded")),
+        failed_count=int(status == "failed"),
+    )
+
+
+@deliver_capture.on_failure_task(retries=3, backoff_factor=2.0, backoff_max_seconds=15)
+def capture_failed(input: CaptureInput, ctx: Context) -> CaptureOutput:
+    from app import capture_deliveries
+
+    count = capture_deliveries.mark_failed(get_deps(), input.delivery_id, input.dispatch_no)
+    return CaptureOutput(delivery_id=input.delivery_id, failed_count=count, skipped_count=1 - count)
+
+
+def launch_capture(delivery_id: uuid.UUID, dispatch_no: int) -> str | None:
+    """Disparo oportunista; erro do SDK não leva exceção bruta nem perde a intenção."""
+    from app import capture_deliveries
+
+    try:
+        ref = deliver_capture.run(
+            CaptureInput.for_delivery(delivery_id, dispatch_no),
+            wait_for_result=False,
+            additional_metadata={"delivery_id": str(delivery_id), "dispatch_no": str(dispatch_no)},
+        )
+        run_id = ref.workflow_run_id
+    except IdempotencyCollisionError as exc:
+        run_id = exc.existing_run_external_id
+    except Exception:  # noqa: BLE001 — falha isolada, sem mensagem bruta.
+        logger.warning(
+            "disparo de captura adiado delivery=%s dispatch=%s", delivery_id, dispatch_no
+        )
+        return None
+    with get_deps().sessions.begin() as session:
+        capture_deliveries.set_run_id(session, delivery_id, dispatch_no, run_id)
+    return run_id

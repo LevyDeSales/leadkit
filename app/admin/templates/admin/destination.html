@@ -41,6 +41,13 @@
       <input class="input mono" id="url" name="url" type="url" value="{{ url }}" maxlength="{{ max_url_length }}" required autocomplete="off" spellcheck="false" placeholder="https://"{% if errors.get("url") %} aria-invalid="true" aria-describedby="url-erro"{% endif %}>
       {% if errors.get("url") %}<p class="error" id="url-erro">{{ m.icon('alert-circle') }}{{ errors["url"] }}</p>{% endif %}
     </div>
+    <p>Eventos do destino efetivo: {{ effective_events | join(", ") or "nenhum destino" }}.</p>
+    <input type="hidden" name="events_present" value="1">
+    <fieldset id="eventos" aria-describedby="eventos-ajuda{% if errors.get('events') %} eventos-erro{% endif %}"{% if errors.get('events') %} aria-invalid="true"{% endif %}><legend>Eventos aceitos pelo receptor</legend>
+    <p id="eventos-ajuda">Declare a finalidade autorizada. Capturas enviam respostas sem plano ou PDF. Confira também o destino padrão herdado ao remover uma configuração própria.</p>
+    <label><input type="checkbox" name="events" value="plano.concluido"{% if 'plano.concluido' in selected_events %} checked{% endif %}>Planos concluídos (PDF)</label>
+    <label><input type="checkbox" name="events" value="submissao.persistida"{% if 'submissao.persistida' in selected_events %} checked{% endif %}>Capturas persistidas (sem PDF)</label>
+    {% if errors.get("events") %}<p class="error" id="eventos-erro" role="alert">{{ errors["events"] }}</p>{% endif %}</fieldset>
     {% if needs_confirmation %}
     <label class="choice choice--check"><input type="checkbox" name="confirm_http" value="on" required><span class="choice__body"><span class="choice__mark">{{ m.icon('check') }}</span><span>Confirmo que o receptor só aceita http e que os dados das leads vão sem criptografia até ele.</span></span></label>
     {% endif %}
@@ -80,9 +87,9 @@
 
 <section class="box" id="teste" aria-labelledby="teste-titulo">
   <h2 id="teste-titulo">Evento de teste</h2>
-  <p>Manda um <span class="mono">webhook.teste</span> assinado como o <span class="mono">plano.concluido</span>, com dados fictícios e nenhum dado de lead, e mostra o que o receptor respondeu.</p>
+  <p>Escolha um teste de conexão (<span class="mono">webhook.teste</span>) ou o envio sintético de respostas (<span class="mono">submissao.persistida</span>). Os eventos são assinados, usam dados fictícios e mostram a resposta do receptor, sem criar uma submissão real.</p>
   {#- Sem JavaScript é um POST comum que devolve a página inteira; com HTMX, troca só o resultado. -#}
-  <form method="post" action="{{ page.base }}/test" hx-post="{{ page.base }}/test" hx-target="#resultado-teste" hx-select="#resultado-teste" hx-swap="outerHTML">
+  <form method="post" action="{{ page.base }}/test" hx-post="{{ page.base }}/test" hx-target="#resultado-teste" hx-select="#resultado-teste" hx-swap="outerHTML"><label for="test-event">Finalidade do teste sintético</label><select name="event" id="test-event"><option value="webhook.teste">Conexão</option>{% if page.stored and 'submissao.persistida' in page.stored.events %}<option value="submissao.persistida">Captura persistida (sem submissão real)</option>{% endif %}</select>
     <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
     <button class="btn btn--secondary" type="submit">{{ m.icon('send') }}Mandar o evento de teste</button>
   </form>
@@ -105,8 +112,9 @@
       <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
       <input type="hidden" name="version" value="{{ page.stored.version }}">
       <h3 id="rem-form-titulo">Remover este destino</h3>
-      <div class="note">{{ m.icon('alert-triangle') }}<p>{% if page.form_slug %}O formulário passa a usar o destino padrão, se houver, e as entregas em repetição vão para ele na tentativa seguinte; sem padrão, elas esperam um destino novo.{% else %}Os formulários sem destino próprio deixam de ser entregues, e as entregas deles em repetição esperam um destino novo.{% endif %}</p></div>
-      <label class="choice choice--check"><input type="checkbox" name="confirm" value="on" required{% if errors.get("remove") %} aria-invalid="true" aria-describedby="rem-erro"{% endif %}><span class="choice__body"><span class="choice__mark">{{ m.icon('check') }}</span><span>Entendo para onde os eventos passam a ir.</span></span></label>
+      <div class="note">{{ m.icon('alert-triangle') }}<p>{% if page.form_slug %}O formulário passa a usar o destino padrão, se houver, e as entregas de PDF em repetição vão para ele na tentativa seguinte; sem padrão, elas esperam um destino novo.{% else %}Os formulários sem destino próprio deixam de ser entregues, e as entregas de PDF deles em repetição esperam um destino novo.{% endif %}</p></div>
+      <p>Registros de entrega de respostas que serão apagados: {{ page.capture_counts.total }} no total ({{ page.capture_counts.pending }} pendentes, {{ page.capture_counts.succeeded }} com transporte confirmado e {{ page.capture_counts.failed }} com falha). As entregas pendentes não serão enviadas nem transferidas para o padrão; as respostas salvas permanecem.</p>
+      <label class="choice choice--check"><input type="checkbox" name="confirm" value="on" required{% if errors.get("remove") %} aria-invalid="true" aria-describedby="rem-erro"{% endif %}><span class="choice__body"><span class="choice__mark">{{ m.icon('check') }}</span><span>Entendo a exclusão dos registros de entrega de respostas e para onde os novos eventos passam a ir.</span></span></label>
       {% if errors.get("remove") %}<p class="error" id="rem-erro">{{ m.icon('alert-circle') }}{{ errors["remove"] }}</p>{% endif %}
       <div class="btns"><button class="btn btn--primary" type="submit">Remover o destino</button></div>
     </form>

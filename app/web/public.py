@@ -48,7 +48,7 @@ from app.intake import (
 from app.models import Artifact, Job, Plan, Submission, utcnow
 from app.pdf_availability import PdfAvailability, current_pdf
 from app.submission_identity import resolve_identity
-from app.submission_launch import launch_after_commit
+from app.submission_launch import launch_after_commit, launch_capture_after_commit
 from app.tokens import TokenError
 from app.web.completion import render_completion
 from app.web.formview import (
@@ -243,6 +243,8 @@ async def submit_form(slug: str, request: Request) -> Response:
     if isinstance(accepted, Response):
         return accepted
     if isinstance(accepted, CaptureAccepted):
+        if not accepted.replay:
+            launch_capture_after_commit(request.app, accepted.submission.id)
         response = RedirectResponse(f"/s/{accepted.receipt.public_id}/conclusao", status_code=303)
         _grant_capture_access(response, request, accepted.receipt, accepted.token)
         return response

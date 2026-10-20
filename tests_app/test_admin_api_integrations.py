@@ -123,6 +123,10 @@ def test_get_form_integration_of_a_form_without_integration_offers_to_connect_it
         "report": None,
         "sync_counts": {"pending": 0, "succeeded": 0, "failed": 0},
         "failed_syncs": [],
+        "capture_deliveries": [],
+        "capture_delivery_counts": {"pending": 0, "succeeded": 0, "failed": 0},
+        "capture_mapping": [],
+        "profile": "pdf",
     }
     assert baserow.calls == []  # sem conexão, nada a ler
 

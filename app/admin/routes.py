@@ -13,7 +13,7 @@ import math
 import uuid
 from collections.abc import Callable, Coroutine, Sequence
 from datetime import datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from urllib.parse import urlencode, urlsplit
 
 from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile
@@ -592,6 +592,7 @@ def _destination_page(
     errors: dict[str, str] | None = None,
     url: str | None = None,
     needs_confirmation: bool = False,
+    selected_events: list[str] | None = None,
 ) -> Response:
     """A página do destino. `new_secret` só vem na resposta da criação ou da troca: a única vez
     em que o segredo aparece. Num pedido do HTMX, uma recusa sai com 200: o HTMX não troca o
@@ -601,6 +602,11 @@ def _destination_page(
     title = _form_title(form_slug) if form_slug is not None else None
     with deps.sessions() as db:
         page = views.destination_page(db, form_slug, title, deps.cipher)
+        effective = (
+            destinations.serving(destinations.listing(db), form_slug)
+            if form_slug
+            else destinations.listing(db).get(None)
+        )
     if page is None:
         return _error(request, 404, DESTINATION_NOT_FOUND)
     if url is None:
@@ -612,6 +618,10 @@ def _destination_page(
         "admin/destination.html",
         {
             "page": page,
+            "effective_events": effective.events if effective else (),
+            "selected_events": selected_events
+            if selected_events is not None
+            else (page.stored.events if page.stored else ("plano.concluido",)),
             "new_secret": new_secret,
             "test": test,
             "errors": errors or {},
@@ -651,6 +661,8 @@ def save_destination(
     url: Annotated[str, Form()] = "",
     version: Annotated[str, Form()] = "",
     confirm_http: Annotated[str, Form()] = "",
+    events: Annotated[list[str] | None, Form()] = None,
+    events_present: Annotated[str, Form()] = "",
 ) -> Response:
     """Cria o destino, e o segredo novo aparece só nesta resposta, ou muda a URL dele."""
     expected = _version(version)
@@ -662,6 +674,15 @@ def save_destination(
             actor=session.username,
             expected_version=expected,
             http_confirmed=bool(confirm_http),
+            events=(events or []) if events_present else events,
+        )
+    except destinations.InvalidEvents as exc:
+        return _destination_page(
+            request,
+            status_code=422,
+            errors={"events": exc.message},
+            url=url,
+            selected_events=(events or []) if events_present else events,
         )
     except destinations.InvalidUrl as exc:
         return _destination_page(
@@ -670,6 +691,7 @@ def save_destination(
             errors={"url": exc.message},
             url=url,
             needs_confirmation=exc.needs_confirmation,
+            selected_events=events or [] if events_present else events,
         )
     except destinations.NoCipher:
         return _destination_page(request, status_code=422, errors={"url": NO_CIPHER}, url=url)
@@ -727,13 +749,17 @@ def remove_destination(
     if not confirm:
         return _destination_page(request, status_code=422, errors={"remove": CONFIRM_REMOVE})
     try:
-        destination_actions.remove(
+        removed = destination_actions.remove(
             get_deps(), form_slug, actor=session.username, expected_version=_version(version)
         )
     except destinations.Conflict:
         return _back(session, form_slug, DESTINATION_CHANGED)
     logger.info("admin: destino do webhook removido formulario=%s", _scope_label(form_slug))
-    session.flash = ("ok", DESTINATION_REMOVED)
+    session.flash = (
+        "ok",
+        DESTINATION_REMOVED
+        + f" Registros de entrega de respostas apagados: {removed.capture_counts.total}; pendentes não foram redirecionadas.",
+    )
     return RedirectResponse(views.DESTINATIONS_URL, status_code=303)
 
 
@@ -743,14 +769,17 @@ def send_test_event(
     request: Request,
     session: Annotated[AdminSession, Depends(require_session)],
     form_slug: Target,
+    event: Annotated[str, Form()] = "webhook.teste",
 ) -> Response:
     """O evento de teste sai da API, sem passar pelo Hatchet (não leva dado de lead), com os
     timeouts do adaptador: a resposta pode levar até uns 20 s com o receptor mudo. As entregas
     saem do worker, que pode não alcançar o que a API alcança (a tela avisa)."""
     try:
-        probe = destinations.send_test(get_deps(), form_slug, actor=session.username)
+        probe = destinations.send_test(get_deps(), form_slug, actor=session.username, event=event)
     except destinations.UnreadableSecret:
         return _destination_page(request, status_code=409, test=views.UNREADABLE_PROBE)
+    except destinations.UnsupportedEvent:
+        return _back(session, form_slug, "O destino não declarou aceitar o evento de captura.")
     if probe is None:
         return _back(session, form_slug, NOTHING_TO_TEST)
     logger.info(
@@ -759,7 +788,7 @@ def send_test_event(
         probe.status,
         probe.error,
     )
-    return _destination_page(request, test=views.probe_view(probe))
+    return _destination_page(request, test=views.probe_view(probe, event=event))
 
 
 # --- formulários ------------------------------------------------------------------------------
@@ -1935,6 +1964,7 @@ def _integration_page(
     slug: str,
     *,
     status_code: int = 200,
+    profile: str | None = None,
     errors: dict[str, str] | None = None,
     problems: Sequence[str] = (),
     typed: dict[str, str] | None = None,
@@ -1946,7 +1976,10 @@ def _integration_page(
     digitar e escolher, devolvidos numa recusa (o token nunca volta). Num pedido do HTMX, uma recusa
     sai com 200, para o HTMX trocar o trecho."""
     deps = get_deps()
-    detail = integration_actions.read_detail(deps, slug, typed=selected)
+    profile = profile or request.query_params.get("profile")
+    if profile not in (None, "pdf", "capture"):
+        return _error(request, 422, "Selecione o perfil pdf ou capture.")
+    detail = integration_actions.read_detail(deps, slug, typed=selected, profile=profile)
     if detail is None:
         return _error(request, 404, FORM_NOT_FOUND)
     stored = detail.stored
@@ -2059,7 +2092,12 @@ def save_integration_mapping(
     chosen = _chosen_sources(form)
     try:
         saved = integration_actions.save_mapping(
-            get_deps(), slug, chosen=chosen, expected_version=expected, actor=session.username
+            get_deps(),
+            slug,
+            chosen=chosen,
+            expected_version=expected,
+            actor=session.username,
+            profile=str(form.get("profile")) if form.get("profile") in ("pdf", "capture") else None,
         )
     except integration_actions.NotPublished as exc:
         return _integration_back(session, slug, str(exc))
@@ -2142,7 +2180,7 @@ def remove_integration(
             request, slug, status_code=422, errors={"remove": CONFIRM_REMOVE_INTEGRATION}
         )
     try:
-        integration_actions.remove(
+        removed = integration_actions.remove(
             get_deps(),
             slug,
             expected_version=integration_actions.version_number(version),
@@ -2150,7 +2188,11 @@ def remove_integration(
         )
     except integration_config.Conflict:
         return _integration_back(session, slug, INTEGRATION_CHANGED)
-    session.flash = ("ok", INTEGRATION_REMOVED)
+    session.flash = (
+        "ok",
+        INTEGRATION_REMOVED
+        + f" Registros de entrega de respostas apagados: {removed.capture_counts.total}; pendentes não serão enviadas.",
+    )
     return RedirectResponse(views.form_url(slug), status_code=303)
 
 
@@ -2159,18 +2201,26 @@ def send_integration_test(
     request: Request,
     slug: IntegrationSlug,
     session: Annotated[AdminSession, Depends(require_session)],
+    profile: Annotated[Literal["pdf", "capture"] | None, Form()] = None,
 ) -> Response:
     """Manda uma linha sintética (a lead de exemplo, no domínio `exemplo`) para a tabela, pelo mesmo
     caminho de um pedido de verdade, e mostra o que aconteceu. Sai da API, sem passar pelo Hatchet, e
     não toca dado de lead. A linha fica na tabela; testar de novo atualiza a mesma. O envio é da ação
     (`app.admin.actions.integrations.send_test`), que a API também usa."""
+    profile = profile or request.query_params.get("profile")
+    if profile not in (None, "pdf", "capture"):
+        return _error(request, 422, "Selecione o perfil pdf ou capture.")
     try:
-        result = integration_actions.send_test(get_deps(), slug, actor=session.username)
+        result = integration_actions.send_test(
+            get_deps(), slug, actor=session.username, profile=profile
+        )
     except integration_actions.TokenUnreadable:
         return _integration_page(request, slug, status_code=409, sample=UNREADABLE_SAMPLE)
     except integration_actions.IntegrationMissing:
         return _integration_back(session, slug, INTEGRATION_MISSING)
-    return _integration_page(request, slug, sample=integration_views.sample_view(result))
+    return _integration_page(
+        request, slug, profile=profile, sample=integration_views.sample_view(result)
+    )
 
 
 @protected.post("/forms/{slug}/baserow/resend-failed")
@@ -2298,3 +2348,35 @@ def capture_test_page(
 
 router.include_router(open_routes)
 router.include_router(protected)
+
+
+@protected.post("/captures/{submission_id}/deliveries/{delivery_id}/retry")
+def retry_capture_delivery_page(
+    submission_id: str,
+    delivery_id: str,
+    request: Request,
+    session: Annotated[AdminSession, Depends(require_session)],
+    expected_dispatch: Annotated[int, Form()],
+    expected_config_version: Annotated[int, Form()],
+    confirm: Annotated[str, Form()] = "",
+) -> Response:
+    from app.admin.actions import captures
+
+    if confirm != "on":
+        return Response("Confirme o envio externo antes de repetir.", status_code=422)
+    try:
+        captures.retry(
+            get_deps(),
+            submission_id,
+            delivery_id,
+            expected_dispatch=expected_dispatch,
+            expected_config_version=expected_config_version,
+            actor=session.username,
+        )
+    except captures.Missing:
+        return Response("Captura ou entrega não encontrada.", status_code=404)
+    except captures.Conflict:
+        return Response(
+            "Entrega ou configuração mudou; confira a revisão e a finalidade.", status_code=409
+        )
+    return RedirectResponse(f"/admin/captures/{submission_id}", status_code=303)

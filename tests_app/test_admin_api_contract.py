@@ -118,6 +118,22 @@ _CAPTURE_ITEM = (
     "form_version",
     "form_version_number",
     "created_at",
+    "deliveries",
+    "deliveries.delivery_id",
+    "deliveries.submission_id",
+    "deliveries.destination_id",
+    "deliveries.kind",
+    "deliveries.event",
+    "deliveries.config_version",
+    "deliveries.current_config_version",
+    "deliveries.status",
+    "deliveries.attempts",
+    "deliveries.dispatch_no",
+    "deliveries.error_code",
+    "deliveries.response_status",
+    "deliveries.row_id",
+    "deliveries.outcome",
+    "deliveries.delivered_at",
 )
 LEAD_STATE: dict[str, frozenset[str]] = {
     "list_captures": frozenset(

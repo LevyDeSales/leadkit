@@ -19,7 +19,7 @@ from app.deps import Deps, get_deps
 from app.forms.data_notices import log_data_notices
 from app.hatchet_client import hatchet
 from app.integrations import config as integration_config
-from app.workflows import deliver, draft_test, generate_plan, sync_integration
+from app.workflows import deliver, deliver_capture, draft_test, generate_plan, sync_integration
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +57,7 @@ def main() -> None:
         workflows=[
             generate_plan,
             deliver,
+            deliver_capture,
             sync_integration,
             draft_test,
             reconcile_jobs,

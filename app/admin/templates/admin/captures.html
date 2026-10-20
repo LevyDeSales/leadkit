@@ -8,6 +8,17 @@
 <section class="box"><h2>{{ detail.form_slug }} · versão {{ detail.form_version_number }}</h2>
 <p>Capturada em {{ detail.created_at }} · {{ detail.submission_id }}</p>
 <dl>{% for key, value in detail.lead_data.identity.items() %}<dt>{{ key }}</dt><dd>{{ value or '—' }}</dd>{% endfor %}</dl>
+<h3>Entregas às integrações</h3>
+<p>Sucesso confirma o transporte, sem comprovar leitura pela participante. O reenvio mantém o mesmo evento e destino.</p>
+<ul>{% for delivery in detail.deliveries %}<li>{{ delivery.kind }} · {{ delivery.destination_id }} · {{ delivery.status }} · {{ delivery.attempts }} tentativa(s)
+{% if delivery.error_code %}<span>{{ delivery.error_code }}</span>{% endif %}
+{% if delivery.status == 'failed' and delivery.current_config_version %}
+<form method="post" action="/admin/captures/{{ detail.submission_id }}/deliveries/{{ delivery.delivery_id }}/retry">
+<input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+<input type="hidden" name="expected_dispatch" value="{{ delivery.dispatch_no }}">
+<input type="hidden" name="expected_config_version" value="{{ delivery.current_config_version }}">
+<label><input type="checkbox" name="confirm" required>Confirmo repetir o envio externo ao mesmo destino na revisão {{ delivery.current_config_version }}.</label>
+<button class="btn" type="submit">Repetir entrega</button></form>{% endif %}</li>{% else %}<li>Sem destinos configurados no momento do envio.</li>{% endfor %}</ul>
 <h3>Respostas, consentimento e pontuação</h3><pre>{{ detail.lead_data | tojson(indent=2) }}</pre></section>
 {% else %}
 <form method="get" action="/admin/captures" class="form-stack">

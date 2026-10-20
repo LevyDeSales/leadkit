@@ -6,7 +6,7 @@ formulário, destino, contato ou outro dado de negócio. O demo é importado exp
 
 ## Cadeia aditiva atual e rollback
 
-O head único é `0014_capture`: `0012` → `0013` → `0014_capture`.
+O head único é `0015_capture_delivery`: `0012` → `0013` → `0014_capture` → `0015_capture_delivery`.
 A revisão publicada `0013` acrescenta evidências de disponibilidade ao artefato PDF;
 `0014_capture_receipts.py` acrescenta somente os recibos de captura e depende de `0013`.
 As migrations e os contratos publicados `0012`/`0013` permanecem congelados. O contrato
@@ -17,8 +17,10 @@ A atualização preserva dados e versões publicadas; não transforma formulári
 captura nem reescreve conteúdo. O runtime anterior com disponibilidade PDF continua operando
 formulários PDF sobre o schema combinado. Depois de publicar captura, o rollback precisa de
 um runtime que entenda essa finalidade. Preserve o schema e os envios confirmados ao voltar
-código/configuração: downgrade destrutivo continua recusado. Esta etapa não entrega a
-notificação/outbox de captura (8-B); #8 permanece aberta.
+código/configuração: downgrade destrutivo continua recusado. A revisão `0015_capture_delivery` acrescenta a outbox de captura, os perfis Baserow de captura
+e os eventos aceitos pelo webhook. Integrações existentes conservam a ativação e o perfil PDF;
+webhooks antigos aceitam apenas `plano.concluido`. Não há backfill nem ativação implícita.
+A homologação e o fechamento de #8 dependem dos gates independentes.
 
 ## Instalação em banco novo
 
@@ -143,3 +145,17 @@ os modelos atualizados na mesma mudança.
    demonstra esse ciclo com uma revisão temporária que não faz parte do produto.
 5. Revise separadamente a migration, o delta do contrato, os testes e a compatibilidade do runtime
    anterior. Nenhuma opção de ambiente pode substituir contratos ou dispensar o preflight.
+
+## Entregas de captura e rollback
+
+A `0015_capture_delivery` não altera FKs das outboxes PDF. Acrescenta uma tabela vinculada à
+submissão e a exatamente um destino concreto, com revisão, epoch e estado; não copia respostas,
+URLs ou segredos. Retenção exclui as intenções junto da captura. Os contratos anteriores continuam
+congelados e o novo contrato foi preparado em PostgreSQL 16 próprio a partir da fonte pública
+`44ad0738c0eca62f9f2449df00fe99b975a109fa`, pela receita desta página.
+
+Mantenha o schema no rollback de runtime. Um runtime anterior continua operando o ramo PDF com
+os defaults aditivos; para continuar processando captura e suas entregas, use runtime compatível.
+Não faça downgrade destrutivo nem restaure backup perdendo submissões confirmadas. Correção de
+configuração requer retry explícito da entrega, com revisão esperada do mesmo destino. Remover uma
+conexão apaga suas intenções por cascade, sem apagar dados já enviados ao receptor.

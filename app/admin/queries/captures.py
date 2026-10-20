@@ -53,7 +53,11 @@ def detail(session, forms, submission_id, *, with_lead=False):
 def _row(session, forms, row, with_lead):
     found = dict(row._mapping)
     found["submission_id"] = str(found.pop("id"))
-    found.update(status="captured", lead_data=None)
+    from app.capture_deliveries import listing as deliveries
+
+    found.update(
+        status="captured", lead_data=None, deliveries=deliveries(session, submission_id=row.id)
+    )
     if with_lead:
         submission = session.get_one(Submission, row.id)
         identity = resolve_identity(forms, submission)

@@ -188,7 +188,15 @@ def test_the_hand_written_list_of_the_keys_the_services_write_matches_the_public
     acima não vê, as chaves montadas por outro caminho (os campos que `report.model_dump()` espalha na
     retenção, o `**details` repassado). Uma chave nova desse tipo só entra se alguém editar as duas."""
     written = {
-        "app/destinations.py": {"form_slug", "host", "previous_host", "http_confirmed", "source"},
+        "app/destinations.py": {
+            "form_slug",
+            "host",
+            "previous_host",
+            "http_confirmed",
+            "source",
+            "events",
+        },
+        "app/admin/actions/captures.py": {"submission_id", "config_version", "dispatch_no"},
         "app/destinations.py (teste)": {"status", "elapsed_ms", "error"},
         "app/jobs.py": {"attempt", "previous_status", "failure_code", "job_id"},
         "app/retention.py": {
@@ -225,6 +233,7 @@ def test_the_hand_written_list_of_the_keys_the_services_write_matches_the_public
         },
         "app/forms/assets.py": {"name", "sha256", "previous_sha256", "bytes", "source_bytes"},
         "app/integrations/": {
+            "profile",
             "kind",
             "table_id",
             "token_changed",

@@ -267,7 +267,14 @@ def save_destination(
             actor=key.actor,
             expected_version=expected,
             http_confirmed=body.confirm_http,
+            events=body.events,
         )
+    except destinations.InvalidEvents as invalid:
+        raise ApiError(
+            "validation_failed",
+            "Confira os eventos aceitos pelo receptor.",
+            errors=[ErrorItem(field="events", message=invalid.message)],
+        ) from None
     except destinations.InvalidUrl as invalid:
         if invalid.needs_confirmation:
             raise ApiError("confirmation_required", HTTP_NEEDS_CONFIRMATION) from None
@@ -355,8 +362,8 @@ def rotate_destination_secret(
 
 REMOVE_TEXT = (
     "Remover o destino o apaga, com o segredo, e muda para onde vão os dados das leads: os formulários "
-    "que dependiam dele passam a usar o destino padrão, se houver, e sem ele os planos deixam de ser "
-    "entregues."
+    "que dependiam dele passam a usar o destino padrão para novos eventos e retries PDF, se houver. "
+    "Os registros de entrega de respostas vinculados serão apagados, inclusive os pendentes e já concluídos; as contagens aparecem na leitura e no retorno. Pendentes de captura não são reenviados nem transferidos ao padrão; as respostas salvas permanecem."
 )
 
 
@@ -385,10 +392,10 @@ REMOVE_TEXT = (
         "acontece). `expected_version` é a `version` que `get_destination` devolveu, também na query; "
         "se o destino mudou ou já foi removido, `409 version_conflict` e nada é removido. A remoção "
         "fica na auditoria em nome da chave (`webhook_destination.remove`), com o host, sem o "
-        "segredo nem o caminho da URL. Remove também o destino guardado de um formulário que saiu do "
+        "segredo nem o caminho da URL. Intenções de captura vinculadas são apagadas por cascade; a resposta informa as contagens, e pendentes não são enviadas nem transferidas ao padrão. Remove também o destino guardado de um formulário que saiu do "
         "código."
     ),
-    returns="O destino que saiu, como estava, e quem entrega os eventos do escopo agora.",
+    returns="O destino removido, o fallback para novos eventos/PDF e as intenções de captura apagadas por estado; capturas antigas não são redirecionadas.",
     response_model=RemovedDestination,
 )
 def remove_destination(
@@ -475,9 +482,13 @@ def send_destination_test_event(
     deps = get_deps()
     target = resolve(deps, scope)
     try:
-        probe = destinations.send_test(deps, target.form_slug, actor=key.actor)
+        probe = destinations.send_test(deps, target.form_slug, actor=key.actor, event=body.event)
     except destinations.UnreadableSecret:
         raise ApiError("state_conflict", UNREADABLE_SECRET) from None
+    except destinations.UnsupportedEvent:
+        raise ApiError(
+            "state_conflict", "O destino não declarou aceitar o evento de captura."
+        ) from None
     if probe is None:
         raise ApiError("state_conflict", NOTHING_TO_TEST)
     logger.info(

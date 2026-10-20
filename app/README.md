@@ -165,3 +165,31 @@ continua sendo por pedido/submissão, sem documento/hash de plano; apenas seu li
 observada na montagem da linha. Isso não cria controle de ordem de eventos nem altera o upsert.
 URLs diretas de storage já emitidas conservam a validade original; esta mudança não revoga URLs
 pré-assinadas anteriores nem cópias já baixadas.
+
+
+## Integrações de captura
+
+Formulários de captura salvam respostas sem IA ou PDF. Na mesma transação, cada conexão Baserow
+ativa e o webhook efetivo recebem uma intenção própria; sem configuração, nenhum destino é
+inventado. Replay conserva as intenções originais e ativar uma conexão depois não faz backfill.
+
+Configure o perfil **Captura sem PDF** no Baserow (`submission.id` como chave); o perfil PDF
+histórico usa `job.public_id`. A conexão tem uma ativação, aplicável à finalidade publicada.
+O webhook precisa declarar `submissao.persistida` em **Eventos aceitos pelo receptor**; defaults
+preservam apenas `plano.concluido`. A publicação, importação e simulação apontam incompatibilidades
+localmente, sem consultar o provedor. Testes de configuração usam dados sintéticos marcados como
+teste e exigem a confirmação externa, sem criar uma submissão verdadeira.
+
+O despacho ocorre depois do commit no workflow `deliver_capture`, com entrada/saída somente de
+referências e contagens. Falhas do SDK ou provedor não prendem a participante. O reconciliador
+recupera intenção sem run e run perdido usando novo epoch, sem aceitar callback de dispatch antigo.
+O evento conserva seu ID em retries: receptores devem deduplicar por `event_id`; Baserow faz upsert
+pela submissão. Timeout pode repetir uma requisição, sem promessa de entrega exatamente uma vez.
+
+Consulte entregas na captura ou integração. **Repetir entrega** exige confirmação, epoch e revisão
+atual do mesmo destino; mudança de configuração interrompe o envio e não redireciona dados
+silenciosamente. Sucesso comprova transporte HTTP/gravação na planilha, sem provar leitura pela
+participante. Estado não inclui respostas ou erro bruto; dados pessoais continuam exigindo papel
+total e opt-in na API/MCP. Retenção conta da submissão original, trava com o despacho limitado e
+apaga intenções junto da captura. Tasks tardias não enviam nem recriam dados excluídos. Dados já
+recebidos pelo provedor seguem a retenção operada fora do Leadkit.

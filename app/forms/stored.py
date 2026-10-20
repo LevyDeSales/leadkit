@@ -237,6 +237,12 @@ def import_definition(
     now = utc_now()
     version_id = uuid.uuid4()
     with deps.sessions.begin() as session:
+        from app.integration_readiness import configuration_lock
+        from app.integration_readiness import problems as integration_problems
+
+        configuration_lock(session)
+        if issues := integration_problems(session, spec):
+            raise DefinitionError(issues)
         form_id = session.scalar(
             insert(Form)
             .values(

@@ -38,6 +38,15 @@ na versão respondida sem mostrar dados da participante.
 
 **Marca:** identidade externa ao conteúdo do formulário, com macros compatíveis e assets locais.
 
-**Destino:** webhook configurado pela operadora para eventos assinados de conclusão.
+**Destino:** receptor configurado pela operadora para os eventos que ela autorizou.
+
+**Intenção de entrega:** compromisso de notificar um destino sobre uma captura confirmada. Existe
+mesmo antes da primeira tentativa de envio e conserva o fato e o destino originais.
+
+**Entrega de captura:** envio das respostas confirmadas a um destino autorizado, sem plano ou PDF.
+Sucesso significa confirmação do transporte, sem comprovar leitura pela participante.
+
+**Perfil de mapeamento:** seleção de dados que uma integração recebe para uma finalidade: captura
+ou geração de PDF. A ativação da conexão se aplica à finalidade do formulário publicado.
 
 **Retenção:** prazos para expirar links, remover PDFs e excluir dados do pedido.

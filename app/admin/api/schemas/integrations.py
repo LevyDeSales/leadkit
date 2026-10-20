@@ -13,13 +13,14 @@ Dados, não telas: os códigos do banco e do Baserow (`single_select`, `read_onl
 from __future__ import annotations
 
 import uuid
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import AwareDatetime, BaseModel, Field, SecretStr, field_validator
 
 from app.admin import launching
 from app.admin.actions import integrations as actions
 from app.admin.api.common import ConfirmedInput, VersionedInput, utc
+from app.admin.api.schemas.capture_deliveries import CaptureDeliveryCounts, CaptureDeliveryState
 from app.admin.queries import integrations as queries
 from app.integrations import mapping, push, syncs
 from app.integrations.config import StoredIntegration
@@ -59,6 +60,12 @@ class BaserowConnection(BaseModel):
         "trocada sem manter a antiga). Ninguém lê a tabela nem sincroniza até alguém mandar o token "
         "de novo em `connect_form_integration`."
     )
+    capture_mapped_fields: int = Field(
+        default=0, description="Campos do perfil de captura, separado do perfil PDF."
+    )
+    capture_key_field_id: int | None = Field(
+        default=None, description="Campo que identifica a submissão no perfil captura."
+    )
     mapped_fields: int = Field(
         description="Quantos campos da tabela o mapeamento guardado preenche."
     )
@@ -85,6 +92,8 @@ class BaserowConnection(BaseModel):
             token_set=True,
             token_unreadable=token_unreadable,
             mapped_fields=len(stored.entries),
+            capture_mapped_fields=len(stored.capture_entries),
+            capture_key_field_id=stored.capture_key_field_id,
             key_field_id=stored.key_field_id,
             created_by=stored.created_by,
             created_at=utc(stored.created_at),
@@ -306,6 +315,21 @@ class BaserowFailedSync(BaseModel):
 class BaserowIntegration(BaseModel):
     """A integração de um formulário com uma tabela do Baserow, com a tabela **lida agora**."""
 
+    capture_delivery_counts: CaptureDeliveryCounts = Field(
+        default_factory=CaptureDeliveryCounts,
+        description="Intenções locais de captura por estado. Remover a configuração apaga esse histórico; pendentes não mudam de destino e não serão enviadas.",
+    )
+
+    capture_deliveries: list[CaptureDeliveryState] = Field(
+        default_factory=list,
+        description="Entregas de captura por destino; sem dados pessoais ou erro bruto. Retry individual usa retry_capture_delivery.",
+    )
+    profile: str = Field(
+        default="pdf", description="Finalidade do perfil consultado: pdf ou capture."
+    )
+    capture_mapping: list[BaserowMappedField] = Field(
+        default_factory=list, description="Perfil de captura preservado independentemente do PDF."
+    )
     form_slug: str = Field(description="O endereço do formulário.")
     published: bool = Field(
         description="O formulário tem versão publicada. Sem ela não há perguntas para mapear, e "
@@ -343,6 +367,12 @@ class BaserowIntegration(BaseModel):
     def of(cls, detail: queries.IntegrationDetail) -> BaserowIntegration:
         stored = detail.stored
         return cls(
+            capture_delivery_counts=CaptureDeliveryCounts.of(detail.capture_counts),
+            profile=detail.profile,
+            capture_deliveries=list(detail.capture_deliveries),
+            capture_mapping=[BaserowMappedField.of(entry) for entry in stored.capture_entries]
+            if stored
+            else [],
             form_slug=detail.slug,
             published=detail.published,
             connected=stored is not None,
@@ -370,6 +400,10 @@ class BaserowIntegration(BaseModel):
 class SaveFormIntegrationMappingRequest(VersionedInput):
     """O mapeamento a gravar: a fonte de cada campo da tabela."""
 
+    profile: Literal["pdf", "capture"] | None = Field(
+        default=None,
+        description="Omitido usa a finalidade publicada. Pode preparar o outro perfil explicitamente.",
+    )
     sources: dict[str, str] = Field(
         description="A fonte que preenche cada campo da tabela, pelo **id do campo no Baserow** "
         '(o `id` de cada item de `fields` em `get_form_integration`): `{"101": "lead.name"}`. '
@@ -377,10 +411,14 @@ class SaveFormIntegrationMappingRequest(VersionedInput):
         "branco) fica sem mapeamento, e **um id que a tabela não tem é ignorado**. As chaves são "
         "números inteiros positivos na forma canônica (`101`, e não `0101`), com no máximo 10 "
         "algarismos. As fontes que servem a cada campo estão em `sources` de `fields`. **Precisa de "
-        "um campo, e só um, com `job.public_id`** (o código do pedido, de texto ou texto longo): é "
+        "um campo, e só um, com a chave do perfil**: `job.public_id` no PDF ou `submission.id` "
+        "na captura (texto ou texto longo). É "
         "por ele que a sincronização acha a linha de volta. O mapeamento é conferido contra a "
         "tabela de agora e contra as perguntas da versão publicada.",
-        examples=[{"101": "lead.name", "104": "job.public_id", "108": "answer:tamanho_equipe"}],
+        examples=[
+            {"101": "lead.name", "104": "job.public_id", "108": "answer:tamanho_equipe"},
+            {"101": "lead.name", "104": "submission.id", "108": "answer:equipe"},
+        ],
         json_schema_extra={"propertyNames": {"pattern": "^[1-9][0-9]*$"}},
     )
 
@@ -415,6 +453,10 @@ class SaveFormIntegrationMappingRequest(VersionedInput):
 class BaserowMapping(BaseModel):
     """O mapeamento como ficou guardado, com o relatório contra a tabela de agora."""
 
+    profile: Literal["pdf", "capture"] = Field(
+        default="pdf",
+        description="Perfil que foi salvo; a chave e as entradas abaixo pertencem a ele.",
+    )
     version: str = Field(
         description="A versão nova da integração: mande-a em `expected_version` na próxima escrita.",
         examples=["3"],
@@ -428,7 +470,7 @@ class BaserowMapping(BaseModel):
         "relatório do mapeamento novo tem pendências (`report.ok` falso). Corrija-as e ative de novo."
     )
     key_field_id: int | None = Field(
-        description="O campo da tabela que guarda o código do pedido (a chave da sincronização)."
+        description="Campo da chave do perfil selecionado: job.public_id no PDF ou submission.id na captura."
     )
     entries: list[BaserowMappedField] = Field(
         description="O mapeamento guardado, um item por campo."
@@ -442,11 +484,21 @@ class BaserowMapping(BaseModel):
     def of(cls, saved: actions.MappingSaved) -> BaserowMapping:
         integration = saved.integration
         return cls(
+            profile=saved.profile,
             version=str(integration.version),
             active=integration.active,
             deactivated=saved.deactivated,
-            key_field_id=integration.key_field_id,
-            entries=[BaserowMappedField.of(entry) for entry in integration.entries],
+            key_field_id=integration.capture_key_field_id
+            if saved.profile == "capture"
+            else integration.key_field_id,
+            entries=[
+                BaserowMappedField.of(entry)
+                for entry in (
+                    integration.capture_entries
+                    if saved.profile == "capture"
+                    else integration.entries
+                )
+            ],
             report=BaserowReport.of(saved.report),
         )
 
@@ -471,6 +523,11 @@ class RemovedFormIntegration(BaseModel):
     """A integração que saiu, como estava, e o estado das sincronizações que saíram com ela. O token
     nunca vem. As linhas que já estavam na tabela do Baserow ficam lá."""
 
+    capture_delivery_counts: CaptureDeliveryCounts = Field(
+        default_factory=CaptureDeliveryCounts,
+        description="Intenções locais de captura por estado. Remover a configuração apaga esse histórico; pendentes não mudam de destino e não serão enviadas.",
+    )
+
     form_slug: str = Field(description="O endereço do formulário.", examples=["demo"])
     host: str = Field(
         description="O host do Baserow a que a integração estava ligada.",
@@ -491,6 +548,7 @@ class RemovedFormIntegration(BaseModel):
     def of(cls, removed: actions.Removed) -> RemovedFormIntegration:
         integration, counts = removed.integration, removed.sync_counts
         return cls(
+            capture_delivery_counts=CaptureDeliveryCounts.of(removed.capture_counts),
             form_slug=integration.form_slug,
             host=integration.host,
             table_id=integration.table_id,
@@ -508,6 +566,11 @@ class RemovedFormIntegration(BaseModel):
 class SendFormIntegrationTestRequest(ConfirmedInput):
     """O pedido do envio de teste. Escreve (ou atualiza) uma linha na planilha do cliente, por isso a
     operação é marcada e exige `confirm: true` em toda chamada."""
+
+    profile: Literal["pdf", "capture"] | None = Field(
+        default=None,
+        description="Perfil do teste sintético; omitido usa a finalidade publicada. Não cria submissão real.",
+    )
 
 
 class SentFormIntegrationTest(BaseModel):
