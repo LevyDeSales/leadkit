@@ -42,6 +42,32 @@ Contato não deve ser interpolado no prompt. Imagens do formulário usam `asset:
 por conteúdo na versão. O PDF aceita recursos locais confinados, `data:` e imagens do formulário;
 URLs de rede são recusadas. Veja [marca privada](../docs/branding.md).
 
+### Conclusão após salvar respostas
+
+O bloco opcional `completion` pertence à versão publicada. Sem ele, a participante acompanha o
+resultado do PDF como antes (`mode: result`). Os outros modos são `confirmation` (recibo local),
+`button` (recibo com botão) e `redirect` (recibo com encaminhamento automático e botão de continuidade).
+`message` é texto puro de 1 a 2000 caracteres, com padrão “Recebemos suas respostas. Obrigada por
+participar.”; `button_label` tem de 1 a 300 caracteres e padrão “Continuar”. HTML é escapado e texto
+não é interpretado como template. O botão de envio do formulário mantém o texto legado.
+
+`url` é obrigatória em `button`/`redirect` e não se aplica aos modos locais. A configuração
+administrativa autoriza a URL HTTPS exata, sem usuário/senha ou override público; o produto não
+acrescenta respostas, dados pessoais ou credenciais a ela. Não há lista global adicional de domínios.
+Sem JavaScript, a participante usa o botão do recibo. O botão continua disponível ao voltar à página.
+
+Editor, API e MCP editam o mesmo documento. A prévia “Conferir conclusão salva” usa o rascunho,
+mostra o destino como texto e desativa a navegação; também está disponível na operação
+`render_form_draft_completion_preview`. Mudar somente conclusão não invalida o teste do LLM.
+Importação, cópia e exportação conservam a configuração pela versão.
+
+A confirmação só acontece após commit, e reenvios conservam a versão original, mesmo após nova
+publicação. O disparo de geração inicia sem prender a resposta; falha ou interrupção conserva o job
+persistido para o reconciliador. A API pública mantém os campos do pedido e acrescenta `completion`,
+incluindo `receipt_url` local. O token desse recibo é trocado por cookie como no resultado existente.
+Não envie esse token ao destino externo. A conclusão não bloqueia nem libera PDF: a geração e os
+acessos atuais continuam funcionando. Esta opção ainda opera apenas com geração de PDF.
+
 ## API e MCP
 
 A especificação está em [docs/api/openapi.json](../docs/api/openapi.json); a referência interativa

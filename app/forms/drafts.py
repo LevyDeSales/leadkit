@@ -146,6 +146,7 @@ SCREEN_FIELDS = (
     "data",
     "scoring",
     "notices",
+    "completion",
 )
 # O que o resto não traz: o endereço, que só muda antes da primeira publicação e no campo dele, e
 # a versão do texto do consentimento, que a publicação sobe sozinha. Salvar põe de volta os

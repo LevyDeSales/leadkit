@@ -40,10 +40,13 @@ from app.intake import (
     SubmissionLimitExceeded,
     accept_submission,
     clean_tracking,
+    submission_spec,
 )
 from app.models import Artifact, Job, Plan, Submission, utcnow
 from app.submission_identity import resolve_identity
+from app.submission_launch import launch_after_commit
 from app.tokens import TokenError
+from app.web.completion import render_completion
 from app.web.formview import (
     PRIVACY,
     FormPost,
@@ -140,12 +143,19 @@ def _page(request: Request, name: str, status_code: int = 200, **context: object
 # --- formulário -------------------------------------------------------------------------------
 
 
-def _screen_form(request: Request, slug: str) -> tuple[FormSpec, Screen] | Response:
+def _screen_form(
+    request: Request, slug: str, key: str | None = None
+) -> tuple[FormSpec, Screen] | Response:
     """A versão atual do formulário, se ele tem página pública e recebe envios: um envio novo usa
     sempre ela. Senão, a página que diz por quê. Inativo, ele está indisponível (410): a lead sabe
     que o problema não é com ela, e quem enviou sabe que as respostas não foram."""
     try:
-        spec = get_deps().forms.current(slug)
+        deps = get_deps()
+        if key is None:
+            spec = deps.forms.current(slug)
+        else:
+            with deps.sessions() as session:
+                spec = submission_spec(session, deps.forms, slug, key)
     except InactiveForm:
         return _page(request, "unavailable", 410, submitted=request.method == "POST")
     except UnknownForm:
@@ -222,11 +232,12 @@ def _grant_access(response: Response, request: Request, job: Job, token: str) ->
 
 @router.post("/p/{slug}")
 async def submit_form(slug: str, request: Request) -> Response:
-    found = await run_in_threadpool(_screen_form, request, slug)
+    raw = await request.form()
+    found = await run_in_threadpool(_screen_form, request, slug, f"web:{raw.get('_idem', '')}")
     if isinstance(found, Response):
         return found
     spec, screen = found
-    post = read_post(screen, await request.form(), spec.conditions)
+    post = read_post(screen, raw, spec.conditions)
     if post.honeypot:
         return _form_page(request, spec, screen, post, banner=SEND_FAILED, status_code=400)
     errors = form_errors(spec, screen, post)
@@ -255,10 +266,15 @@ async def submit_form(slug: str, request: Request) -> Response:
                 signer=deps.signer,
                 link_ttl=deps.link_ttl,
                 limits=deps.submission_limits,
+                forms=deps.forms,
             )
 
     try:
         accepted = await run_in_threadpool(_accept)
+    except sa.exc.SQLAlchemyError:
+        response = _form_page(request, spec, screen, post, banner=SEND_FAILED, status_code=503)
+        response.headers["Retry-After"] = "5"
+        return response
     except ValidationError as exc:
         # As respostas já passaram por `form_errors`: sobra o canal de marketing que a página não
         # pede (página velha ou envio forjado). O erro vai no campo do consentimento.
@@ -285,8 +301,9 @@ async def submit_form(slug: str, request: Request) -> Response:
     job = accepted.job
     if not accepted.replay:
         # Falha no disparo não perde o pedido: o reconciliador dispara depois.
-        await request.app.state.trigger(job.id, job.attempt)
-    response = RedirectResponse(f"/d/{job.public_id}", status_code=303)
+        launch_after_commit(request.app, job.id, job.attempt)
+    suffix = "/conclusao" if accepted.form.completion.mode != "result" else ""
+    response = RedirectResponse(f"/d/{job.public_id}{suffix}", status_code=303)
     _grant_access(response, request, job, accepted.token)
     return response
 
@@ -327,10 +344,12 @@ def _lead_job(request: Request, deps: Deps, public_id: str) -> Job | Response:
     return access.job
 
 
-def _exchange(request: Request, deps: Deps, public_id: str, token: str) -> Response:
+def _exchange(
+    request: Request, deps: Deps, public_id: str, token: str, *, suffix: str = ""
+) -> Response:
     """Link com `?t=`: troca o token pelo cookie e volta para a URL limpa, para o token não
     ficar na barra, no histórico nem no Referer. Token errado não ganha nada."""
-    response = RedirectResponse(f"/d/{public_id}", status_code=303)
+    response = RedirectResponse(f"/d/{public_id}{suffix}", status_code=303)
     access = _access(deps, public_id, token)
     if access.job is not None:  # válido ou vencido: a página certa vem depois do redirect
         _grant_access(response, request, access.job, token)
@@ -417,6 +436,28 @@ def _preview(deps: Deps, details: JobDetails) -> Markup | None:
         logger.warning("prévia de %s v%s falhou: %s", spec.slug, spec.version_number, exc)
         return None
     return Markup(html)
+
+
+@router.get("/d/{public_id}/conclusao")
+def completion_page(public_id: str, request: Request) -> Response:
+    deps = get_deps()
+    token = request.query_params.get("t")
+    if token is not None:
+        return _exchange(request, deps, public_id, token, suffix="/conclusao")
+    job = _lead_job(request, deps, public_id)
+    if isinstance(job, Response):
+        return job
+    with deps.sessions() as session:
+        submission = session.get_one(Submission, job.submission_id)
+        try:
+            spec = deps.forms.get(submission.form_slug, submission.form_version_number)
+        except UnknownForm:
+            return _page(request, "unknown", 404)
+    if spec.completion.mode == "result":
+        return RedirectResponse(f"/d/{job.public_id}", status_code=303)
+    from fastapi.responses import HTMLResponse
+
+    return HTMLResponse(render_completion(spec))
 
 
 @router.get("/d/{public_id}")

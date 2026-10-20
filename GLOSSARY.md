@@ -12,6 +12,16 @@ a versão e não muda os pedidos anteriores.
 
 **Pedido:** processamento de um envio, com estado e link assinado para resultado e PDF.
 
+**Submissão:** respostas recebidas de uma participante, com consentimentos e a versão do formulário
+que ela respondeu. Um reenvio do mesmo envio confirmado conserva essa submissão.
+
+**Conclusão:** próximo passo apresentado à participante depois de salvar a submissão, conforme a
+versão do formulário: acompanhar o resultado, receber confirmação local ou seguir a outro destino.
+Não é a conclusão da geração nem uma autorização de acesso ao PDF.
+
+**Destino de conclusão:** endereço escolhido pela operadora para o próximo passo da participante.
+É distinto do destino de integração que recebe eventos e dados.
+
 **Plano:** documento estruturado gerado pelo LLM e validado contra o schema da versão.
 
 **Pontuação:** expressões determinísticas sobre respostas, com faixas e prioridade opcionais.

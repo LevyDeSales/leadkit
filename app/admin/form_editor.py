@@ -398,6 +398,48 @@ CHANNEL_DEFAULTS = {
 
 
 @dataclass(eq=False)
+class CompletionEdit:
+    """Conclusão como texto de formulário; a validação final pertence ao compilador."""
+
+    mode: str = "result"
+    message: str = ""
+    button_label: str = ""
+    url: str = ""
+
+    @classmethod
+    def of_document(cls, value: Any) -> CompletionEdit:
+        found = value if isinstance(value, Mapping) else {}
+        return cls(
+            **{key: _text(found.get(key)) for key in ("message", "button_label", "url")},
+            mode=_text(found.get("mode")) or "result",
+        )
+
+    @classmethod
+    def of_form(cls, form: FormFields) -> CompletionEdit:
+        return cls.of_document(
+            {
+                key: form.getlist(f"completion.{key}")[0]
+                for key in ("mode", "message", "button_label", "url")
+                if form.getlist(f"completion.{key}")
+            }
+        )
+
+    def document(self) -> dict[str, Any]:
+        return {
+            "mode": self.mode.strip(),
+            **{
+                key: _lines(value).strip()
+                for key, value in (
+                    ("message", self.message),
+                    ("button_label", self.button_label),
+                    ("url", self.url),
+                )
+                if value.strip()
+            },
+        }
+
+
+@dataclass(eq=False)
 class FormEdit:
     """O que o editor estruturado cobre de uma definição, como a operadora o edita."""
 
@@ -417,6 +459,7 @@ class FormEdit:
     data: DataEdit = field(default_factory=DataEdit)
     scoring: ScoringEdit = field(default_factory=ScoringEdit)
     notices: NoticesEdit = field(default_factory=NoticesEdit)
+    completion: CompletionEdit = field(default_factory=CompletionEdit)
 
     # --- leitura ------------------------------------------------------------------------------
 
@@ -456,6 +499,7 @@ class FormEdit:
             data=DataEdit.of_document(document.get("data")),
             scoring=ScoringEdit.of_document(document.get("scoring")),
             notices=NoticesEdit.of_document(document.get("notices")),
+            completion=CompletionEdit.of_document(document.get("completion")),
         )
 
     @classmethod
@@ -525,6 +569,7 @@ class FormEdit:
             data=DataEdit.of_form(form),
             scoring=ScoringEdit.of_form(form),
             notices=NoticesEdit.of_form(form),
+            completion=CompletionEdit.of_form(form),
         )
         for role in IDENTITY_ROLES:
             position = _POSITION.fullmatch(first(f"identity.{role}"))
@@ -608,6 +653,9 @@ class FormEdit:
             found["scoring"] = scoring
         if (notices := self.notices.document()) is not None:
             found["notices"] = notices
+        completion = self.completion.document()
+        if completion != {"mode": "result"}:
+            found["completion"] = completion
         return found
 
     def problems(self) -> list[Problem]:

@@ -21,7 +21,7 @@ from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app import admin, destinations, jobs, pipeline
@@ -29,8 +29,9 @@ from app.admin.api import errors as admin_api_errors
 from app.admin.api.application import create_admin_api
 from app.admin.auth import instant
 from app.deps import Deps, get_deps
-from app.forms import InactiveForm, UnknownForm
+from app.forms import FormSpec, InactiveForm, UnknownForm
 from app.forms.data_notices import log_data_notices
+from app.forms.definition.document import CompletionDoc
 from app.forms.image_optimizer import MAX_UPLOAD_BYTES
 from app.intake import (
     ConsentTextMismatch,
@@ -39,9 +40,11 @@ from app.intake import (
     SubmissionIn,
     SubmissionLimitExceeded,
     accept_submission,
+    submission_spec,
 )
 from app.integrations import config as integration_config
 from app.models import Artifact, Job
+from app.submission_launch import launch_after_commit, stop_launches
 from app.tokens import TokenError
 from app.web import router as web_router
 from app.web.images import router as images_router
@@ -69,6 +72,27 @@ PRIVATE_HEADERS = {"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"
 logger = logging.getLogger(__name__)
 
 Trigger = Callable[[uuid.UUID, int], Awaitable[str | None]]
+
+
+class SubmissionCompletion(CompletionDoc):
+    """Próximo passo fixado na versão do envio. O recibo é local; `url` nunca recebe dados anexos."""
+
+    receipt_url: str
+
+
+class SubmissionAccepted(BaseModel):
+    """Pedido persistido; geração e conclusão são independentes."""
+
+    public_id: str
+    token: str
+    status: str
+    replay: bool
+    status_url: str
+    pdf_url: str
+    page_url: str
+    completion: SubmissionCompletion
+
+
 # Dispara o teste do rascunho (`app.forms.drafts`) pelo id; None: o engine não recebeu.
 TestTrigger = Callable[[uuid.UUID], Awaitable[str | None]]
 
@@ -105,7 +129,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     # O relógio do app (o mesmo da sessão do admin) diz o dia contra o qual os dados dos formulários
     # são conferidos; os testes o trocam.
     await run_in_threadpool(_log_data_notices, instant(app.state.admin_clock))
-    yield
+    try:
+        yield
+    finally:
+        await stop_launches(app)
 
 
 def _under(path: str, prefix: str) -> bool:
@@ -300,6 +327,7 @@ def create_app(
         return await alaunch_draft_test(test_id, timeout=settings.hatchet_trigger_timeout_seconds)
 
     app.state.trigger = trigger or default_trigger
+    app.state.submission_launches = set()
     app.state.test_trigger = test_trigger or default_test_trigger
     # A API de admin é uma sub-aplicação montada, com o OpenAPI, os erros e a autenticação dela: o
     # formato de erro das páginas e o da API pública não mudam. Recebe o relógio e os disparadores
@@ -332,16 +360,21 @@ def create_app(
             return JSONResponse({"status": "unavailable"}, status_code=503)
         return JSONResponse({"status": "ok"})
 
-    @app.post("/v1/forms/{slug}/submissions", status_code=202)
+    @app.post("/v1/forms/{slug}/submissions", status_code=202, response_model=SubmissionAccepted)
     async def submit(
         slug: str,
         request: Request,
         idempotency_key: Annotated[str | None, Header(max_length=200)] = None,
     ) -> JSONResponse:
         deps = get_deps()
+        key = idempotency_key or f"auto:{uuid.uuid4()}"
         try:
             # Um envio novo usa sempre a versão atual. A consulta vai ao banco: fora do event loop.
-            spec = await run_in_threadpool(deps.forms.current, slug)
+            def _spec() -> FormSpec:
+                with deps.sessions() as session:
+                    return submission_spec(session, deps.forms, slug, key)
+
+            spec = await run_in_threadpool(_spec)
         except InactiveForm:  # desativado no admin: não recebe envios novos
             return JSONResponse(
                 {"code": "form_unavailable", "detail": "formulário indisponível"}, status_code=410
@@ -356,7 +389,6 @@ def create_app(
             return JSONResponse(
                 {"errors": [{"field": "", "message": "JSON inválido"}]}, status_code=422
             )
-        key = idempotency_key or f"auto:{uuid.uuid4()}"
 
         def _accept() -> Any:
             with deps.sessions.begin() as session:
@@ -368,11 +400,16 @@ def create_app(
                     signer=deps.signer,
                     link_ttl=deps.link_ttl,
                     limits=deps.submission_limits,
+                    forms=deps.forms,
                 )
                 return accepted, accepted.job.id, accepted.job.attempt, accepted.job.public_id
 
         try:
             accepted, job_id, attempt, public_id = await run_in_threadpool(_accept)
+        except sa.exc.SQLAlchemyError:
+            return _refusal(
+                503, "unavailable", "não foi possível confirmar o envio; tente de novo", 5
+            )
         except ValidationError as exc:
             return JSONResponse({"errors": _validation_errors(exc)}, status_code=422)
         except ConsentTextMismatch as exc:
@@ -394,7 +431,7 @@ def create_app(
             )
 
         if not accepted.replay:
-            await request.app.state.trigger(job_id, attempt)  # falha aqui fica com o reconciliador
+            launch_after_commit(request.app, job_id, attempt)
         links = pipeline.lead_links(deps, accepted.job)
         return JSONResponse(
             {
@@ -403,6 +440,13 @@ def create_app(
                 "status": accepted.job.status,
                 "replay": accepted.replay,
                 **links,
+                "completion": {
+                    "mode": accepted.form.completion.mode,
+                    "message": accepted.form.completion.message,
+                    "button_label": accepted.form.completion.button_label,
+                    "url": accepted.form.completion.url,
+                    "receipt_url": links["page_url"].replace("?t=", "/conclusao?t="),
+                },
             },
             status_code=202,
             headers=PRIVATE_HEADERS,

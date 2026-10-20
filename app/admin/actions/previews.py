@@ -36,11 +36,22 @@ from app.forms import FormSpec, Screen, UnknownForm, draft_previews, draft_tests
 from app.forms import assets as form_assets
 from app.forms.definition import DefinitionError, Problem, compile_definition
 from app.forms.sandbox import TemplateProblem
+from app.web.completion import render_completion
 from app.web.formview import StepView, conditions_data, steps_view
 from app.web.templating import templates
 
 RESULT_TEMPLATE = "admin/form_result_frame.html"
 PUBLIC_TEMPLATE = "admin/form_preview_frame.html"
+
+
+def completion_preview(deps: Deps, slug: str, **frame: object) -> str:
+    """A conclusão salva, sem dados de envio, LLM, navegação ou geração de PDF."""
+    with deps.sessions() as session:
+        draft = drafts.load(session, slug)
+    if draft is None:
+        raise UnknownForm(slug)
+    spec = compile_definition(draft.document, version_number=draft.next_number)
+    return render_completion(spec, preview=True, **frame)
 
 
 class PdfFailed(Exception):

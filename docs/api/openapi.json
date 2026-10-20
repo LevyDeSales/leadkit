@@ -1459,6 +1459,59 @@
         "title": "ComparisonSide",
         "type": "object"
       },
+      "CompletionDoc": {
+        "additionalProperties": false,
+        "description": "Conclusão após persistência. Texto puro, sem HTML nem interpretação de template.",
+        "properties": {
+          "button_label": {
+            "default": "Continuar",
+            "description": "Rótulo do botão de continuidade, em texto puro, de 1 a 300 caracteres. Não é o rótulo de envio do formulário.",
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Button Label",
+            "type": "string"
+          },
+          "message": {
+            "default": "Recebemos suas respostas. Obrigada por participar.",
+            "description": "Mensagem de confirmação em texto puro, de 1 a 2000 caracteres. HTML é escapado; não aceita interpolação de respostas.",
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Message",
+            "type": "string"
+          },
+          "mode": {
+            "default": "result",
+            "description": "Próximo passo após commit: resultado PDF (padrão legado), confirmação local, botão ou encaminhamento com recibo de continuidade. Não altera geração nem autorização de PDF.",
+            "enum": [
+              "result",
+              "confirmation",
+              "button",
+              "redirect"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "URL HTTPS exata autorizada pela configuração autenticada. Obrigatória em button/redirect e ausente em result/confirmation; sem usuário/senha, override público ou anexos automáticos de dados/token.",
+            "examples": [
+              "https://example.test/proximo-passo"
+            ],
+            "title": "Url"
+          }
+        },
+        "title": "CompletionDoc",
+        "type": "object"
+      },
       "ConditionDoc": {
         "additionalProperties": false,
         "description": "A condição de uma pergunta ou de uma opção (`show_when`): vale quando todas as regras\nvalem (`mode` `all`) ou quando ao menos uma vale (`any`).",
@@ -3047,6 +3100,9 @@
         "additionalProperties": false,
         "description": "A definição de um formulário: as etapas e as perguntas, a identidade e o consentimento da lead,\na pontuação, as instruções e o prompt do LLM, o modelo do plano, o HTML e o CSS do PDF, a prévia\nda página de resultado e os exemplos. É o que o banco guarda de cada versão publicada e o que a\nexportação escreve (`get_form_version` o devolve como está guardado). O formato e o que cada\nparte faz estão em `app.forms.definition`.",
         "properties": {
+          "completion": {
+            "$ref": "#/components/schemas/CompletionDoc"
+          },
           "consent": {
             "$ref": "#/components/schemas/ConsentDoc"
           },
@@ -9085,7 +9141,7 @@
   "info": {
     "description": "Tudo o que o painel admin faz, por chave de API com papel.\n\n**Autenticação.** Só `Authorization: Bearer <chave>`: a chave não vai na URL nem em cookie, e a\nsessão do painel não vale em nenhuma operação (ela só abre esta referência e o `openapi.json`). Cada\noperação diz o papel mínimo (`x-required-role`): `leitura` só consulta; `total` faz tudo o que o\nadmin logado faz. Toda escrita fica na auditoria em nome da chave (`chave:<nome>`).\n\n**Erros.** Um formato só, `{\"code\", \"detail\"}`, com `errors` (`field`, `message`, `line`) no `422`.\nA resposta nunca traz o valor recebido.\n\n**Operações marcadas.** As que apagam ou sobrescrevem algo difícil de desfazer (`x-destructive`) e\nas que mudam o que a lead vê, para onde os dados dela vão ou chamam um serviço de fora\n(`x-external-effect`) exigem `\"confirm\": true` em toda chamada (na query, em `DELETE`). Sem ele, a\nresposta é `422 confirmation_required` e nada acontece.\n\n**Limite de uso.** Cada chave tem um balde de chamadas por minuto; passou, `429 rate_limited` com\n`Retry-After`.\n\n**Fora das operações.** De qualquer endereço podem vir `404 not_found` (caminho sem operação),\n`405 method_not_allowed` (com `Allow`, os métodos do caminho), `413 payload_too_large`,\n`500 internal_error` e `503 unavailable` (banco fora do ar, com `Retry-After`).\n\n## MCP: usar a API pelo Claude\n\nO **MCP** (`python -m app.admin_mcp`) é um programa que roda no computador da operadora e deixa o\nClaude Desktop e o Claude Code chamarem esta API numa conversa. É um cliente HTTP desta API, só por\n`stdio` (não há MCP remoto), com a chave de quem o usa: nada novo sobe no servidor, e a autorização é\na da chave.\n\n**Configurar.** A tela [Configurar o MCP](/admin/mcp), no menu do painel, leva do zero ao servidor\nfuncionando: escolhe ou cria a chave (o segredo aparece uma vez), mostra a instalação, monta o comando\ndo Claude Code ou o bloco do Claude Desktop já com o endereço deste painel e confere a chave.\n\n**Ferramentas por papel.** Cada operação desta referência é uma ferramenta, com o `operationId` como\nnome, o `summary` e a `description` como texto, e os parâmetros e o corpo juntos num só objeto de\nentrada. Uma chave `leitura` recebe as operações de papel `leitura`; uma `total`, todas. Vêm além\ndelas algumas **compostas**, que juntam as chamadas de um fluxo (`attention_overview`,\n`diagnose_order`, `edit_form_draft`, `publish_form_with_review` e `connect_baserow_integration`) e só\nchamam ferramentas que a chave já tem. Para explorar, prefira `leitura`: são menos ferramentas.\n\n**Confirmações.** Uma operação marcada (`x-destructive` ou `x-external-effect`) não executa sozinha: o\nMCP mostra o efeito e o alvo e só chama a API com o sim da pessoa. O `confirm` que o modelo escrever\npor conta própria é ignorado.\n\n**Dado da lead.** Fica desligado: sem `GERADOR_MCP_LEAD_DATA=1`, o nome, o e-mail e as respostas das\nleads não chegam ao modelo, e o argumento `include_lead_data`, a busca `q` de `list_jobs` e a\n`download_job_pdf` não existem. Com a opção e uma chave `total` eles voltam, e o que o Claude ler vai\nao provedor do modelo.\n\n**Pastas.** PDFs e HTML vão para arquivo, em `GERADOR_MCP_DOWNLOAD_DIR` (ou numa pasta só do usuário\nno diretório temporário), e a ferramenta devolve o caminho, nunca os bytes. As imagens\n(`upload_asset` e `replace_asset`) só saem de `GERADOR_MCP_UPLOAD_DIR`, uma pasta que a pessoa\nescolhe e que não tem padrão. **A imagem enviada é servida sem login**: ponha nessa pasta só o que\npode ser público.\n\n**A chave.** Vai no ambiente do cliente (`GERADOR_API_URL` e `GERADOR_API_KEY`), nunca na linha de\ncomando do servidor, e só viaja no cabeçalho `Authorization: Bearer`: não aparece em retorno de\nferramenta, em erro nem em log.\n",
     "title": "Leadkit: API de admin",
-    "version": "1.55.0"
+    "version": "1.56.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -12179,6 +12235,107 @@
           "Rascunho"
         ],
         "x-required-role": "total"
+      }
+    },
+    "/forms/{slug}/draft/completion-preview": {
+      "get": {
+        "description": "Mostra a conclusão do rascunho salvo em HTML, com mensagem e rótulo escapados e botão externo desativado. Não salva respostas, não navega, não gera PDF, não chama LLM nem envia eventos. O destino é apenas texto. Sem rascunho editado, usa a versão publicada. Para editar a conclusão, use `save_form_draft` ou `patch_form_draft` com `completion` no documento; para publicar, `publish_form_draft`.",
+        "operationId": "render_form_draft_completion_preview",
+        "parameters": [
+          {
+            "description": "O endereço do formulário (`slug`), como `list_forms` o mostra.",
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "description": "O endereço do formulário (`slug`), como `list_forms` o mostra.",
+              "title": "Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Recibo de exemplo em HTML, com navegação desativada."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Sem chave, chave desconhecida ou de segredo errado (`invalid_credentials`: a mesma resposta nos três casos), ou chave vencida (`key_expired`) ou revogada (`key_revoked`). Leva `WWW-Authenticate: Bearer`.",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Sempre `Bearer`: o único esquema que a API aceita.",
+                "schema": {
+                  "examples": [
+                    "Bearer"
+                  ],
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "O formulário não existe (`not_found`)."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "O rascunho não compila (`validation_failed`); `errors` informa o campo, sem repetir os valores recebidos."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Limite de uso da chave ou bloqueio por chave errada (`rate_limited`), ou pausa entre os testes pagos do rascunho (`test_paused`). Leva `Retry-After`.",
+            "headers": {
+              "Retry-After": {
+                "description": "Quantos segundos esperar antes de tentar de novo.",
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "summary": "Pré-visualizar a conclusão do rascunho",
+        "tags": [
+          "Prévias do rascunho"
+        ],
+        "x-required-role": "leitura"
       }
     },
     "/forms/{slug}/draft/pdf-preview": {

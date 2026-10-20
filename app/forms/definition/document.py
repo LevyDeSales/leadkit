@@ -509,6 +509,28 @@ class ScoringDoc(_Strict):
     persona: list[RuleDoc] = Field(default=[], max_length=MAX_RULES)
 
 
+class CompletionDoc(_Strict):
+    """Conclusão após persistência. Texto puro, sem HTML nem interpretação de template."""
+
+    mode: Literal["result", "confirmation", "button", "redirect"] = Field(
+        default="result",
+        description="Próximo passo após commit: resultado PDF (padrão legado), confirmação local, botão ou encaminhamento com recibo de continuidade. Não altera geração nem autorização de PDF.",
+    )
+    message: Text = Field(
+        default="Recebemos suas respostas. Obrigada por participar.",
+        description="Mensagem de confirmação em texto puro, de 1 a 2000 caracteres. HTML é escapado; não aceita interpolação de respostas.",
+    )
+    button_label: Label = Field(
+        default="Continuar",
+        description="Rótulo do botão de continuidade, em texto puro, de 1 a 300 caracteres. Não é o rótulo de envio do formulário.",
+    )
+    url: HttpsUrl | None = Field(
+        default=None,
+        description="URL HTTPS exata autorizada pela configuração autenticada. Obrigatória em button/redirect e ausente em result/confirmation; sem usuário/senha, override público ou anexos automáticos de dados/token.",
+        examples=["https://example.test/proximo-passo"],
+    )
+
+
 class ExamplesDoc(_Strict):
     answers: dict[str, Any]
     plan: dict[str, Any]
@@ -538,6 +560,7 @@ class FormDocument(_Strict):
     data: dict[Name, DataBlockDoc] = {}
     phases: PhasesDoc | None = None
     notices: NoticesDoc | None = None
+    completion: CompletionDoc = Field(default_factory=CompletionDoc)
     examples: ExamplesDoc
 
 

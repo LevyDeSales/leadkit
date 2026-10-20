@@ -82,6 +82,27 @@
 
       {% include "admin/_form_structure.html" %}
 
+      <section class="box" id="conclusao" aria-labelledby="conclusao-titulo">
+        <h2 id="conclusao-titulo">Depois de salvar as respostas</h2>
+        <p class="muted">Esta escolha define o próximo passo da participante. O PDF continua sendo gerado; a conclusão não controla quem pode acessá-lo.</p>
+        <div class="form-stack">
+          <div class="field">
+            <label for="{{ s.field_id('completion.mode') }}">Conclusão</label>
+            <select class="input" id="{{ s.field_id('completion.mode') }}" name="completion.mode">
+              {% for value, label in [('result', 'Acompanhar o resultado do PDF (padrão)'), ('confirmation', 'Mostrar confirmação local'), ('button', 'Mostrar botão para outro destino'), ('redirect', 'Encaminhar para outro destino')] %}
+              <option value="{{ value }}"{% if s.edit.completion.mode == value %} selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+            {{ f.error_for('completion.mode') }}
+          </div>
+          {{ f.field('completion.message', 'Mensagem de confirmação', s.edit.completion.message, hint='Texto puro, até 2000 caracteres. Em branco: Recebemos suas respostas. Obrigada por participar.', area=True, rows=3, opt=True) }}
+          {{ f.field('completion.button_label', 'Rótulo do botão de continuidade', s.edit.completion.button_label, hint='Até 300 caracteres. Em branco: Continuar.', opt=True) }}
+          {{ f.field('completion.url', 'Destino do botão ou encaminhamento', s.edit.completion.url, hint='URL exata começando por https://, sem usuário ou senha. Não recebe respostas nem credenciais automaticamente. Deixe em branco nos modos locais.', opt=True, mono=True) }}
+          <a class="btn btn--secondary" href="/admin/forms/{{ page.nav.slug }}/draft/completion-preview">Conferir conclusão salva</a>
+          <p class="muted">A prévia usa o rascunho salvo e mantém o botão desativado, sem sair desta página nem enviar respostas.</p>
+        </div>
+      </section>
+
       <section class="box" id="consentimento" aria-labelledby="consentimento-titulo">
         <h2 id="consentimento-titulo">Consentimento</h2>
         <p class="muted">O que a lead lê e autoriza antes de enviar. A versão do texto sobe sozinha na publicação quando o texto muda, e cada envio guarda a versão que a lead leu.</p>

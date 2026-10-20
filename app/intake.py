@@ -21,7 +21,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.forms import FormSpec, ScoreResult
+from app.forms import FormRegistry, FormSpec, ScoreResult
 from app.models import Job, Lead, Submission, utcnow
 from app.tokens import TokenSigner, new_public_id
 
@@ -103,6 +103,15 @@ class Accepted:
     job: Job
     token: str
     replay: bool
+    form: FormSpec
+
+
+def submission_spec(session: Session, forms: FormRegistry, slug: str, key: str) -> FormSpec:
+    """Replay usa a versão fixada no envio, antes de validar perguntas e consentimento."""
+    previous = _find_submission(session, slug, key)
+    if previous is not None:
+        return forms.get(slug, previous.form_version_number)
+    return forms.current(slug)
 
 
 def clean_tracking(raw: dict[str, str]) -> dict[str, str]:
@@ -159,6 +168,7 @@ def accept_submission(
     link_ttl: timedelta,
     limits: SubmissionLimits,
     now: datetime | None = None,
+    forms: FormRegistry | None = None,
 ) -> Accepted:
     """Levanta `pydantic.ValidationError` (respostas inválidas, ou autorização de marketing por um
     canal que o formulário não pede), `ConsentTextMismatch`, `IdempotencyConflict`,
@@ -167,6 +177,9 @@ def accept_submission(
 
     Reenviar uma chave já gravada devolve o resultado de antes sem passar pelos limites: o replay
     não cria pedido nem conta como envio."""
+    existing = _find_submission(session, spec.slug, idempotency_key)
+    if existing is not None and forms is not None:
+        spec = forms.get(spec.slug, existing.form_version_number)
     answers = spec.answers_model.model_validate(body.answers)
     if body.consent.text_version != spec.consent_text_version:
         raise ConsentTextMismatch(spec.consent_text_version)
@@ -174,9 +187,8 @@ def accept_submission(
     answers_json = stored_answers(spec, answers)
     now = now or utcnow()
 
-    existing = _find_submission(session, spec.slug, idempotency_key)
     if existing is not None:
-        return _replay(session, existing, answers_json, signer)
+        return _replay(session, existing, answers_json, signer, spec, body, forms)
 
     identity = spec.identity(answers)
     tracking = clean_tracking(body.tracking)
@@ -190,7 +202,7 @@ def accept_submission(
             # linha: ela é replay, não envio novo.
             existing = _find_submission(session, spec.slug, idempotency_key)
             if existing is not None:
-                return _replay(session, existing, answers_json, signer)
+                return _replay(session, existing, answers_json, signer, spec, body, forms)
             _enforce_limits(session, spec.slug, lead_id, limits, now)
             submission = Submission(
                 lead_id=lead_id,
@@ -224,8 +236,10 @@ def accept_submission(
         existing = _find_submission(session, spec.slug, idempotency_key)
         if existing is None:
             raise
-        return _replay(session, existing, answers_json, signer)
-    return Accepted(job=job, token=signer.issue(job.public_id, job.token_version), replay=False)
+        return _replay(session, existing, answers_json, signer, spec, body, forms)
+    return Accepted(
+        job=job, token=signer.issue(job.public_id, job.token_version), replay=False, form=spec
+    )
 
 
 def _enforce_limits(
@@ -266,14 +280,30 @@ def _find_submission(session: Session, form_slug: str, key: str) -> Submission |
 
 
 def _replay(
-    session: Session, submission: Submission, answers_json: dict[str, Any], signer: TokenSigner
+    session: Session,
+    submission: Submission,
+    answers_json: dict[str, Any],
+    signer: TokenSigner,
+    spec: FormSpec,
+    body: SubmissionIn,
+    forms: FormRegistry | None,
 ) -> Accepted:
+    if forms is not None and spec.version_number != submission.form_version_number:
+        # Uma publicação pode cruzar dois envios concorrentes da mesma chave. A perdedora
+        # compara respostas e conclusão pela versão que a vencedora confirmou.
+        spec = forms.get(submission.form_slug, submission.form_version_number)
+        answers_json = stored_answers(spec, spec.answers_model.model_validate(body.answers))
+        if body.consent.text_version != spec.consent_text_version:
+            raise ConsentTextMismatch(spec.consent_text_version)
+        _check_marketing_channels(spec, body.consent)
     if submission.answers != answers_json:
         raise IdempotencyConflict(submission.idempotency_key)
     job = session.scalar(sa.select(Job).where(Job.submission_id == submission.id))
     if job is None:  # não acontece: submissão e job nascem na mesma transação
         raise RuntimeError("submissão sem job")
-    return Accepted(job=job, token=signer.issue(job.public_id, job.token_version), replay=True)
+    return Accepted(
+        job=job, token=signer.issue(job.public_id, job.token_version), replay=True, form=spec
+    )
 
 
 def _upsert_lead(

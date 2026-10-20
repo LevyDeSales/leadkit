@@ -15,7 +15,7 @@ from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
-from app.forms import FIRST_VERSION, FormSpec
+from app.forms import FIRST_VERSION, Completion, FormSpec
 from app.forms.definition import plan as plan_tree
 from app.forms.definition import questions
 from app.forms.definition.conditions import Conditions, condition_problems
@@ -45,7 +45,12 @@ def _stop_on(problems: list[Problem]) -> None:
 
 
 def _rule_problems(definition: FormDocument) -> list[Problem]:
-    return (
+    completion_problems = []
+    if definition.completion.mode in ("button", "redirect") and not definition.completion.url:
+        completion_problems.append(Problem("completion.url", "informe o endereço HTTPS do destino"))
+    if definition.completion.mode in ("result", "confirmation") and definition.completion.url:
+        completion_problems.append(Problem("completion.url", "este modo não usa destino externo"))
+    return completion_problems + (
         questions.question_problems(definition)
         + condition_problems(definition)
         + plan_tree.plan_problems(definition.plan, definition.data)
@@ -129,4 +134,5 @@ def compile_definition(
             notices=notices_of(definition.notices),  # os avisos da espera e da falha
         ),
         templates=templates,
+        completion=Completion(**definition.completion.model_dump()),
     )
