@@ -6053,7 +6053,7 @@ SIGNATURES["0016_plan_audiences"] = {
         "false",
         "false",
     ],
-    "constraint:public.deployment_contract.deployment_contract_pkey": [
+    "constraint:public.deployment_contract.pk_deployment_contract": [
         "PRIMARY KEY (id)",
         "true",
         "false",
@@ -7303,13 +7303,6 @@ SIGNATURES["0016_plan_audiences"] = {
         "false",
         "false",
     ],
-    "index:public.deployment_contract_pkey": [
-        "CREATE UNIQUE INDEX deployment_contract_pkey ON public.deployment_contract USING btree (id)",
-        "true",
-        "true",
-        "false",
-        "false",
-    ],
     "index:public.ix_artifacts_job_id": [
         "CREATE INDEX ix_artifacts_job_id ON public.artifacts USING btree (job_id)",
         "true",
@@ -7487,6 +7480,13 @@ SIGNATURES["0016_plan_audiences"] = {
     ],
     "index:public.pk_deliveries": [
         "CREATE UNIQUE INDEX pk_deliveries ON public.deliveries USING btree (id)",
+        "true",
+        "true",
+        "false",
+        "false",
+    ],
+    "index:public.pk_deployment_contract": [
+        "CREATE UNIQUE INDEX pk_deployment_contract ON public.deployment_contract USING btree (id)",
         "true",
         "true",
         "false",
