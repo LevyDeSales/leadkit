@@ -13,7 +13,7 @@ import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from urllib.parse import parse_qsl
 
 import sqlalchemy as sa
@@ -34,6 +34,7 @@ from app.forms.data_notices import log_data_notices
 from app.forms.definition.document import CompletionDoc
 from app.forms.image_optimizer import MAX_UPLOAD_BYTES
 from app.intake import (
+    CaptureAccepted,
     ConsentTextMismatch,
     IdempotencyConflict,
     QueueFull,
@@ -90,6 +91,18 @@ class SubmissionAccepted(BaseModel):
     status_url: str
     pdf_url: str
     page_url: str
+    completion: SubmissionCompletion
+
+
+class CaptureSubmissionAccepted(BaseModel):
+    """Captura confirmada: capacidade do recibo, sem acesso ou estados de PDF."""
+
+    kind: Literal["capture"] = "capture"
+    status: Literal["captured"] = "captured"
+    submission_id: str
+    receipt_token: str
+    receipt_url: str
+    replay: bool
     completion: SubmissionCompletion
 
 
@@ -360,7 +373,11 @@ def create_app(
             return JSONResponse({"status": "unavailable"}, status_code=503)
         return JSONResponse({"status": "ok"})
 
-    @app.post("/v1/forms/{slug}/submissions", status_code=202, response_model=SubmissionAccepted)
+    @app.post(
+        "/v1/forms/{slug}/submissions",
+        status_code=202,
+        response_model=SubmissionAccepted | CaptureSubmissionAccepted,
+    )
     async def submit(
         slug: str,
         request: Request,
@@ -408,10 +425,10 @@ def create_app(
                     limits=deps.submission_limits,
                     forms=deps.forms,
                 )
-                return accepted, accepted.job.id, accepted.job.attempt, accepted.job.public_id
+                return accepted
 
         try:
-            accepted, job_id, attempt, public_id = await run_in_threadpool(_accept)
+            accepted = await run_in_threadpool(_accept)
         except InactiveForm:
             return JSONResponse(
                 {"code": "form_unavailable", "detail": "formulário indisponível"}, status_code=410
@@ -442,6 +459,22 @@ def create_app(
                 503, "queue_full", "há pedidos demais em andamento; tente de novo", exc.retry_after
             )
 
+        if isinstance(accepted, CaptureAccepted):
+            receipt_url = f"{deps.settings.public_base_url.rstrip('/')}/s/{accepted.receipt.public_id}/conclusao?t={accepted.token}"
+            return JSONResponse(
+                {
+                    "kind": "capture",
+                    "status": "captured",
+                    "submission_id": str(accepted.submission.id),
+                    "receipt_token": accepted.token,
+                    "receipt_url": receipt_url,
+                    "replay": accepted.replay,
+                    "completion": {**vars(accepted.form.completion), "receipt_url": receipt_url},
+                },
+                status_code=202,
+                headers=PRIVATE_HEADERS,
+            )
+        job_id, attempt, public_id = accepted.job.id, accepted.job.attempt, accepted.job.public_id
         if not accepted.replay:
             launch_after_commit(request.app, job_id, attempt)
         links = pipeline.lead_links(deps, accepted.job)

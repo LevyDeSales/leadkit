@@ -7,6 +7,7 @@
   <a class="brand" href="/admin">{{ site_brand() }}<span>Operação</span></a>
   <nav class="topnav" aria-label="Seções">
     <a href="/admin"{% if section == "jobs" %} aria-current="page"{% endif %}>{{ m.icon('file-list') }}Pedidos</a>
+    <a href="/admin/captures"{% if section == "captures" %} aria-current="page"{% endif %}>Capturas</a>
     <a href="/admin/forms"{% if section == "forms" %} aria-current="page"{% endif %}>{{ m.icon('file') }}Formulários</a>
     <a href="/admin/assets"{% if section == "assets" %} aria-current="page"{% endif %}>{{ m.icon('image') }}Imagens</a>
     <a href="/admin/destinations"{% if section == "destinations" %} aria-current="page"{% endif %}>{{ m.icon('send') }}Destinos</a>

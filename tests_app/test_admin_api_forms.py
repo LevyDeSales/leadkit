@@ -963,7 +963,7 @@ def test_a_confirmation_that_is_not_a_count_is_a_422_on_the_seen_field(
 ) -> None:
     client = api_client("total")
 
-    for seen in ("2", "a:b", "2:", ":3", "-1:0", "1:2:3", " ", "9" * 40):
+    for seen in ("2", "a:b", "2:", ":3", "-1:0", "1:2:3:4", " ", "9" * 40):
         refused = save(client, 50, 120, seen=seen)
 
         assert refused.status_code == 422, seen
@@ -1248,12 +1248,15 @@ def test_get_form_version_of_a_number_that_is_not_one_is_a_422_on_the_number(
 def test_the_contract_documents_the_definition_with_the_form_document() -> None:
     schemas = built_openapi()["components"]["schemas"]
 
-    assert schemas["FormVersion"]["properties"]["definition"]["$ref"].endswith("/FormDocument")
+    assert {
+        branch["$ref"].split("/")[-1]
+        for branch in schemas["FormVersion"]["properties"]["definition"]["anyOf"]
+    } == {"PdfFormDocument", "CaptureFormDocument"}
     assert "definition" in schemas["FormVersion"]["required"]
     required = schemas["QuestionDoc"]["properties"]["required"]["description"]
     assert "show_when" in required and "required_when_shown" in required
     assert "só é exigida quando a pergunta aparece" in required
-    assert schemas["FormDocument"]["description"]  # o modelo diz o que é
+    assert schemas["PdfFormDocument"]["properties"]["generation"]  # o modelo diz o que é
 
 
 # --- compare_form_versions ----------------------------------------------------------------------

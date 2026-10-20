@@ -36,7 +36,7 @@ from app.admin.form_editor import FormEdit
 from app.admin.queries import forms as form_queries
 from app.admin.queries import jobs as job_queries
 from app.deps import get_deps
-from app.forms import UnknownForm, draft_previews, draft_tests, drafts
+from app.forms import GenerationUnavailable, UnknownForm, draft_previews, draft_tests, drafts
 from app.forms import assets as form_assets
 from app.forms import retention as form_retention
 from app.forms import stored as stored_forms
@@ -135,6 +135,12 @@ class AdminRoute(APIRoute):
                     403,
                     "Não deu para confirmar que o pedido saiu deste painel. "
                     "Recarregue a página e tente de novo.",
+                )
+            except GenerationUnavailable:
+                response = _error(
+                    request,
+                    409,
+                    "Este formulário apenas captura respostas. Use o teste local e a prévia da conclusão.",
                 )
             except NotFound as exc:
                 response = _error(request, 404, str(exc))
@@ -873,6 +879,7 @@ def _new_form_page(
     title: str = "",
     slug: str = "",
     source: str = "",
+    generation: str = "",
     suggest: bool = False,
     errors: dict[str, str] | None = None,
     status_code: int = 200,
@@ -889,6 +896,7 @@ def _new_form_page(
         title=title,
         slug=slug,
         source=source,
+        generation=generation if generation in ("pdf", "none") else "",
         sources=sources,
         errors=errors or {},
         address_prefix=form_queries.public_url(deps.settings.public_base_url, ""),
@@ -912,13 +920,19 @@ def create_form(
     title: Annotated[str, Form()] = "",
     slug: Annotated[str, Form()] = "",
     source: Annotated[str, Form()] = "",
+    generation: Annotated[str, Form()] = "",
 ) -> Response:
     """Cria o formulário, sem versão publicada, e abre o rascunho dele: do modelo inicial ou da
     cópia de outro formulário. Recusado, a página volta com o que a operadora mandou e o problema
     de cada campo, e nada é gravado."""
     try:
         created = drafts.create(
-            get_deps(), title=title, slug=slug, actor=session.username, source=source
+            get_deps(),
+            title=title,
+            slug=slug,
+            actor=session.username,
+            source=source,
+            generation=generation or None,
         )
     except DefinitionError as exc:
         return _new_form_page(
@@ -926,6 +940,7 @@ def create_form(
             title=title,
             slug=slug,
             source=source,
+            generation=generation,
             errors=drafts.problems_by_field(exc.problems),
             status_code=422,
         )
@@ -1342,6 +1357,9 @@ def _pdf_page(
 ) -> Response:
     with get_deps().sessions() as db:
         images = sorted(form_assets.visible(db, draft.slug).values(), key=lambda a: a.name)
+    from app.forms.definition import compile_definition
+
+    compile_definition(draft.document).require_generation()
     page = draft_pages.pdf_editor(
         draft, tests=_recent_tests(request, draft), source=source, images=images, **kwargs
     )
@@ -1496,6 +1514,28 @@ def _tests_page(
         )
     except UnknownForm:
         raise NotFound(DRAFT_NOT_FOUND) from None
+    if state.draft.document.get("generation") == "none":
+        result = None
+        problems = state.problems
+        if not problems:
+            try:
+                result = drafts.test_capture(
+                    state.draft, answers=answers, day=day, now=_now(request)
+                )
+            except DefinitionError as exc:
+                problems = exc.problems
+        return _page(
+            request,
+            "admin/capture_test.html",
+            {
+                "draft": state.draft,
+                "result": result,
+                "answers": answers or "",
+                "day": day,
+                "problems": problems,
+            },
+            status_code=422 if problems else status_code,
+        )
     page = draft_pages.testing_page(
         state.draft,
         answers=answers or "",
@@ -1535,6 +1575,8 @@ def assemble_prompt(
 ) -> Response:
     """O prompt montado com as respostas e a data do formulário, sem gravar nada. É um POST para
     as respostas não irem para a URL nem para o log de acesso."""
+    if _draft(slug).document.get("generation") == "none":
+        raise GenerationUnavailable("este formulário apenas captura respostas")
     return _tests_page(request, slug, answers=_given(answers), day=date)
 
 
@@ -2149,6 +2191,81 @@ async def resend_sync(
     else:
         session.flash = ("ok", SYNC_RESENT if done.launched else SYNC_RESENT_DEFERRED)
     return RedirectResponse(f"/admin/jobs/{public_id}", status_code=303)
+
+
+@protected.get("/captures")
+def captures_page(
+    request: Request,
+    form: str = "",
+    form_version: str = "",
+    cursor: str | None = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+) -> Response:
+    """Lista paginada por chegada, com os mesmos filtros de formulário e versão da API."""
+    from app.admin.api.common import decode_keyset, encode_keyset
+    from app.admin.api.errors import ApiError
+    from app.admin.queries import captures
+
+    try:
+        after = decode_keyset(cursor) if cursor else None
+    except ApiError:
+        return _error(request, 422, "Página inválida. Abra novamente a lista de capturas.")
+    deps = get_deps()
+    with deps.sessions() as db:
+        items = captures.listing(
+            db,
+            deps.forms,
+            form=form or None,
+            version=int(form_version) if form_version.isdecimal() else None,
+            after=after,
+            limit=limit + 1,
+        )
+    more = len(items) > limit
+    items = items[:limit]
+    next_url = None
+    if more:
+        following = encode_keyset(items[-1]["created_at"], items[-1]["submission_id"])
+        query = {"form": form, "cursor": following, "limit": limit}
+        if form_version is not None:
+            query["form_version"] = form_version
+        next_url = "/admin/captures?" + urlencode(query)
+    return _page(
+        request,
+        "admin/captures.html",
+        {
+            "items": items,
+            "detail": None,
+            "next_url": next_url,
+            "form": form,
+            "form_version": form_version,
+        },
+    )
+
+
+@protected.get("/captures/{submission_id}")
+def capture_detail_page(submission_id: str, request: Request) -> Response:
+    """A operadora autenticada lê respostas pela mesma consulta da API."""
+    from app.admin.queries import captures
+
+    deps = get_deps()
+    with deps.sessions() as db:
+        found = captures.detail(db, deps.forms, submission_id, with_lead=True)
+    return _page(
+        request,
+        "admin/captures.html",
+        {"items": [], "detail": found},
+        status_code=200 if found else 404,
+    )
+
+
+@protected.post("/forms/{slug}/draft/capture-test")
+def capture_test_page(
+    slug: str,
+    request: Request,
+    answers: Annotated[str, Form()] = "",
+    date: Annotated[str, Form()] = "",
+) -> Response:
+    return _tests_page(request, slug, answers=_given(answers), day=date)
 
 
 router.include_router(open_routes)

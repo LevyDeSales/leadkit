@@ -72,10 +72,10 @@ def prompt_of(steps: Iterable[Mapping[str, Any]], identity: Mapping[str, Any]) -
     return PROMPT_HEAD + "\n".join(lines) + "\n\n" + _read("prompt.md")
 
 
-def definition(*, slug: str, title: str) -> dict[str, Any]:
+def definition(*, slug: str, title: str, generation: str = "pdf") -> dict[str, Any]:
     """A definição do modelo inicial para um formulário novo, com este endereço e este título."""
     base = json.loads(_read("definition.json"))
-    return {
+    document = {
         "format": 1,
         "slug": slug,
         "title": title,
@@ -92,3 +92,18 @@ def definition(*, slug: str, title: str) -> dict[str, Any]:
         "data": {},
         "examples": base["examples"],
     }
+
+    if generation == "none":
+        for key in ("instructions", "prompt", "plan", "pdf", "preview"):
+            document.pop(key)
+        document["examples"].pop("plan", None)
+        document["generation"] = "none"
+        document["completion"] = {"mode": "confirmation"}
+        document["intro"] = "Conte suas respostas. Elas serão salvas ao concluir o envio."
+        document["consent"]["processing"] = (
+            "Concordo com o tratamento das minhas respostas para esta pesquisa."
+        )
+        document["consent"]["notice"] = (
+            "A operadora armazena suas respostas e contato. Consulte a política da instalação para conhecer os prazos e como solicitar a exclusão dos dados."
+        )
+    return document

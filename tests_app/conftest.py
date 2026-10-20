@@ -169,7 +169,7 @@ DEMO_ANSWERS: dict[str, Any] = {
 DEMO_CONSENT: dict[str, Any] = {"privacy": True, "text_version": "demo-v1"}
 TABLES = (
     "audit_log, api_keys, integration_syncs, integrations, deliveries, artifacts, plans, jobs, "
-    "submissions, leads, webhook_destinations, webhook_env_seed, draft_tests, form_drafts, "
+    "capture_receipts, submissions, leads, webhook_destinations, webhook_env_seed, draft_tests, form_drafts, "
     "form_version_assets, form_assets, form_versions, forms"
 )
 # Destino padrão dos testes que só precisam de "há webhook": o domínio .invalid nunca resolve.

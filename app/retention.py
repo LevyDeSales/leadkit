@@ -54,6 +54,7 @@ from app.forms.draft_tests import TEST_DAYS
 from app.models import (
     Artifact,
     AuditLog,
+    CaptureReceipt,
     Delivery,
     DraftTest,
     Form,
@@ -72,6 +73,7 @@ BATCH = 100
 
 class RetentionReport(BaseModel):
     requests_deleted: int = 0
+    captures_deleted: int = 0
     leads_deleted: int = 0
     pdfs_deleted: int = 0
     storage_errors: int = 0
@@ -82,6 +84,7 @@ def purge_expired(deps: Deps, *, now: datetime | None = None) -> RetentionReport
     """Uma passada completa. Idempotente: o que falhar fica para a próxima."""
     now = now or utcnow()
     report = RetentionReport()
+    _purge_captures(deps, now, report)
     _purge_requests(deps, now, report)
     if not report.storage_errors:  # storage fora do ar: a próxima execução tenta de novo
         _purge_pdfs(deps, now, report)
@@ -134,6 +137,12 @@ def _purge_requests(deps: Deps, now: datetime, report: RetentionReport) -> None:
                 .limit(BATCH)
                 .with_for_update(of=Job, skip_locked=True)
             ).all()
+            lead_ids = sa.select(Submission.lead_id).where(
+                Submission.id.in_([row.submission_id for row in batch])
+            )
+            session.execute(
+                sa.select(Lead.id).where(Lead.id.in_(lead_ids)).order_by(Lead.id).with_for_update()
+            ).all()
             for job_id, submission_id in batch:
                 stored = session.execute(
                     sa.select(Artifact.id, Artifact.storage_key).where(
@@ -177,6 +186,7 @@ class Due:
 
     requests: int
     pdfs: int
+    captures: int = 0
 
 
 def due_for_form(
@@ -202,7 +212,13 @@ def due_for_form(
             ~_request_due(now, request_days),  # o pedido que sai inteiro leva o PDF junto
         )
     )
-    return Due(requests or 0, pdfs or 0)
+    captures = session.scalar(
+        sa.select(sa.func.count())
+        .select_from(Submission)
+        .join(CaptureReceipt, CaptureReceipt.submission_id == Submission.id)
+        .where(Submission.form_slug == slug, Submission.created_at < now - _interval(request_days))
+    )
+    return Due(requests or 0, pdfs or 0, captures or 0)
 
 
 def _purge_draft_tests(deps: Deps, now: datetime, report: RetentionReport) -> None:
@@ -263,3 +279,38 @@ def _delete_request(session: Session, job_id: uuid.UUID, submission_id: uuid.UUI
             return session.execute(sa.delete(Lead).where(Lead.id == lead_id, alone)).rowcount
     except IntegrityError:  # um pedido novo do mesmo lead chegou agora: o lead fica
         return 0
+
+
+def _purge_captures(deps: Deps, now: datetime, report: RetentionReport) -> None:
+    """Prazo contado do aceite; validade do recibo e replay não prolongam dados pessoais."""
+    days = sa.func.coalesce(Form.retention_days, deps.settings.retention_days)
+    while True:
+        with deps.sessions.begin() as session:
+            batch = session.execute(
+                sa.select(Submission.id, Submission.lead_id)
+                .join(CaptureReceipt, CaptureReceipt.submission_id == Submission.id)
+                .outerjoin(Form, Form.slug == Submission.form_slug)
+                .where(Submission.created_at < now - _interval(days))
+                .order_by(Submission.created_at, Submission.id)
+                .limit(BATCH)
+                .with_for_update(of=Submission, skip_locked=True)
+            ).all()
+            session.execute(
+                sa.select(Lead.id)
+                .where(Lead.id.in_([row.lead_id for row in batch]))
+                .order_by(Lead.id)
+                .with_for_update()
+            ).all()
+            for submission_id, lead_id in batch:
+                session.execute(sa.delete(Submission).where(Submission.id == submission_id))
+                report.captures_deleted += 1
+                alone = ~sa.exists().where(Submission.lead_id == Lead.id)
+                try:
+                    with session.begin_nested():
+                        report.leads_deleted += session.execute(
+                            sa.delete(Lead).where(Lead.id == lead_id, alone)
+                        ).rowcount
+                except IntegrityError:
+                    pass  # um novo envio válido conserva a lead
+        if len(batch) < BATCH:
+            return

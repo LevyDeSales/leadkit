@@ -1,7 +1,7 @@
 # Glossário Leadkit
 
 **Formulário:** definição de diagnóstico em formato 1, com perguntas, identidade, consentimento,
-pontuação opcional, calendário, schema do plano e templates.
+pontuação opcional e conclusão; quando gera PDF, também calendário, schema do plano e templates.
 
 **Rascunho:** definição editável no admin. Um teste de rascunho não publica nem modifica envios.
 
@@ -21,6 +21,12 @@ Não é a conclusão da geração nem uma autorização de acesso ao PDF.
 
 **Destino de conclusão:** endereço escolhido pela operadora para o próximo passo da participante.
 É distinto do destino de integração que recebe eventos e dados.
+
+**Captura:** submissão confirmada em um formulário cuja finalidade é salvar respostas sem gerar
+plano ou PDF.
+
+**Recibo de captura:** confirmação da submissão, que permite retomar o próximo passo definido
+na versão respondida sem mostrar dados da participante.
 
 **Plano:** documento estruturado gerado pelo LLM e validado contra o schema da versão.
 

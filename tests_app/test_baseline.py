@@ -77,7 +77,7 @@ def assert_read_only(statements: list[str]) -> None:
 
 def test_public_revision_graph_has_one_seedless_baseline() -> None:
     scripts = ScriptDirectory.from_config(config())
-    assert scripts.get_heads() == ["0012"]
+    assert scripts.get_heads() == ["0013_capture"]
     assert scripts.get_bases() == ["0012"]
     assert scripts.get_revision("0012").down_revision is None
     assert not (MIGRATIONS / "legacy_forms").exists()
@@ -91,7 +91,7 @@ def test_empty_database_gets_all_tables_and_no_business_rows(fresh: sa.Engine) -
         }
         assert connection.exec_driver_sql(
             "SELECT version_num FROM alembic_version"
-        ).scalars().all() == ["0012"]
+        ).scalars().all() == ["0013_capture"]
         assert all(
             connection.exec_driver_sql(f'SELECT count(*) FROM "{table}"').scalar_one() == 0
             for table in Base.metadata.tables
@@ -188,7 +188,7 @@ def test_future_contract_can_be_prepared_from_public_sources(
     """A referência da próxima revisão usa só a baseline e o inventário públicos, sem stamp."""
     from app.migrations.compatibility import load_contracts, schema_signature, validate_database
 
-    command.upgrade(config(), "head")
+    command.upgrade(config(), "0012")
     with fresh.begin() as connection:
         assert validate_database(connection, load_contracts(MIGRATIONS)) == "0012"
         with Operations.context(MigrationContext.configure(connection)) as operations:

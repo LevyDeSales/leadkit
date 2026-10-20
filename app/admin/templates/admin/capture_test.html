@@ -1,0 +1,18 @@
+{% extends "admin/layout.html" %}
+{% set section = "forms" %}
+{% block title %}Teste local da captura{% endblock %}
+{% block content %}
+<h1>Teste local de {{ draft.title }}</h1>
+<p>Valida respostas, data, pontuação e conclusão sem IA, PDF ou envio persistido. Use respostas fictícias.</p>
+{% for problem in problems %}<p role="alert">{{ problem }}</p>{% endfor %}
+<form method="post" action="/admin/forms/{{ draft.slug }}/draft/capture-test" class="form-stack">
+<input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+<label for="capture-answers">Respostas JSON (em branco: exemplo)</label>
+<textarea class="input" id="capture-answers" name="answers">{{ answers }}</textarea>
+<label for="capture-date">Data simulada</label><input id="capture-date" name="date" type="date" value="{{ day }}">
+<button class="btn btn--primary" type="submit">Validar captura</button>
+</form>
+{% if result %}<p role="status">Respostas válidas · {{ result.today }}</p><pre>{{ result.scores | tojson }}</pre><p>{{ result.completion.message }}</p>{% endif %}
+<a href="/admin/forms/{{ draft.slug }}/draft/completion-preview">Conferir conclusão</a>
+<a href="/admin/forms/{{ draft.slug }}/draft">Voltar ao rascunho</a>
+{% endblock %}

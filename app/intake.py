@@ -22,8 +22,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.forms import FormRegistry, FormSpec, ScoreResult
-from app.models import Job, Lead, Submission, utcnow
-from app.tokens import TokenSigner, new_public_id
+from app.models import CaptureReceipt, Job, Lead, Submission, utcnow
+from app.tokens import CaptureSigner, TokenSigner, new_public_id
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +106,15 @@ class Accepted:
     form: FormSpec
 
 
+@dataclass(frozen=True)
+class CaptureAccepted:
+    submission: Submission
+    receipt: CaptureReceipt
+    token: str
+    replay: bool
+    form: FormSpec
+
+
 def submission_spec(session: Session, forms: FormRegistry, slug: str, key: str) -> FormSpec:
     """Resolve a versão sob a trava da chave, mantida até o commit de quem recebe o envio.
 
@@ -183,7 +192,7 @@ def accept_submission(
     limits: SubmissionLimits,
     now: datetime | None = None,
     forms: FormRegistry | None = None,
-) -> Accepted:
+) -> Accepted | CaptureAccepted:
     """Levanta `pydantic.ValidationError` (respostas inválidas, ou autorização de marketing por um
     canal que o formulário não pede), `ConsentTextMismatch`, `IdempotencyConflict`,
     `SubmissionLimitExceeded` ou `QueueFull`. Não faz commit: quem chama controla a transação, e uma
@@ -218,7 +227,7 @@ def accept_submission(
             existing = _find_submission(session, spec.slug, idempotency_key)
             if existing is not None:
                 return _replay(session, existing, answers_json, signer, spec, body, forms)
-            _enforce_limits(session, spec.slug, lead_id, limits, now)
+            _enforce_limits(session, spec.slug, lead_id, limits, now, generation=spec.generation)
             submission = Submission(
                 lead_id=lead_id,
                 form_slug=spec.slug,
@@ -239,6 +248,21 @@ def accept_submission(
             )
             session.add(submission)
             session.flush()
+            if spec.generation == "none":
+                receipt = CaptureReceipt(
+                    submission_id=submission.id,
+                    public_id=new_public_id(),
+                    expires_at=now + link_ttl,
+                )
+                session.add(receipt)
+                session.flush()
+                return CaptureAccepted(
+                    submission,
+                    receipt,
+                    CaptureSigner(signer.secrets_).issue(receipt.public_id, receipt.token_version),
+                    False,
+                    spec,
+                )
             job = Job(
                 submission_id=submission.id,
                 public_id=new_public_id(),
@@ -258,7 +282,13 @@ def accept_submission(
 
 
 def _enforce_limits(
-    session: Session, form_slug: str, lead_id: Any, limits: SubmissionLimits, now: datetime
+    session: Session,
+    form_slug: str,
+    lead_id: Any,
+    limits: SubmissionLimits,
+    now: datetime,
+    *,
+    generation: str = "pdf",
 ) -> None:
     """Primeiro o limite da lead (a recusa mais específica), depois o teto da fila. O teto é uma
     contagem sem trava: envios simultâneos podem passar dele por alguns pedidos."""
@@ -278,6 +308,8 @@ def _enforce_limits(
         wait = recent[-1] + limits.window - now
         logger.warning("envio recusado no formulário %s: limite por e-mail", form_slug)
         raise SubmissionLimitExceeded(max(1, math.ceil(wait.total_seconds())))
+    if generation == "none":
+        return
     in_progress = session.scalar(
         sa.select(sa.func.count()).select_from(Job).where(Job.status.in_(IN_PROGRESS))
     )
@@ -302,7 +334,7 @@ def _replay(
     spec: FormSpec,
     body: SubmissionIn,
     forms: FormRegistry | None,
-) -> Accepted:
+) -> Accepted | CaptureAccepted:
     if forms is not None and spec.version_number != submission.form_version_number:
         # Uma publicação pode cruzar dois envios concorrentes da mesma chave. A perdedora
         # compara respostas e conclusão pela versão que a vencedora confirmou.
@@ -313,6 +345,19 @@ def _replay(
         _check_marketing_channels(spec, body.consent)
     if submission.answers != answers_json:
         raise IdempotencyConflict(submission.idempotency_key)
+    if spec.generation == "none":
+        receipt = session.scalar(
+            sa.select(CaptureReceipt).where(CaptureReceipt.submission_id == submission.id)
+        )
+        if receipt is None:
+            raise RuntimeError("captura sem recibo")
+        return CaptureAccepted(
+            submission,
+            receipt,
+            CaptureSigner(signer.secrets_).issue(receipt.public_id, receipt.token_version),
+            True,
+            spec,
+        )
     job = session.scalar(sa.select(Job).where(Job.submission_id == submission.id))
     if job is None:  # não acontece: submissão e job nascem na mesma transação
         raise RuntimeError("submissão sem job")

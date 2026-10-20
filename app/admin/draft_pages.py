@@ -336,6 +336,8 @@ def place_of(problem: Problem, edit: FormEdit, *, slug_field: bool = False) -> s
     instruções, o do prompt ou o JSON do resto (`definition`). O endereço só tem campo antes da
     primeira publicação (`slug_field`); depois, o problema nele vem do JSON."""
     path = problem.path
+    if path == "generation":
+        return "generation"
     if path.startswith("completion"):
         return (
             path

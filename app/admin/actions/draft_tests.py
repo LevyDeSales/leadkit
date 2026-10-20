@@ -72,7 +72,7 @@ def testing(
     assembled = scored = None
     problems: tuple[Problem, ...] = ()
     try:
-        if scoring:
+        if scoring or draft.document.get("generation") == "none":
             scored = drafts.score(draft, answers=answers, now=now)
         else:
             assembled = drafts.assemble(draft, answers=answers, day=day, now=now)

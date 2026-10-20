@@ -10,7 +10,7 @@
     <ul class="facts">
       <li>{{ ui.icon("clock") }}<span>Cerca de {{ screen.minutes }} minutos, no celular ou no computador</span></li>
       <li data-draft-fact hidden>{{ ui.icon("history") }}<span>Você pode pausar e continuar depois, neste aparelho</span></li>
-      <li>{{ ui.icon("file") }}<span>O plano fica pronto em PDF, para baixar e guardar</span></li>
+      <li>{{ ui.icon("file") }}<span>{{ "O plano fica pronto em PDF, para baixar e guardar" if spec.generation == "pdf" else "Suas respostas serão salvas ao concluir o envio" }}</span></li>
     </ul>
   </div>
 </section>

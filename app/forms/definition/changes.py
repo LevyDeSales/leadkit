@@ -42,7 +42,7 @@ from app.forms.sandbox import SandboxTemplate, TemplateProblem
 # primeira publicação, e o prompt não o recebe.
 NOT_FOR_LLM = frozenset(
     {"slug", "title", "intro", "minutes", "steps", "identity", "consent", "pdf", "preview"}
-    | {"examples", "scoring", "notices", "completion"}
+    | {"examples", "scoring", "notices", "completion", "generation"}
 )
 # O nome de cada parte que vai ao LLM, para a tela dizer o que mudou.
 LLM_PART_NAMES = {

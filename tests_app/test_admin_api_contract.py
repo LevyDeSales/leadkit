@@ -111,7 +111,19 @@ _JOB_ITEM = (
     "syncs.integration",
     "syncs.status",
 )
+_CAPTURE_ITEM = (
+    "submission_id",
+    "status",
+    "form_slug",
+    "form_version",
+    "form_version_number",
+    "created_at",
+)
 LEAD_STATE: dict[str, frozenset[str]] = {
+    "list_captures": frozenset(
+        {"items", "next_cursor", *(f"items.{field}" for field in _CAPTURE_ITEM)}
+    ),
+    "get_capture": frozenset(_CAPTURE_ITEM),
     "list_jobs": frozenset(
         {"items", "next_cursor", "total", *(f"items.{field}" for field in _JOB_ITEM)}
     ),
