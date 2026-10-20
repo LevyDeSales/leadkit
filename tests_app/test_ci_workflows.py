@@ -578,3 +578,44 @@ def test_historical_source_is_readable_by_image_user_before_build_without_openin
     assert json.loads(result.stdout) == {"app": 0o755, "app/alembic.ini": 0o644}
     assert stat.S_IMODE(configuration.stat().st_mode) == 0o700
     assert stat.S_IMODE(env_file.stat().st_mode) == 0o600
+
+
+def test_early_adoption_refusal_is_diagnosed_without_accepting_it_as_post_ddl_failure(
+    tmp_path: Path,
+) -> None:
+    """O helper real recusa processo vivo; só Docker é falso e os marcadores continuam obrigatórios."""
+    import json
+
+    from test_swarm_scripts import Server, Staging
+
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    server = Server(tmp_path, Staging(staging))
+    rehearsal = next(
+        step["run"]
+        for step in steps_of("swarm")
+        if step.get("name") == "Rehearse real pre-projection bootstrap and forward recovery"
+    )
+    start = rehearsal.index('if env -u DOMAIN -u STACK PATH="$folder/bin:$PATH"')
+    script = rehearsal[start : rehearsal.index("cat before-ddl", start)]
+    launcher = server.folder / "rehearse.sh"
+    launcher.write_text("#!/usr/bin/env bash\nset -euo pipefail\n" + script)
+    launcher.chmod(0o700)
+    result = server.run(
+        "rehearse.sh",
+        folder=str(server.folder),
+        STUB_NETWORK="1",
+        STUB_CONTRACT_FLOOR="0",
+        STUB_OLD_RUNNING="1",
+    )
+    assert result.returncode == 1
+    assert json.loads(result.stdout) == {
+        "stage": "first_adoption",
+        "exit_code": 1,
+        "reason": "old_process_alive",
+        "before_ddl": False,
+        "ddl_committed": False,
+    }
+    assert result.stderr == ""
+    assert not (server.folder / "before-ddl").exists()
+    assert not (server.folder / "ddl-committed-launcher-failed").exists()

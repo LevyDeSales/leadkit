@@ -517,6 +517,7 @@ jobs:
             test "$(docker inspect --format '{{.State.Health.Status}}' "$container")" = healthy
             test "$(docker inspect --format '{{.State.Running}}' "$container")" = true
             echo "$container" >> old-containers
+            printf '{"stage":"historical_service_ready","role":"%s"}\n' "$role"
           done
           export CI_REAL_DOCKER="$(command -v docker)" CI_COMPAT_STACK="$compat" CI_COMPAT_FOLDER="$folder"
           cat > bin/docker <<'SH'
@@ -543,7 +544,33 @@ jobs:
           chmod 700 bin/docker
           if env -u DOMAIN -u STACK PATH="$folder/bin:$PATH" IMAGE=gerador-planos:ci ./deploy.sh > first-adoption.log 2>&1; then
             echo 'A falha controlada após DDL deveria interromper a primeira adoção'; exit 1
+          else
+            adoption_exit=$?
           fi
+          # A recusa anterior ao DDL também é falha: diagnostique sem publicar o log privado.
+          python3 - "$adoption_exit" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          text = Path("first-adoption.log").read_text(errors="replace")
+          reasons = (
+              ("old_process_alive", "Um processo antigo ainda está em saída"),
+              ("container_unidentified", "Há container sem task identificável"),
+              ("container_unobserved", "Uma task não tem container observável"),
+              ("remote_task", "Há task em outro nó ou nó desconhecido"),
+              ("docker_operation", "Docker recusou uma operação"),
+              ("docker_unavailable", "Docker indisponível ou operação sem conclusão"),
+              ("image_contract", "A imagem não comprova contrato1"),
+              ("database_contract", "O banco não confirmou o contrato"),
+              ("pause_unconfirmed", "não ficou pausado; não execute a migration"),
+              ("migration_failure", "as migrations falharam"),
+          )
+          reason = next((code for code, marker in reasons if marker in text), "unclassified")
+          print(json.dumps({"stage": "first_adoption", "exit_code": int(sys.argv[1]), "reason": reason,
+                            "before_ddl": Path("before-ddl").is_file(),
+                            "ddl_committed": Path("ddl-committed-launcher-failed").is_file()}))
+          PY
           test -s before-ddl
           test -e ddl-committed-launcher-failed
           cat before-ddl
