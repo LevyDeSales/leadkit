@@ -407,6 +407,15 @@ jobs:
       - name: Rehearse real pre-projection bootstrap and forward recovery
         run: |
           umask 077
+          bootstrap_role=none
+          bootstrap_error() {
+            local failure_status="$1" failure_line="$2" failure_role=none
+            case "${bootstrap_role:-}" in api|worker) failure_role="$bootstrap_role" ;; esac
+            printf '{"stage":"bootstrap_error","line":%d,"exit_code":%d,"role":"%s"}\n' \
+              "$failure_line" "$failure_status" "$failure_role" || true
+            exit "$failure_status"
+          }
+          trap 'bootstrap_error "$?" "$LINENO"' ERR
           old_sha=7e199a5f0e2a6cf538f99d486cef0cd9f21bc783
           old_image=leadkit:compat-old-7e
           compat=leadkit-compat
@@ -506,6 +515,7 @@ jobs:
           # API e worker históricos reais, ligados somente ao Hatchet Lite local do runner.
           # Não se criam pedidos, nem chamadas LLM/S3/webhook ou tasks com dados de lead.
           for role in api worker; do
+            bootstrap_role="$role"
             task=$(docker service ps -q --filter desired-state=running "${compat}_$role" | head -n 1)
             test -n "$task"
             container=$(docker inspect --type task --format '{{.Status.ContainerStatus.ContainerID}}' "$task")
@@ -519,23 +529,56 @@ jobs:
             echo "$container" >> old-containers
             printf '{"stage":"historical_service_ready","role":"%s"}\n' "$role"
           done
+          bootstrap_role=none
           export CI_REAL_DOCKER="$(command -v docker)" CI_COMPAT_STACK="$compat" CI_COMPAT_FOLDER="$folder"
           cat > bin/docker <<'SH'
           #!/usr/bin/env bash
           set -euo pipefail
+          record_operation() {
+            local operation=other
+            case "$1 ${2:-}" in
+              "image inspect") operation=image.inspect ;;
+              "image tag") operation=image.tag ;;
+              "service inspect") operation=service.inspect ;;
+              "service ls") operation=service.ls ;;
+              "service ps") operation=service.ps ;;
+              "service scale") operation=service.scale ;;
+              "service update") operation=service.update ;;
+              "container wait") operation=container.wait ;;
+              "network inspect") operation=network.inspect ;;
+              "node inspect") operation=node.inspect ;;
+              "stack deploy") operation=stack.deploy ;;
+              "inspect --type")
+                case "${3:-}" in container) operation=container.inspect ;; task) operation=task.inspect ;; esac ;;
+              "inspect --format") operation=container.inspect ;;
+              "info "*) operation=info ;;
+              "ps "*) operation=container.ls ;;
+              "run "*)
+                case "${@: -1}" in
+                  capability|status|begin|attest|migrate) operation="run.${@: -1}" ;;
+                esac ;;
+            esac
+            # Uma falha do checkpoint não substitui a operação ou seu exit code.
+            { printf '%s\n' "$operation" > "$CI_COMPAT_FOLDER/last-docker-operation"; } 2>/dev/null || true
+          }
+          observed_docker() {
+            record_operation "$@"
+            "$CI_REAL_DOCKER" "$@"
+          }
+          record_operation "$@"
           if [[ "$1" == run && "${@: -1}" == migrate ]]; then
             : > "$CI_COMPAT_FOLDER/before-ddl"
             for role in api worker; do
               service="${CI_COMPAT_STACK}_$role"
-              test "$("$CI_REAL_DOCKER" service inspect --format '{{.Spec.Mode.Replicated.Replicas}}' "$service")" = 0
-              test "$("$CI_REAL_DOCKER" service inspect --format '{{.PreviousSpec.Mode.Replicated.Replicas}}' "$service")" = 0
-              "$CI_REAL_DOCKER" service inspect --format '{{.ID}} {{.Version.Index}} {{.Spec.Mode.Replicated.Replicas}} {{.PreviousSpec.Mode.Replicated.Replicas}}' "$service" >> "$CI_COMPAT_FOLDER/before-ddl"
+              test "$(observed_docker service inspect --format '{{.Spec.Mode.Replicated.Replicas}}' "$service")" = 0
+              test "$(observed_docker service inspect --format '{{.PreviousSpec.Mode.Replicated.Replicas}}' "$service")" = 0
+              observed_docker service inspect --format '{{.ID}} {{.Version.Index}} {{.Spec.Mode.Replicated.Replicas}} {{.PreviousSpec.Mode.Replicated.Replicas}}' "$service" >> "$CI_COMPAT_FOLDER/before-ddl"
             done
             while read -r container; do
-              test "$("$CI_REAL_DOCKER" inspect --format '{{.State.Running}}' "$container")" = false
+              test "$(observed_docker inspect --format '{{.State.Running}}' "$container")" = false
               echo "$container stopped" >> "$CI_COMPAT_FOLDER/before-ddl"
             done < "$CI_COMPAT_FOLDER/old-containers"
-            "$CI_REAL_DOCKER" "$@"
+            observed_docker "$@"
             touch "$CI_COMPAT_FOLDER/ddl-committed-launcher-failed"
             exit 42
           fi
@@ -567,20 +610,30 @@ jobs:
               ("migration_failure", "as migrations falharam"),
           )
           reason = next((code for code, marker in reasons if marker in text), "unclassified")
+          operations = {"image.inspect", "image.tag", "service.inspect", "service.ls", "service.ps",
+                        "service.scale", "service.update", "container.inspect", "container.wait", "container.ls",
+                        "task.inspect", "network.inspect", "node.inspect", "stack.deploy", "info", "other",
+                        "run.capability", "run.status", "run.begin", "run.attest", "run.migrate"}
+          checkpoint = Path("last-docker-operation")
+          operation = checkpoint.read_text().strip() if checkpoint.is_file() else "unknown"
+          if operation not in operations:
+              operation = "unknown"
           print(json.dumps({"stage": "first_adoption", "exit_code": int(sys.argv[1]), "reason": reason,
+                            "last_operation": operation,
                             "before_ddl": Path("before-ddl").is_file(),
                             "ddl_committed": Path("ddl-committed-launcher-failed").is_file()}))
           PY
           test -s before-ddl
           test -e ddl-committed-launcher-failed
           cat before-ddl
-          cat first-adoption.log
           test "$(psql_compat 'select version_num from alembic_version')" = 0016_plan_audiences
           test "$(psql_compat "select minimum_contract || ':' || phase from deployment_contract where id=1")" = 1:blocked
           for role in api worker; do
+            bootstrap_role="$role"
             test "$(docker service inspect --format '{{.Spec.Mode.Replicated.Replicas}}' "${compat}_$role")" = 0
             test "$(docker service inspect --format '{{.PreviousSpec.Mode.Replicated.Replicas}}' "${compat}_$role")" = 0
           done
+          bootstrap_role=none
           versions() { docker service inspect --format '{{.ID}} {{.Version.Index}}' "${compat}_api" "${compat}_worker"; }
           before=$(versions)
           if env -u DOMAIN -u STACK IMAGE="$old_image" ./deploy.sh > refuse-old.log 2>&1; then
@@ -588,11 +641,11 @@ jobs:
           fi
           test "$(versions)" = "$before"
           test "$(psql_compat "select minimum_contract || ':' || phase from deployment_contract where id=1")" = 1:blocked
-          cat refuse-old.log
           env -u DOMAIN -u STACK IMAGE=gerador-planos:ci ./deploy.sh
           test "$(psql_compat "select minimum_contract || ':' || phase from deployment_contract where id=1")" = 1:verified
           candidate=$(docker image inspect --format '{{.Id}}' gerador-planos:ci)
           for role in api worker; do
+            bootstrap_role="$role"
             current=$(docker service inspect --format '{{.Spec.TaskTemplate.ContainerSpec.Image}}' "${compat}_$role")
             previous=$(docker service inspect --format '{{.PreviousSpec.TaskTemplate.ContainerSpec.Image}}' "${compat}_$role")
             test "$(docker image inspect --format '{{.Id}}' "$current")" = "$candidate"
@@ -600,6 +653,7 @@ jobs:
             test "$(docker service inspect --format '{{.Spec.Mode.Replicated.Replicas}}' "${compat}_$role")" = 1
             test "$(docker service inspect --format '{{.PreviousSpec.Mode.Replicated.Replicas}}' "${compat}_$role")" = 1
           done
+          bootstrap_role=none
           while read -r container; do
             test "$(docker inspect --format '{{.State.Running}}' "$container")" = false
           done < old-containers

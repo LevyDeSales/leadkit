@@ -596,6 +596,11 @@ def test_early_adoption_refusal_is_diagnosed_without_accepting_it_as_post_ddl_fa
         for step in steps_of("swarm")
         if step.get("name") == "Rehearse real pre-projection bootstrap and forward recovery"
     )
+    wrapper_folder = server.folder / "bin"
+    wrapper_folder.mkdir()
+    wrapper = wrapper_folder / "docker"
+    wrapper.write_text(rehearsal.split("cat > bin/docker <<'SH'\n", 1)[1].split("\nSH\n", 1)[0])
+    wrapper.chmod(0o700)
     start = rehearsal.index('if env -u DOMAIN -u STACK PATH="$folder/bin:$PATH"')
     script = rehearsal[start : rehearsal.index("cat before-ddl", start)]
     launcher = server.folder / "rehearse.sh"
@@ -604,6 +609,9 @@ def test_early_adoption_refusal_is_diagnosed_without_accepting_it_as_post_ddl_fa
     result = server.run(
         "rehearse.sh",
         folder=str(server.folder),
+        CI_REAL_DOCKER=str(server.bin_dir / "docker"),
+        CI_COMPAT_FOLDER=str(server.folder),
+        CI_COMPAT_STACK="gerador-planos",
         STUB_NETWORK="1",
         STUB_CONTRACT_FLOOR="0",
         STUB_OLD_RUNNING="1",
@@ -613,9 +621,225 @@ def test_early_adoption_refusal_is_diagnosed_without_accepting_it_as_post_ddl_fa
         "stage": "first_adoption",
         "exit_code": 1,
         "reason": "old_process_alive",
+        "last_operation": "container.inspect",
         "before_ddl": False,
         "ddl_committed": False,
     }
     assert result.stderr == ""
     assert not (server.folder / "before-ddl").exists()
     assert not (server.folder / "ddl-committed-launcher-failed").exists()
+
+
+@pytest.mark.parametrize("role", ["api", "worker", "SYNTHETIC_PRIVATE_ROLE"])
+def test_bootstrap_err_trap_keeps_exit_cleanup_and_only_reports_safe_location(
+    tmp_path: Path, role: str
+) -> None:
+    import json
+
+    rehearsal = next(
+        step["run"]
+        for step in steps_of("swarm")
+        if step.get("name") == "Rehearse real pre-projection bootstrap and forward recovery"
+    )
+    prefix = rehearsal[: rehearsal.index("old_sha=")]
+    cleanup = rehearsal[rehearsal.index("cleanup_compat()") :]
+    cleanup = cleanup[: cleanup.index("trap cleanup_compat EXIT") + len("trap cleanup_compat EXIT")]
+    script = (
+        prefix
+        + 'docker() { case "$1 ${2:-}" in\n'
+        + '  "service inspect") return 37 ;;\n'
+        + '  "stack rm") : > "$CLEANUP_MARKER" ;;\n'
+        + '  "network inspect") return 1 ;;\n'
+        + "esac; }\n"
+        + cleanup
+        + '\nbootstrap_role="$SYNTHETIC_ROLE"\n'
+        + 'docker service inspect "$SYNTHETIC_PRIVATE_ARG"\n'
+    )
+    result = subprocess.run(
+        ["bash", "-e", "-u", "-o", "pipefail", "-c", script],
+        env={
+            **os.environ,
+            "compat": "synthetic-compat",
+            "SYNTHETIC_ROLE": role,
+            "SYNTHETIC_PRIVATE_ARG": "SYNTHETIC_PRIVATE_ARGUMENT",
+            "CLEANUP_MARKER": str(tmp_path / "cleanup-ran"),
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 37
+    assert (tmp_path / "cleanup-ran").exists()
+    assert json.loads(result.stdout) == {
+        "stage": "bootstrap_error",
+        "line": len(script.splitlines()),
+        "exit_code": 37,
+        "role": role if role in ("api", "worker") else "none",
+    }
+    assert result.stderr == ""
+    assert "SYNTHETIC_PRIVATE" not in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("arguments", "operation"),
+    [
+        (["image", "inspect"], "image.inspect"),
+        (["image", "tag"], "image.tag"),
+        *[
+            (["service", action], f"service.{action}")
+            for action in ("inspect", "ls", "ps", "scale", "update")
+        ],
+        (["inspect", "--type", "container"], "container.inspect"),
+        (["inspect", "--type", "task"], "task.inspect"),
+        (["container", "wait"], "container.wait"),
+        (["network", "inspect"], "network.inspect"),
+        (["node", "inspect"], "node.inspect"),
+        (["info"], "info"),
+        (["ps"], "container.ls"),
+        (["stack", "deploy"], "stack.deploy"),
+        *[
+            (["run", "SYNTHETIC_PRIVATE_IMAGE", action], f"run.{action}")
+            for action in ("capability", "status", "begin", "attest", "migrate")
+        ],
+        (["SYNTHETIC_PRIVATE_COMMAND"], "other"),
+    ],
+)
+def test_docker_wrapper_records_only_closed_operation_and_preserves_failure(
+    tmp_path: Path, arguments: list[str], operation: str
+) -> None:
+    rehearsal = next(
+        step["run"]
+        for step in steps_of("swarm")
+        if step.get("name") == "Rehearse real pre-projection bootstrap and forward recovery"
+    )
+    wrapper = tmp_path / "docker"
+    wrapper.write_text(rehearsal.split("cat > bin/docker <<'SH'\n", 1)[1].split("\nSH\n", 1)[0])
+    wrapper.chmod(0o700)
+    real = tmp_path / "real-docker"
+    real.write_text(
+        '#!/usr/bin/env bash\nif [[ "${SYNTHETIC_MIGRATE:-0}" == 1 && "$1 ${2:-}" == "service inspect" ]]; then\n'
+        "  echo 0; exit 0\nfi\nexit 37\n"
+    )
+    real.chmod(0o700)
+    (tmp_path / "old-containers").touch()
+    sent = arguments if operation.startswith("run.") else [*arguments, "SYNTHETIC_PRIVATE_ARGUMENT"]
+    result = subprocess.run(
+        [str(wrapper), *sent],
+        env={
+            **os.environ,
+            "CI_REAL_DOCKER": str(real),
+            "CI_COMPAT_FOLDER": str(tmp_path),
+            "CI_COMPAT_STACK": "synthetic-compat",
+            "SYNTHETIC_MIGRATE": str(int(operation == "run.migrate")),
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 37
+    assert (tmp_path / "last-docker-operation").read_text().strip() == operation
+    assert result.stdout == result.stderr == ""
+    assert not (tmp_path / "ddl-committed-launcher-failed").exists()
+
+
+def test_bootstrap_evidence_never_publishes_private_helper_logs(tmp_path: Path) -> None:
+    rehearsal = next(
+        step["run"]
+        for step in steps_of("swarm")
+        if step.get("name") == "Rehearse real pre-projection bootstrap and forward recovery"
+    )
+    first = rehearsal[rehearsal.index("test -s before-ddl") :]
+    first = first[: first.index('test "$(psql_compat')]
+    refused = rehearsal[rehearsal.index('test "$(versions)" = "$before"') :]
+    refused = refused[: refused.index("env -u DOMAIN -u STACK IMAGE=gerador-planos:ci ./deploy.sh")]
+    (tmp_path / "before-ddl").write_text("synthetic-api 1 0 0\n")
+    (tmp_path / "ddl-committed-launcher-failed").touch()
+    for name in ("first-adoption.log", "refuse-old.log"):
+        (tmp_path / name).write_text("SYNTHETIC_PRIVATE_LOG_CONTENT\n")
+    result = subprocess.run(
+        [
+            "bash",
+            "-e",
+            "-c",
+            "versions() { echo synthetic; }; before=synthetic; psql_compat() { echo 1:blocked; };\n"
+            + first
+            + refused,
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "synthetic-api 1 0 0\n"
+    assert result.stderr == ""
+
+
+@pytest.mark.parametrize("operation", ["service.inspect", "SYNTHETIC_PRIVATE_OPERATION"])
+def test_first_adoption_report_validates_operation_before_emitting_it(
+    tmp_path: Path, operation: str
+) -> None:
+    import json
+
+    rehearsal = next(
+        step["run"]
+        for step in steps_of("swarm")
+        if step.get("name") == "Rehearse real pre-projection bootstrap and forward recovery"
+    )
+    parser = rehearsal.split("python3 - \"$adoption_exit\" <<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
+    (tmp_path / "first-adoption.log").write_text(
+        "Docker recusou uma operação; SYNTHETIC_PRIVATE_LOG_VALUE\n"
+    )
+    (tmp_path / "last-docker-operation").write_text(operation)
+    result = subprocess.run(
+        [sys.executable, "-", "1"],
+        input=parser,
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {
+        "stage": "first_adoption",
+        "exit_code": 1,
+        "reason": "docker_operation",
+        "last_operation": operation if operation == "service.inspect" else "unknown",
+        "before_ddl": False,
+        "ddl_committed": False,
+    }
+    assert "SYNTHETIC_PRIVATE" not in result.stdout
+
+
+def test_migration_wrapper_keeps_controlled_post_commit_failure(tmp_path: Path) -> None:
+    rehearsal = next(
+        step["run"]
+        for step in steps_of("swarm")
+        if step.get("name") == "Rehearse real pre-projection bootstrap and forward recovery"
+    )
+    wrapper = tmp_path / "docker"
+    wrapper.write_text(rehearsal.split("cat > bin/docker <<'SH'\n", 1)[1].split("\nSH\n", 1)[0])
+    wrapper.chmod(0o700)
+    real = tmp_path / "real-docker"
+    real.write_text(
+        '#!/usr/bin/env bash\nif [[ "$1 ${2:-}" == "service inspect" ]]; then echo 0; fi\nexit 0\n'
+    )
+    real.chmod(0o700)
+    (tmp_path / "old-containers").touch()
+    result = subprocess.run(
+        [str(wrapper), "run", "SYNTHETIC_PRIVATE_IMAGE", "migrate"],
+        env={
+            **os.environ,
+            "CI_REAL_DOCKER": str(real),
+            "CI_COMPAT_FOLDER": str(tmp_path),
+            "CI_COMPAT_STACK": "synthetic-compat",
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 42
+    assert (tmp_path / "before-ddl").stat().st_size > 0
+    assert (tmp_path / "ddl-committed-launcher-failed").exists()
+    assert (tmp_path / "last-docker-operation").read_text().strip() == "run.migrate"
+    assert result.stdout == result.stderr == ""
