@@ -61,8 +61,17 @@ def connect_baserow_integration(tools: Mapping[str, ToolSpec]) -> Composite | No
     )
     if not all(call in tools for call in calls):
         return None
+    if "purpose" not in tools["connect_form_integration"].input_schema.get("properties", {}):
+        return None
     properties = borrowed(
-        tools, "connect_form_integration", "slug", "base_url", "table_id", "token", "confirm"
+        tools,
+        "connect_form_integration",
+        "slug",
+        "base_url",
+        "table_id",
+        "token",
+        "confirm",
+        "purpose",
     )["properties"]
     properties["sources"] = {
         "type": "object",
@@ -220,7 +229,7 @@ def _mapped_entries(state: Mapping[str, Any]) -> list[Mapping[str, Any]]:
 
 async def _connect_baserow_integration(steps: Steps, arguments: dict[str, Any]) -> ToolOutput:
     activate = flag(arguments, "activate")
-    others = sorted(set(arguments) & {"base_url", "table_id", "token", "sources"})
+    others = sorted(set(arguments) & {"base_url", "table_id", "token", "sources", "purpose"})
     if activate and others:
         return ToolOutput(
             "Ativar é um passo à parte: chame com só `slug` (e `activate: true`, e `confirm` se o "
@@ -238,6 +247,11 @@ async def _connect_baserow_integration(steps: Steps, arguments: dict[str, Any]) 
             "O `base_url` não tem um servidor que eu possa mostrar por inteiro à pessoa: precisa ser "
             "`https://servidor` (o servidor com até 253 caracteres, sem espaço nem caractere de "
             "controle). Nada foi feito.",
+            is_error=True,
+        )
+    if not activate and arguments.get("purpose") not in (None, "internal"):
+        return ToolOutput(
+            "Baserow exige finalidade interna (`purpose: internal`): envia respostas e dados comerciais. Participante não é compatível; nada foi feito.",
             is_error=True,
         )
     slug = arguments["slug"]
@@ -259,8 +273,10 @@ async def _connect_baserow_integration(steps: Steps, arguments: dict[str, Any]) 
 
 def _same_target(arguments: Mapping[str, Any], connection: Mapping[str, Any]) -> bool:
     asked = str(arguments["base_url"]).strip().rstrip("/")
-    return asked == str(connection.get("base_url")) and arguments["table_id"] == connection.get(
-        "table_id"
+    return (
+        asked == str(connection.get("base_url"))
+        and arguments["table_id"] == connection.get("table_id")
+        and (arguments.get("purpose") or connection.get("purpose")) == connection.get("purpose")
     )
 
 
@@ -276,6 +292,16 @@ async def _connect(
         return ToolOutput(
             "Falta o `token` (o token de banco de dados do Baserow é obrigatório ao conectar pela "
             "primeira vez). Nada foi feito.",
+            is_error=True,
+        )
+    same_url = connected and str(arguments["base_url"]).strip().rstrip("/") == str(
+        connection.get("base_url")
+    )
+    if arguments.get("purpose") is None and (
+        not same_url or connection.get("purpose") != "internal"
+    ):
+        return ToolOutput(
+            "Informe `purpose: internal` explicitamente ao criar a conexão ou mudar a URL. Baserow recebe respostas e dados comerciais; nada foi feito.",
             is_error=True,
         )
     same = connected and _same_target(arguments, connection)
@@ -343,6 +369,8 @@ async def _connect(
         if saved is not None
         else arguments.get("expected_version") or version,
     }
+    if "purpose" in arguments:
+        sent["purpose"] = arguments["purpose"]
     if token is not None:
         sent["token"] = token
     sent.update(confirmations(arguments))
@@ -685,7 +713,7 @@ def _connect_preface(
         (
             f"Pedido de `connect_baserow_integration`: conectar «{plain(arguments['slug'])}» ao servidor "
             f"{_shown_server(arguments['base_url'])}, tabela {plain(arguments['table_id'])}; o token vai a "
-            f"esse servidor. {now}"
+            f"esse servidor. Finalidade interna: respostas e dados comerciais. {now}"
         )
     ]
     if explicit is not None and not mapping_before:

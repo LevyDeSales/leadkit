@@ -445,8 +445,8 @@ def rotate(
     expected_version: int,
 ) -> str:
     """Troca o segredo do destino e devolve o novo, para mostrar uma vez. O antigo deixa de valer
-    na hora: o envio seguinte, inclusive o de uma entrega em repetição, já sai assinado com o
-    novo."""
+    na hora: novos envios usam o novo. Entregas PDF fixadas antes da troca exigem repetição
+    explícita com a revisão atual, preservando receptor e finalidade."""
     if cipher is None:
         raise NoCipher
     row = _lock_for_change(session, form_slug, expected_version, actor)

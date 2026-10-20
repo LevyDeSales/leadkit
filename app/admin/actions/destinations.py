@@ -142,8 +142,8 @@ class Removed:
 
 
 def remove(deps: Deps, form_slug: str | None, *, actor: str, expected_version: int) -> Removed:
-    """Apaga o destino: o formulário passa a usar o destino padrão, se houver, e sem ele os planos
-    deixam de ser entregues. Devolve o destino como estava e quem entrega agora. Levanta
+    """Apaga o destino: novos envios usam o padrão, se houver. Intenções PDF fixadas não mudam
+    de receptor; fatos internos legados conservam somente a resolução interna legada. Devolve o destino como estava e quem entrega agora. Levanta
     `Conflict`."""
     with deps.sessions.begin() as db:
         from app.integration_readiness import configuration_lock

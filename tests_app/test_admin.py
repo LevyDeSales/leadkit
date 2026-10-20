@@ -1079,7 +1079,7 @@ def launched(monkeypatch: pytest.MonkeyPatch) -> list[uuid.UUID]:
 def resend(client: TestClient, public_id: str, delivery_id: object, token: str) -> httpx.Response:
     return client.post(
         f"/admin/jobs/{public_id}/deliveries/{delivery_id}/resend",
-        data={"csrf_token": token},
+        data={"csrf_token": token, "expected_config_version": 1, "expected_attempt": 1},
         headers=ORIGIN,
     )
 
@@ -1110,9 +1110,7 @@ def test_resend_returns_a_failed_delivery_to_pending_and_launches_it(
 
     again = resend(client, job.public_id, delivery_id, token)  # já não está falha
     assert again.status_code == 303 and launched == [delivery_id]
-    assert (
-        "Só dá para reenviar uma entrega que falhou" in client.get(again.headers["location"]).text
-    )
+    assert "A entrega precisa ter falhado" in client.get(again.headers["location"]).text
 
 
 def test_resend_does_not_hold_the_operator_when_the_engine_does_not_answer(

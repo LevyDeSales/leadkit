@@ -144,6 +144,8 @@ def test_every_change_is_audited_in_the_name_of_who_made_it_without_the_token_or
     assert audited[0].details == {
         "form_slug": SLUG,
         "kind": "baserow",
+        "purpose": "internal",
+        "purpose_origin": "explicit",
         "host": "baserow.example.test",
         "table_id": BASEROW_TABLE,
         "token_changed": True,

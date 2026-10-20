@@ -79,7 +79,13 @@ def test_a_request_past_retention_leaves_no_trace_of_the_lead(deps: Deps) -> Non
     # Fica só configuração: os formulários e as versões deles, o destino do webhook, a auditoria da
     # criação dele e a da retenção.
     left = {name: len(found) for name, found in rows.items() if found}
-    assert left == {"audit_log": 2, "webhook_destinations": 1, "forms": 3, "form_versions": 3}
+    assert left == {
+        "audit_log": 2,
+        "webhook_destinations": 1,
+        "forms": 3,
+        "form_versions": 3,
+        "deployment_contract": 1,
+    }
     assert lead_traces(deps) == []
     with pytest.raises(FileNotFoundError):
         deps.storage.get(key)

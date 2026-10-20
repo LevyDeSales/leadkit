@@ -219,8 +219,15 @@ def test_stored_pdf_is_reused_and_delivery_retry_keeps_the_original_contact(
     webhook.error = None
     if resend:
         with deps.sessions.begin() as session:
-            assert jobs.resend_delivery(session, first.job.id, deliveries[0], actor="testes")
-    pipeline.deliver(deps, deliveries[0])
+            assert jobs.resend_delivery(
+                session,
+                first.job.id,
+                deliveries[0],
+                actor="testes",
+                expected_config_version=1,
+                expected_attempt=1,
+            )
+    pipeline.deliver(deps, deliveries[0], dispatch_no=2 if resend else 1)
     assert webhook.calls[-1][2]["lead"] == ORIGINAL
 
 

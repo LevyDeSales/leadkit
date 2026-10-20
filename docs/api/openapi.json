@@ -7747,7 +7747,7 @@
             "type": "string"
           },
           "serving": {
-            "description": "Quem entrega os eventos deste escopo depois da remoção: `default` (o formulário passa a usar o destino padrão) ou `none` (**os planos deixam de ser entregues**). Nunca `form`.",
+            "description": "Quem entrega os eventos deste escopo depois da remoção: `default` (o formulário passa a usar o destino padrão para novos envios) ou `none` (novos envios ficam sem entrega). Intenções PDF fixadas não são redirecionadas. Nunca `form`.",
             "enum": [
               "form",
               "default",
@@ -8865,7 +8865,7 @@
             "type": "string"
           },
           "secret": {
-            "description": "O segredo novo do destino. **Só existe nesta resposta**: ponha-o no receptor agora, porque o antigo já não vale e as entregas seguintes saem assinadas com este.",
+            "description": "O segredo novo do destino. **Só existe nesta resposta**: ponha-o no receptor agora, porque o antigo já não vale. Novos envios usam este segredo; entregas PDF fixadas exigem repetir explicitamente com a revisão atual.",
             "examples": [
               "<segredo-mostrado-uma-vez>"
             ],
@@ -11997,7 +11997,7 @@
     },
     "/destinations/{scope}": {
       "delete": {
-        "description": "Apaga o destino do escopo `scope` (`default` ou o endereço de um formulário), com o segredo. **Os formulários que dependiam dele deixam de ser entregues ali**: ao remover o destino de um formulário, ele passa a usar o destino padrão, se houver; ao remover o padrão, os formulários sem destino próprio **deixam de entregar** (os planos ficam sem destino até alguém criar outro). A resposta diz quem entrega o escopo agora (`serving`: `default` ou `none`) e traz o destino que saiu (`removed`), como estava. Não tem volta: para ter o destino de novo, crie-o com `save_destination` (e um segredo novo). Por isso a operação é marcada e exige `confirm=true` na query (sem ele, `422 confirmation_required` e nada acontece). `expected_version` é a `version` que `get_destination` devolveu, também na query; se o destino mudou ou já foi removido, `409 version_conflict` e nada é removido. A remoção fica na auditoria em nome da chave (`webhook_destination.remove`), com o host, sem o segredo nem o caminho da URL. Intenções de captura vinculadas são apagadas por cascade; a resposta informa as contagens, e pendentes não são enviadas nem transferidas ao padrão. Remove também o destino guardado de um formulário que saiu do código.",
+        "description": "Apaga o destino do escopo `scope` (`default` ou o endereço de um formulário), com o segredo. **Os formulários que dependiam dele deixam de ser entregues ali**: ao remover o destino de um formulário, ele passa a usar o destino padrão, se houver; ao remover o padrão, os novos envios de formulários sem destino próprio **ficam sem entrega**. Intenções PDF já fixadas neste receptor não são redirecionadas nem adotam outro criado depois; somente fatos internos legados sem correlação mantêm a resolução interna legada. A resposta diz quem entrega novos eventos do escopo (`serving`: `default` ou `none`) e traz o destino que saiu (`removed`), como estava. Não tem volta: para ter o destino de novo, crie-o com `save_destination` (e um segredo novo). Por isso a operação é marcada e exige `confirm=true` na query (sem ele, `422 confirmation_required` e nada acontece). `expected_version` é a `version` que `get_destination` devolveu, também na query; se o destino mudou ou já foi removido, `409 version_conflict` e nada é removido. A remoção fica na auditoria em nome da chave (`webhook_destination.remove`), com o host, sem o segredo nem o caminho da URL. Intenções de captura vinculadas são apagadas por cascade; a resposta informa as contagens, e pendentes não são enviadas nem transferidas ao padrão. Remove também o destino guardado de um formulário que saiu do código.",
         "operationId": "remove_destination",
         "parameters": [
           {
@@ -12045,7 +12045,7 @@
                 }
               }
             },
-            "description": "O destino removido, o fallback para novos eventos/PDF e as intenções de captura apagadas por estado; capturas antigas não são redirecionadas."
+            "description": "O destino removido, o fallback somente para novos eventos e as intenções de captura apagadas; entregas PDF fixadas não são redirecionadas."
           },
           "401": {
             "content": {
@@ -12373,7 +12373,7 @@
     },
     "/destinations/{scope}/rotate-secret": {
       "post": {
-        "description": "Gera um segredo novo para o destino do escopo `scope` (`default` ou o endereço de um formulário). **O novo aparece só nesta resposta** (`secret`, com `Cache-Control: no-store`): guarde-o e ponha-o no receptor agora. **O antigo deixa de valer na hora**: o envio seguinte, inclusive o de uma entrega em repetição, já sai assinado com o novo, e um receptor que ainda confere com o antigo passa a recusar os eventos. É também o que repara um destino cujo segredo não abre com a chave atual (`secret_unreadable`). `expected_version` é a `version` que `get_destination` devolveu; se mudou, `409 version_conflict` e o segredo não muda. Uma chamada repetida, com a versão de antes, é `409 state_conflict` e não repete o segredo novo: se você o perdeu, gere outro com a versão de agora. Por isso a operação é marcada e exige `\"confirm\": true` (sem ele, `422 confirmation_required` e nada acontece). A troca fica na auditoria em nome da chave (`webhook_destination.rotate_secret`), sem o segredo. Sem `WEBHOOK_ENCRYPTION_KEY` no servidor, é `409 state_conflict`.",
+        "description": "Gera um segredo novo para o destino do escopo `scope` (`default` ou o endereço de um formulário). **O novo aparece só nesta resposta** (`secret`, com `Cache-Control: no-store`): guarde-o e ponha-o no receptor agora. **O antigo deixa de valer na hora**: o envio novo sai assinado com o novo. Entregas PDF fixadas antes da troca exigem repetição explícita com a revisão atual, sem mudar a finalidade; um receptor que ainda confere com o antigo passa a recusar os eventos. É também o que repara um destino cujo segredo não abre com a chave atual (`secret_unreadable`). `expected_version` é a `version` que `get_destination` devolveu; se mudou, `409 version_conflict` e o segredo não muda. Uma chamada repetida, com a versão de antes, é `409 state_conflict` e não repete o segredo novo: se você o perdeu, gere outro com a versão de agora. Por isso a operação é marcada e exige `\"confirm\": true` (sem ele, `422 confirmation_required` e nada acontece). A troca fica na auditoria em nome da chave (`webhook_destination.rotate_secret`), sem o segredo. Sem `WEBHOOK_ENCRYPTION_KEY` no servidor, é `409 state_conflict`.",
         "operationId": "rotate_destination_secret",
         "parameters": [
           {

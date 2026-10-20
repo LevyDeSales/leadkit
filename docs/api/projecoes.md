@@ -24,6 +24,10 @@ contém somente `event`, `event_id`, `occurred_at`, `form`, `job`, `plan`, `pdf`
 estado/página, e `pdf` mantém os links e referências técnicas sujeitos às permissões vigentes.
 Nenhuma liberação comercial ou revogação retroativa de URL é introduzida neste corte.
 
+A composta MCP `connect_baserow_integration` repassa `purpose` ao mesmo serviço e mostra a
+finalidade na confirmação. Criar uma conexão ou mudar sua URL exige escolha interna explícita;
+uma conexão interna existente na mesma URL, omitir conserva a escolha.
+
 Captura (`submissao.persistida`) e Baserow exigem finalidade interna. Escolha um receptor interno
 autorizado ou remova a integração efetiva, conferindo também o destino padrão herdado. A mesma
 regra vale em salvar, testar, ativar, publicar, importar e antes da rede, nas superfícies comuns.

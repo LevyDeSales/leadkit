@@ -89,7 +89,13 @@ READS = {"attention_overview", "diagnose_order"}
 NO_LEAD_DATA = {"include_lead_data": "false"}  # o que o executor acrescenta a toda `list_jobs`
 NOTE = "Introdução nova, escrita pelo MCP"
 INTRO = [{"op": "replace", "path": "/intro", "value": "Uma introdução nova para o diagnóstico."}]
-CONNECT = {"slug": SLUG, "base_url": BASEROW_URL, "table_id": BASEROW_TABLE, "token": BASEROW_TOKEN}
+CONNECT = {
+    "slug": SLUG,
+    "base_url": BASEROW_URL,
+    "table_id": BASEROW_TABLE,
+    "token": BASEROW_TOKEN,
+    "purpose": "internal",
+}
 
 
 def folder(tmp_path: Path, name: str) -> Path:
@@ -151,7 +157,7 @@ def test_the_lead_data_option_changes_no_composite_but_adds_the_lead_pdf_beside_
     on = World(tmp_path, lead_data=True)
     reader = World(folder(tmp_path, "leitura"), "leitura", lead_data=True)
 
-    assert set(on.composites) == set(CALLS) and len(on.tools) + len(on.composites) == 65
+    assert set(on.composites) == set(CALLS) and len(on.tools) + len(on.composites) == 66
     assert set(reader.composites) == READS  # a opção não faz nada para a chave `leitura`
     assert not any("download_job_pdf" in c.calls for c in on.composites.values())
     on.close()
@@ -2413,7 +2419,8 @@ def test_the_server_lists_the_composites_beside_the_generated_tools(tmp_path: Pa
     names = {tool.name for tool in everything}
     assert len(everything) == 64 and set(CALLS) <= names
     assert names - set(CALLS) == operation_ids(DOCUMENT) - {
-        "download_job_pdf"
+        "download_job_pdf",
+        "get_job_plan_projection",
     }  # as geradas seguem lá
     assert len(read_only) == 31 and {t.name for t in read_only} >= READS
     assert not (
@@ -2595,3 +2602,37 @@ def test_over_the_protocol_a_client_that_cannot_ask_gets_the_description_and_not
     )
     assert [bool(json.loads(r.content).get("dry_run")) for r in world.api.calls("POST")] == [True]
     world.close()
+
+
+def test_baserow_composite_forwards_explicit_purpose_and_shows_it_before_confirmation(
+    deps: Deps, live: Live
+) -> None:
+    asker = Asker(True)
+    output = live.compose("connect_baserow_integration", {**CONNECT, "purpose": "internal"}, asker)
+    assert not output.is_error
+    assert "Finalidade interna" in asker.messages[0]
+    request = next(
+        request for request in live.sent() if operation_of(request) == "connect_form_integration"
+    )
+    assert json.loads(request.content)["purpose"] == "internal"
+
+
+def test_baserow_composite_never_infers_internal_for_a_new_receiver(live: Live) -> None:
+    arguments = {**CONNECT}
+    arguments.pop("purpose", None)
+    asker = Asker(True)
+    output = live.compose("connect_baserow_integration", arguments, asker)
+    assert output.is_error and "purpose" in output.text
+    assert asker.messages == []
+    assert all(operation_of(request) != "connect_form_integration" for request in live.sent())
+
+
+def test_baserow_composite_refuses_participant_before_any_confirmation_or_request(
+    live: Live,
+) -> None:
+    asker = Asker(True)
+    output = live.compose(
+        "connect_baserow_integration", {**CONNECT, "purpose": "participant"}, asker
+    )
+    assert output.is_error and "Participante não é compatível" in output.text
+    assert asker.messages == [] and live.sent() == []

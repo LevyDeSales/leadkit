@@ -517,6 +517,7 @@ def acts(deps: Deps, world: JobsWorld, writer: ApiClient) -> dict[str, Any]:
         url_of("save_destination", scope="demo"),
         json={
             "url": f"https://hooks.example.test/{PATH_SECRET}",
+            "purpose": "internal",
             "expected_version": "0",
             "confirm": True,
         },
@@ -606,6 +607,8 @@ def test_the_audit_of_a_destination_keeps_the_host_and_not_the_path_of_the_url(
     assert item["target_type"] == "webhook_destination"
     assert item["details"] == {
         "form_slug": "demo",
+        "purpose": "internal",
+        "purpose_origin": "explicit",
         "host": "hooks.example.test",
         "events": ["plano.concluido"],
     }

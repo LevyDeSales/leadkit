@@ -7,6 +7,7 @@ pode rodar de novo depois de já ter gravado o resultado.
 from __future__ import annotations
 
 import hashlib
+import re
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -279,12 +280,32 @@ def deliver(deps: Deps, delivery_id: uuid.UUID, dispatch_no: int = 1) -> str:
             delivery.status, delivery.response_status = "succeeded", status
             delivery.delivered_at, delivery.last_error = utcnow(), None
         except Exception as exc:  # noqa: BLE001 - registra somente código e relança após commit
-            known = isinstance(exc, RetryableError | TerminalError)
-            delivery.last_error = (str(exc) if known else type(exc).__name__)[:300]
+            delivery.last_error = _delivery_error(exc)
             failure = exc
     if failure is not None:
         raise failure
     return "succeeded"
+
+
+def _delivery_error(exc: Exception) -> str:
+    """Persiste só códigos, status HTTP e descrições fixas do domínio; nunca detalhe do provedor."""
+    if not isinstance(exc, RetryableError | TerminalError) or not isinstance(exc.code, FailureCode):
+        return "[internal] falha inesperada na entrega PDF"
+    safe = {
+        "o segredo do destino não abre com WEBHOOK_ENCRYPTION_KEY",
+        "destino, revisão ou finalidade não autorizados; confira a configuração e solicite repetição explícita",
+        "finalidade participante indisponível por compatibilidade",
+        "prazo de retenção do pedido encerrado",
+        "transporte sem evidência de entrega",
+        "entrega de tentativa anterior não é atual",
+        "projeção participante indisponível para a versão histórica",
+    }
+    detail = exc.detail
+    if not isinstance(detail, str) or (
+        detail not in safe and re.fullmatch(r"HTTP [1-5][0-9]{2}", detail) is None
+    ):
+        detail = "falha no transporte da entrega PDF"
+    return f"[{exc.code.value}] {detail}"
 
 
 def _destination_of(session: Any, deps: Deps, delivery: Delivery) -> destinations.Destination:

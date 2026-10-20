@@ -92,3 +92,32 @@ def test_provider_error_details_never_reach_hatchet_serialized_error(deps, monke
         workflows.send.mock_run(input=workflows.DeliverInput.for_delivery(uuid4()))
     assert SENTINEL not in TaskRunError.from_exception(raised.value, None).trace
     assert SENTINEL not in caplog.text
+
+
+def test_provider_details_are_not_persisted_or_returned_by_admin_queries(deps):
+    from dataclasses import asdict
+
+    import pytest
+
+    from app import pipeline
+    from app.admin.queries.jobs import read_job
+    from app.errors import FailureCode, RetryableError
+    from app.models import Delivery, Job, utcnow
+
+    record_webhook(deps, RetryableError(FailureCode.DELIVERY_UNAVAILABLE, SENTINEL))
+    job_id, deliveries = run_until_finalize(deps)
+    with pytest.raises(RetryableError):
+        pipeline.deliver(deps, deliveries[0])
+    with deps.sessions() as session:
+        persisted = session.get_one(Delivery, deliveries[0]).last_error
+        job = session.get_one(Job, job_id)
+        internal = read_job(
+            session,
+            job.public_id,
+            forms=deps.forms,
+            now=utcnow(),
+            with_lead=True,
+            storage=deps.storage,
+        )
+    assert persisted == "[delivery_unavailable] falha no transporte da entrega PDF"
+    assert SENTINEL not in json.dumps(asdict(internal), default=str)

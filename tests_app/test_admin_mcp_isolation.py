@@ -247,7 +247,7 @@ def test_the_program_speaks_mcp_over_stdio_against_a_real_http_api(local_api: Lo
         "publish_form_with_review",
         "connect_baserow_integration",
     }
-    generated = operation_ids(openapi_document()) - {"download_job_pdf"}
+    generated = operation_ids(openapi_document()) - {"download_job_pdf", "get_job_plan_projection"}
     assert {t.name for t in listed.tools} == generated | composites  # as geradas seguem ao lado
     assert not forms.isError and json.loads(forms.content[0].text)["items"] == [{"slug": "demo"}]
     assert refused.content[0].text.startswith("CONFIRMAÇÃO NECESSÁRIA")  # o stdio sem elicitation

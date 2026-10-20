@@ -321,7 +321,8 @@ class RotatedDestination(Destination):
 
     secret: str = Field(
         description="O segredo novo do destino. **Só existe nesta resposta**: ponha-o no receptor "
-        "agora, porque o antigo já não vale e as entregas seguintes saem assinadas com este.",
+        "agora, porque o antigo já não vale. Novos envios usam este segredo; entregas PDF fixadas "
+        "exigem repetir explicitamente com a revisão atual.",
         examples=["<segredo-mostrado-uma-vez>"],
         repr=False,
     )
@@ -350,7 +351,7 @@ class RemovedDestination(BaseModel):
     )
     serving: Serving = Field(
         description="Quem entrega os eventos deste escopo depois da remoção: `default` (o formulário "
-        "passa a usar o destino padrão) ou `none` (**os planos deixam de ser entregues**). Nunca "
+        "passa a usar o destino padrão para novos envios) ou `none` (novos envios ficam sem entrega). Intenções PDF fixadas não são redirecionadas. Nunca "
         "`form`."
     )
     serving_host: str | None = Field(

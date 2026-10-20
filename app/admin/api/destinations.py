@@ -334,7 +334,8 @@ ROTATE_TEXT = (
         "Gera um segredo novo para o destino do escopo `scope` (`default` ou o endereço de um "
         "formulário). **O novo aparece só nesta resposta** (`secret`, com `Cache-Control: "
         "no-store`): guarde-o e ponha-o no receptor agora. **O antigo deixa de valer na hora**: o "
-        "envio seguinte, inclusive o de uma entrega em repetição, já sai assinado com o novo, e um "
+        "envio novo sai assinado com o novo. Entregas PDF fixadas antes da troca exigem repetição "
+        "explícita com a revisão atual, sem mudar a finalidade; um "
         "receptor que ainda confere com o antigo passa a recusar os eventos. É também o que repara um "
         "destino cujo segredo não abre com a chave atual (`secret_unreadable`). `expected_version` é a "
         "`version` que `get_destination` devolveu; se mudou, `409 version_conflict` e o segredo não "
@@ -369,7 +370,8 @@ def rotate_destination_secret(
 
 REMOVE_TEXT = (
     "Remover o destino o apaga, com o segredo, e muda para onde vão os dados das leads: os formulários "
-    "que dependiam dele passam a usar o destino padrão para novos eventos e retries PDF, se houver. "
+    "que dependiam dele passam a usar o destino padrão para novos eventos, se houver. Entregas PDF "
+    "já fixadas não são redirecionadas; só fatos internos legados sem correlação conservam a resolução interna legada. "
     "Os registros de entrega de respostas vinculados serão apagados, inclusive os pendentes e já concluídos; as contagens aparecem na leitura e no retorno. Pendentes de captura não são reenviados nem transferidos ao padrão; as respostas salvas permanecem."
 )
 
@@ -391,8 +393,10 @@ REMOVE_TEXT = (
         "Apaga o destino do escopo `scope` (`default` ou o endereço de um formulário), com o "
         "segredo. **Os formulários que dependiam dele deixam de ser entregues ali**: ao remover o "
         "destino de um formulário, ele passa a usar o destino padrão, se houver; ao remover o "
-        "padrão, os formulários sem destino próprio **deixam de entregar** (os planos ficam sem "
-        "destino até alguém criar outro). A resposta diz quem entrega o escopo agora (`serving`: "
+        "padrão, os novos envios de formulários sem destino próprio **ficam sem entrega**. Intenções "
+        "PDF já fixadas neste receptor não são redirecionadas nem adotam outro criado depois; "
+        "somente fatos internos legados sem correlação mantêm a resolução interna legada. "
+        "A resposta diz quem entrega novos eventos do escopo (`serving`: "
         "`default` ou `none`) e traz o destino que saiu (`removed`), como estava. Não tem volta: para "
         "ter o destino de novo, crie-o com `save_destination` (e um segredo novo). Por isso a operação "
         "é marcada e exige `confirm=true` na query (sem ele, `422 confirmation_required` e nada "
@@ -402,7 +406,7 @@ REMOVE_TEXT = (
         "segredo nem o caminho da URL. Intenções de captura vinculadas são apagadas por cascade; a resposta informa as contagens, e pendentes não são enviadas nem transferidas ao padrão. Remove também o destino guardado de um formulário que saiu do "
         "código."
     ),
-    returns="O destino removido, o fallback para novos eventos/PDF e as intenções de captura apagadas por estado; capturas antigas não são redirecionadas.",
+    returns="O destino removido, o fallback somente para novos eventos e as intenções de captura apagadas; entregas PDF fixadas não são redirecionadas.",
     response_model=RemovedDestination,
 )
 def remove_destination(

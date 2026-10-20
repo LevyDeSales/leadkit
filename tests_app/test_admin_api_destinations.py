@@ -680,7 +680,10 @@ def test_save_destination_needs_confirm_true_on_every_call_and_does_nothing_with
 
     for response in (created, changed):
         assert response.status_code == 422 and response.json()["code"] == "confirmation_required"
-        assert "para onde vão os dados das leads" in response.json()["detail"]
+        assert (
+            "Finalidade interna" in response.json()["detail"]
+            and "participante" in response.json()["detail"]
+        )
     assert current(deps, None) is None and current(deps, "mcc") == before
     assert [entry.id for entry in audits(deps)] == trail  # nada gravado nem auditado
 
