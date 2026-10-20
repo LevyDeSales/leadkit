@@ -50,6 +50,9 @@ PUBLIC_DETAIL_KEYS = frozenset(
         # Entregas de captura: referências e finalidade autorizada, sem respostas nem credenciais.
         "submission_id",
         "config_version",
+        "purpose",
+        "purpose_origin",
+        "audience",
         "dispatch_no",
         "events",
         "profile",

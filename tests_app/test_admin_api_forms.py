@@ -93,6 +93,7 @@ def save_destination(deps: Deps, slug: str | None, host: str = SECRET_HOST) -> N
             expected_version=0,
             production=False,
             http_confirmed=False,
+            purpose="internal",
         )
 
 
@@ -108,6 +109,7 @@ def connect_integration(deps: Deps, slug: str) -> None:
             actor="testes",
             expected_version=0,
             production=False,
+            purpose="internal",
         )
 
 

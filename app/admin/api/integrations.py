@@ -201,6 +201,7 @@ def connect_form_integration(
             get_deps(),
             slug,
             base_url=body.base_url,
+            purpose=body.purpose,
             table_id=body.table_id,
             token=body.token.get_secret_value() if body.token is not None else "",
             expected_version=actions.version_number(body.expected_version),

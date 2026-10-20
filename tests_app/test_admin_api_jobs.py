@@ -1157,6 +1157,11 @@ def test_get_job_lists_the_pdfs_the_deliveries_and_the_syncs_of_each_attempt(
     first = body["deliveries"][0]
     assert first["destination"] == "webhook" and first["attempts"] == 1
     assert set(first) == {
+        "audience",
+        "authorization_origin",
+        "config_version",
+        "current_config_version",
+        "dispatch_no",
         "id",
         "destination",
         "status",

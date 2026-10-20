@@ -520,6 +520,7 @@ def test_the_address_changes_before_the_first_publication_and_takes_the_destinat
             expected_version=0,
             production=False,
             http_confirmed=False,
+            purpose="internal",
         )
     client = api_client("total")
     before = read_draft(client, SCRATCH)

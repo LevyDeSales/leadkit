@@ -46,6 +46,7 @@ def baserow(deps: Deps) -> FakeBaserow:
 
 def connect(deps: Deps, **changes: object) -> actions.Connected:
     options: dict[str, object] = {
+        "purpose": "internal",
         "base_url": BASEROW_URL,
         "table_id": BASEROW_TABLE,
         "token": BASEROW_TOKEN,

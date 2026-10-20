@@ -207,9 +207,9 @@ def conflict_of(
 
 
 SAVE_TEXT = (
-    "Criar o destino, ou mudar o endereço dele, muda para onde vão os dados das leads: o evento "
-    "`plano.concluido`, com nome, e-mail, telefone e respostas, passa a ir para o receptor deste "
-    "endereço."
+    "Gravar o receptor e sua finalidade define quem recebe os dados. Finalidade interna envia "
+    "o plano integral, respostas e dados comerciais; participante envia somente o plano público "
+    "e referências permitidas. Captura e Baserow exigem finalidade interna."
 )
 
 
@@ -268,7 +268,14 @@ def save_destination(
             expected_version=expected,
             http_confirmed=body.confirm_http,
             events=body.events,
+            purpose=body.purpose,
         )
+    except destinations.InvalidPurpose as invalid:
+        raise ApiError(
+            "validation_failed",
+            invalid.message,
+            errors=[ErrorItem(field="purpose", message=invalid.message)],
+        ) from None
     except destinations.InvalidEvents as invalid:
         raise ApiError(
             "validation_failed",
@@ -485,6 +492,12 @@ def send_destination_test_event(
         probe = destinations.send_test(deps, target.form_slug, actor=key.actor, event=body.event)
     except destinations.UnreadableSecret:
         raise ApiError("state_conflict", UNREADABLE_SECRET) from None
+    except destinations.InvalidPurpose as exc:
+        raise ApiError(
+            "validation_failed",
+            exc.message,
+            errors=[ErrorItem(field="purpose", message=exc.message)],
+        ) from None
     except destinations.UnsupportedEvent:
         raise ApiError(
             "state_conflict", "O destino não declarou aceitar o evento de captura."

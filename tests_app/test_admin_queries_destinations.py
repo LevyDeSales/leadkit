@@ -26,6 +26,7 @@ def store(deps: Deps, form_slug: str | None, url: str = "https://hooks.example.t
             expected_version=0,
             production=False,
             http_confirmed=False,
+            purpose="internal",
         )
 
 

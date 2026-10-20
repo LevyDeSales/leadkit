@@ -151,7 +151,11 @@ class ResendRefused(Exception):
     Nada foi feito."""
 
     def __init__(self, *, missing: bool) -> None:
-        super().__init__("não existe neste pedido" if missing else "não está em failed")
+        super().__init__(
+            "não existe neste pedido"
+            if missing
+            else "estado, revisão, audiência ou tentativa não autorizados"
+        )
         self.missing = missing
 
 
@@ -232,7 +236,13 @@ async def reprocess(
 
 
 async def resend_delivery(
-    deps: Deps, public_id: str, delivery_id: uuid.UUID, *, actor: str
+    deps: Deps,
+    public_id: str,
+    delivery_id: uuid.UUID,
+    *,
+    actor: str,
+    expected_config_version: int | None = None,
+    expected_attempt: int | None = None,
 ) -> Resent:
     """Uma entrega que falhou volta para pendente (auditado em nome de `actor`) e o `deliver` é
     disparado de novo. Sem engine, o SDK insiste por minutos: a espera é limitada
@@ -244,7 +254,15 @@ async def resend_delivery(
         public_id,
         Delivery,
         delivery_id,
-        lambda session, job_id: jobs.resend_delivery(session, job_id, delivery_id, actor=actor),
+        lambda session, job_id: jobs.resend_delivery(
+            session,
+            job_id,
+            delivery_id,
+            actor=actor,
+            expected_config_version=expected_config_version,
+            expected_attempt=expected_attempt,
+            retention_days=deps.settings.retention_days,
+        ),
     )
     logger.info("admin: reenvio delivery=%s por=%s", delivery_id, actor)
     return Resent(launched=await launching.launch_delivery(deps, delivery_id))

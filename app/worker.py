@@ -33,8 +33,10 @@ def ready_deps(now: datetime | None = None) -> Deps:
     tabelas, no primeiro deploy da stack do Swarm, que sobe antes das migrations) vira um WARNING e
     o worker segue; a conexão, conferida antes, continua parando a subida."""
     deps = get_deps()
+    from app.deployment_contract import assert_runtime_contract
+
     with deps.sessions() as session:
-        session.connection()
+        assert_runtime_contract(session)
     destinations.prepare(deps)
     integration_config.prepare(deps)
     try:

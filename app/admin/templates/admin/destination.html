@@ -13,6 +13,10 @@
 </div>
 
 <div class="stackcol">
+{% if errors %}<section class="alert alert--error" role="alert" aria-labelledby="destination-errors">
+<h2 id="destination-errors" tabindex="-1" autofocus>Confira os campos indicados</h2>
+<ul>{% for key, message in errors.items() %}<li><a href="#{{ 'purpose' if key == 'purpose' else 'eventos' if key == 'events' else 'url' if key == 'url' else 'endereco' }}">{{ message }}</a></li>{% endfor %}</ul>
+</section>{% endif %}
 {% if cipher_missing %}
 <div class="alert alert--error" role="alert">{{ m.icon('alert-circle', 'icon--lg') }}<div><strong class="alert__title">Falta WEBHOOK_ENCRYPTION_KEY</strong><p>Sem a chave, o app não guarda segredos novos nem abre os guardados. Defina a chave no ambiente e reinicie a API e o worker (app/README.md).</p></div></div>
 {% endif %}
@@ -41,6 +45,17 @@
       <input class="input mono" id="url" name="url" type="url" value="{{ url }}" maxlength="{{ max_url_length }}" required autocomplete="off" spellcheck="false" placeholder="https://"{% if errors.get("url") %} aria-invalid="true" aria-describedby="url-erro"{% endif %}>
       {% if errors.get("url") %}<p class="error" id="url-erro">{{ m.icon('alert-circle') }}{{ errors["url"] }}</p>{% endif %}
     </div>
+    <div class="field">
+      <label for="purpose">Finalidade do receptor</label>
+      <p id="purpose-ajuda">Interna envia o plano integral e dados comerciais que a participante não vê. Participante recebe somente o plano público e seus links autorizados. Trocar o segredo conserva esta escolha.</p>
+      <select id="purpose" name="purpose" aria-describedby="purpose-ajuda{% if errors.get('purpose') %} purpose-erro{% endif %}"{% if errors.get('purpose') %} aria-invalid="true"{% endif %}>
+        <option value="participant"{% if selected_purpose == 'participant' %} selected{% endif %}>Participante — plano público</option>
+        <option value="internal"{% if selected_purpose == 'internal' %} selected{% endif %}>Interna — dados comerciais e respostas</option>
+      </select>
+      {% if errors.get('purpose') %}<p class="error" id="purpose-erro" role="alert">{{ errors['purpose'] }}</p>{% endif %}
+      {% if page.stored %}<p>Finalidade atual: {{ "interna" if page.stored.purpose == "internal" else "participante" }} · {{ {"legacy": "origem legada", "explicit": "escolha explícita", "default": "padrão seguro"}.get(page.stored.purpose_origin) }}.</p>{% endif %}
+    </div>
+    <p>Finalidade do destino efetivo: {{ "interna — plano integral e dados comerciais" if effective_purpose == "internal" else "participante — plano público" if effective_purpose else "nenhum destino" }}.</p>
     <p>Eventos do destino efetivo: {{ effective_events | join(", ") or "nenhum destino" }}.</p>
     <input type="hidden" name="events_present" value="1">
     <fieldset id="eventos" aria-describedby="eventos-ajuda{% if errors.get('events') %} eventos-erro{% endif %}"{% if errors.get('events') %} aria-invalid="true"{% endif %}><legend>Eventos aceitos pelo receptor</legend>

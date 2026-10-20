@@ -48,7 +48,7 @@ def selected(role: str, lead_data: bool = False) -> dict[str, ToolSpec]:
 def test_the_catalog_has_exactly_the_operation_ids_of_the_file() -> None:
     assert LOADED.skipped == {}
     assert set(TOOLS) == operation_ids(DOCUMENT)
-    assert len(TOOLS) == 60
+    assert len(TOOLS) == 61
 
 
 def test_the_list_of_exceptions_starts_empty() -> None:
@@ -124,7 +124,7 @@ def test_a_leitura_key_registers_only_the_leitura_tools() -> None:
 def test_a_total_key_registers_all_but_the_lead_pdf_while_the_option_is_off() -> None:
     found = selected("total")
 
-    assert set(found) == operation_ids(DOCUMENT) - {"download_job_pdf"}
+    assert set(found) == operation_ids(DOCUMENT) - {"download_job_pdf", "get_job_plan_projection"}
     assert len(found) == 59
 
 
@@ -132,7 +132,7 @@ def test_the_lead_data_option_registers_the_lead_pdf_for_a_total_key() -> None:
     found = selected("total", lead_data=True)
 
     assert set(found) == operation_ids(DOCUMENT)
-    assert len(found) == 60
+    assert len(found) == 61
 
 
 def test_the_option_does_nothing_for_a_leitura_key() -> None:
@@ -205,7 +205,14 @@ def test_every_lead_data_operation_is_either_flagged_or_withheld_without_the_opt
     """Uma operação `x-lead-data` nova, com ou sem `include_lead_data`, nunca vaza por omissão: ou a
     ferramenta fixa o argumento em falso, ou ela não é registrada."""
     marked = {name for name, (_, _, op) in OPERATIONS.items() if op.get("x-lead-data")}
-    assert marked == {"list_jobs", "get_job", "download_job_pdf", "list_captures", "get_capture"}
+    assert marked == {
+        "list_jobs",
+        "get_job",
+        "download_job_pdf",
+        "get_job_plan_projection",
+        "list_captures",
+        "get_capture",
+    }
 
     found = selected("total")
     for name in marked:

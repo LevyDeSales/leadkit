@@ -50,7 +50,7 @@ def admin(deps: Deps) -> TestClient:
 def post(
     client: TestClient, path: str, *, headers: dict[str, str] | None = None, **form: str
 ) -> httpx.Response:
-    data = {"csrf_token": csrf_token(client), **form}
+    data = {"csrf_token": csrf_token(client), "purpose": "internal", **form}
     return client.post(path, data=data, headers={**ORIGIN, **(headers or {})})
 
 
@@ -296,6 +296,7 @@ def test_a_destination_kept_for_a_form_that_left_the_code_can_still_be_removed(
             expected_version=0,
             production=False,
             http_confirmed=False,
+            purpose="internal",
         )
     path = "/admin/destinations/forms/formulario-antigo"
 
@@ -419,6 +420,7 @@ def test_when_the_api_starts_the_env_webhook_becomes_the_default_destination(
 ) -> None:
     deps.settings = Settings(  # type: ignore[call-arg]
         _env_file=None,
+        WEBHOOK_PURPOSE="internal",
         WEBHOOK_URL=receiver.url("/env"),
         WEBHOOK_SECRET="segredo-falso-que-o-receptor-ja-conhece",
         **ADMIN_ENV,
@@ -443,17 +445,21 @@ def test_in_production_the_api_does_not_start_without_the_key_when_a_destination
         pass
 
 
-def test_the_api_starts_with_the_database_down_as_before(deps: Deps) -> None:
-    """Sem banco na subida, a API sobe e o /readyz diz 503; a importação fica com o worker."""
+def test_api_refuses_startup_when_database_cannot_prove_runtime_contract(deps: Deps) -> None:
+    """Sem ler o piso persistido, a API não aceita começar a escrever após reconectar."""
+    from app.deployment_contract import DeploymentContractError
+
     with socket.socket() as probe:  # uma porta livre, que ninguém atende
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]
     nowhere = make_engine(f"postgresql+psycopg://mcc@127.0.0.1:{port}/fora_do_ar_test")
     deps.sessions = make_session_factory(nowhere)
     try:
-        with TestClient(create_app(trigger=None, clock=FakeClock())) as client:
-            assert client.get("/healthz").status_code == 200
-            assert client.get("/readyz").status_code == 503
+        with (
+            pytest.raises(DeploymentContractError),
+            TestClient(create_app(trigger=None, clock=FakeClock())),
+        ):
+            pass
     finally:
         nowhere.dispose()
 
@@ -528,6 +534,7 @@ def test_a_change_made_by_someone_else_is_still_refused_as_before(
             expected_version=0,
             production=False,
             http_confirmed=False,
+            purpose="internal",
         )
 
     repeated = post(admin, "/admin/destinations/forms/mcc/url", url=receiver.url(), version="0")

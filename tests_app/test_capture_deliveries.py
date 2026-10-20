@@ -39,6 +39,7 @@ def configured(deps):
             events=["submissao.persistida"],
             created_by="operadora",
             updated_by="operadora",
+            purpose="internal",
         )
         integration = Integration(
             form_slug="capture-test",
@@ -49,6 +50,7 @@ def configured(deps):
             active=True,
             created_by="operadora",
             updated_by="operadora",
+            purpose="internal",
         )
         session.add_all([destination, integration])
     return destination.id, integration.id
@@ -177,6 +179,7 @@ def test_webhook_events_default_pdf_and_omitted_update_preserves_choice(deps):
             expected_version=0,
             production=False,
             http_confirmed=False,
+            purpose="internal",
         )
         assert saved.destination.events == ("plano.concluido",)
     with deps.sessions.begin() as session:
@@ -190,6 +193,7 @@ def test_webhook_events_default_pdf_and_omitted_update_preserves_choice(deps):
             production=False,
             http_confirmed=False,
             events=["submissao.persistida"],
+            purpose="internal",
         )
         assert saved.destination.events == ("submissao.persistida",)
     with deps.sessions.begin() as session:
@@ -202,6 +206,7 @@ def test_webhook_events_default_pdf_and_omitted_update_preserves_choice(deps):
             expected_version=2,
             production=False,
             http_confirmed=False,
+            purpose="internal",
         )
         assert saved.destination.events == ("submissao.persistida",)
 
@@ -287,6 +292,7 @@ def test_rollback_creates_no_intent_and_replay_does_not_adopt_new_destination(de
                 events=["submissao.persistida"],
                 created_by="operadora",
                 updated_by="operadora",
+                purpose="internal",
             )
         )
     assert capture(deps) == submission_id
@@ -386,6 +392,7 @@ def test_capture_publication_refuses_incompatible_effective_webhook_locally(deps
                 secret_sealed=deps.cipher.seal("synthetic"),
                 created_by="operadora",
                 updated_by="operadora",
+                purpose="internal",
             )
         )
         draft = drafts.load(session, slug)
@@ -551,6 +558,7 @@ def test_capture_configuration_api_returns_selected_profile_and_tests_only_synth
             url_of("connect_form_integration", slug="capture-test"),
             json={
                 "base_url": BASEROW_URL,
+                "purpose": "internal",
                 "table_id": BASEROW_TABLE,
                 "token": BASEROW_TOKEN,
                 "expected_version": "0",
@@ -666,6 +674,7 @@ def test_activation_revalidates_the_new_purpose_when_publication_changes_during_
             actor="operadora",
             expected_version=0,
             production=False,
+            purpose="internal",
         )
         row = session.get(Integration, stored.id)
         row.mapping = [
@@ -766,6 +775,7 @@ def test_removing_destinations_reports_capture_intents_and_does_not_move_them_to
                 events=["submissao.persistida"],
                 created_by="operadora",
                 updated_by="operadora",
+                purpose="internal",
             )
         )
         delivery_id = session.scalar(

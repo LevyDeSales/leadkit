@@ -78,6 +78,7 @@ def save(
     expected_version: int,
     http_confirmed: bool,
     events: list[str] | None = None,
+    purpose: str | None = None,
 ) -> destinations.SaveResult:
     """Cria o destino (com o segredo novo em `secret`, que só existe neste resultado) ou muda o
     endereço do que existe, que mantém o segredo. `expected_version` é a versão que a pessoa viu (0:
@@ -97,11 +98,14 @@ def save(
             production=deps.settings.app_env == "production",
             http_confirmed=http_confirmed,
             events=events,
+            purpose=purpose,
         )
         db.flush()
         from app.integration_readiness import webhook_problems
 
         if issues := webhook_problems(db, form_slug):
+            if issues[0].path == "integrations.purpose":
+                raise destinations.InvalidPurpose(issues[0].message)
             raise destinations.InvalidEvents(issues[0].message)
         return result
 

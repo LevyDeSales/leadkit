@@ -23,4 +23,6 @@ e as consequências; o detalhe fica nos relatórios e no código citados em cada
 | [0015](0015-api-de-admin.md) | API de admin com cobertura total do painel, chaves com papel, referência Scalar e um MCP derivado do OpenAPI | 2026-10-15 |
 | [0016](0016-entregas-de-captura.md) | Entregas de captura preservam fato, finalidade e destino sem fabricar PDF | 2026-10-20 |
 
+| [0017](0017-projecoes-e-finalidade-de-receptores.md) | Projeção histórica, finalidade explícita e autorização das entregas PDF | 2026-10-20 |
+
 Todas estão com status **aceita**, menos a 0004, **substituída** pela 0013.

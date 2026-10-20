@@ -92,7 +92,7 @@ RESEND_LAUNCHED = "Reenvio disparado. Acompanhe o estado da entrega abaixo."
 RESEND_DEFERRED = (
     "A entrega voltou para a fila; o envio será disparado automaticamente em instantes."
 )
-RESEND_REFUSED = "Só dá para reenviar uma entrega que falhou. Confira o estado atual abaixo."
+RESEND_REFUSED = "A entrega precisa ter falhado e manter a mesma audiência e tentativa. Confira o destino, a revisão atual e o prazo de retenção antes de confirmar o reenvio."
 PDF_REMOVED = "Este PDF já foi apagado do armazenamento pelo prazo de retenção (LGPD)."
 ENV_LABELS = {"development": "Desenvolvimento", "test": "Teste"}
 STOP_POLLING = 286  # código do HTMX para parar o `hx-trigger="every ..."`
@@ -411,6 +411,25 @@ def job_detail(request: Request, public_id: str) -> Response:
     return _detail_page(request, public_id)
 
 
+@protected.get("/jobs/{public_id}/participant")
+def participant_plan(request: Request, public_id: str) -> Response:
+    from dataclasses import asdict
+
+    from app.admin.queries import jobs as queries
+
+    deps = get_deps()
+    try:
+        with deps.sessions() as session:
+            found = queries.get_job_plan_projection(
+                session, public_id, forms=deps.forms, audience="participant"
+            )
+    except queries.ProjectionUnavailable as exc:
+        return _error(request, 409, str(exc))
+    if found is None:
+        return _error(request, 404, JOB_NOT_FOUND)
+    return _page(request, "admin/participant_plan.html", {"projection": asdict(found)})
+
+
 @protected.post("/jobs/{public_id}/reprocess")
 async def reprocess_job(
     request: Request,
@@ -458,6 +477,8 @@ async def resend_delivery(
     public_id: str,
     delivery_id: str,
     session: Annotated[AdminSession, Depends(require_session)],
+    expected_config_version: Annotated[int | None, Form()] = None,
+    expected_attempt: Annotated[int | None, Form()] = None,
 ) -> Response:
     """Entrega falha volta para pendente e o `deliver` é disparado de novo. Sem engine, o SDK insiste
     por minutos: a resposta não espera mais que HATCHET_TRIGGER_TIMEOUT_SECONDS. Se o disparo não
@@ -469,7 +490,12 @@ async def resend_delivery(
         return _error(request, 404, DELIVERY_NOT_FOUND)
     try:
         done = await job_actions.resend_delivery(
-            get_deps(), public_id, target, actor=session.username
+            get_deps(),
+            public_id,
+            target,
+            actor=session.username,
+            expected_config_version=expected_config_version,
+            expected_attempt=expected_attempt,
         )
     except job_actions.JobNotFound:
         return _error(request, 404, JOB_NOT_FOUND)
@@ -593,6 +619,7 @@ def _destination_page(
     url: str | None = None,
     needs_confirmation: bool = False,
     selected_events: list[str] | None = None,
+    selected_purpose: str | None = None,
 ) -> Response:
     """A página do destino. `new_secret` só vem na resposta da criação ou da troca: a única vez
     em que o segredo aparece. Num pedido do HTMX, uma recusa sai com 200: o HTMX não troca o
@@ -619,6 +646,9 @@ def _destination_page(
         {
             "page": page,
             "effective_events": effective.events if effective else (),
+            "effective_purpose": effective.purpose if effective else None,
+            "selected_purpose": selected_purpose
+            or (page.stored.purpose if page.stored else "participant"),
             "selected_events": selected_events
             if selected_events is not None
             else (page.stored.events if page.stored else ("plano.concluido",)),
@@ -663,6 +693,7 @@ def save_destination(
     confirm_http: Annotated[str, Form()] = "",
     events: Annotated[list[str] | None, Form()] = None,
     events_present: Annotated[str, Form()] = "",
+    purpose: Annotated[str | None, Form()] = None,
 ) -> Response:
     """Cria o destino, e o segredo novo aparece só nesta resposta, ou muda a URL dele."""
     expected = _version(version)
@@ -675,6 +706,16 @@ def save_destination(
             expected_version=expected,
             http_confirmed=bool(confirm_http),
             events=(events or []) if events_present else events,
+            purpose=purpose,
+        )
+    except destinations.InvalidPurpose as exc:
+        return _destination_page(
+            request,
+            status_code=422,
+            errors={"purpose": exc.message},
+            url=url,
+            selected_events=events,
+            selected_purpose=purpose,
         )
     except destinations.InvalidEvents as exc:
         return _destination_page(
@@ -682,6 +723,7 @@ def save_destination(
             status_code=422,
             errors={"events": exc.message},
             url=url,
+            selected_purpose=purpose,
             selected_events=(events or []) if events_present else events,
         )
     except destinations.InvalidUrl as exc:
@@ -691,6 +733,7 @@ def save_destination(
             errors={"url": exc.message},
             url=url,
             needs_confirmation=exc.needs_confirmation,
+            selected_purpose=purpose,
             selected_events=events or [] if events_present else events,
         )
     except destinations.NoCipher:
@@ -778,6 +821,8 @@ def send_test_event(
         probe = destinations.send_test(get_deps(), form_slug, actor=session.username, event=event)
     except destinations.UnreadableSecret:
         return _destination_page(request, status_code=409, test=views.UNREADABLE_PROBE)
+    except destinations.InvalidPurpose as exc:
+        return _destination_page(request, status_code=422, errors={"purpose": exc.message})
     except destinations.UnsupportedEvent:
         return _back(session, form_slug, "O destino não declarou aceitar o evento de captura.")
     if probe is None:
@@ -1987,6 +2032,7 @@ def _integration_page(
     values = {
         "base_url": stored.base_url if stored else "",
         "table_id": str(stored.table_id) if stored else "",
+        "purpose": stored.purpose if stored else "",
         **(typed or {}),
     }
     if request.headers.get("hx-request") == "true":
@@ -2029,18 +2075,20 @@ def connect_integration(
     table_id: Annotated[str, Form()] = "",
     token: Annotated[str, Form()] = "",
     version: Annotated[str, Form()] = "",
+    purpose: Annotated[str | None, Form()] = None,
 ) -> Response:
     """Conecta o formulário a uma tabela do Baserow, ou muda a conexão. Antes de guardar, lê os
     campos da tabela com o token: uma recusa mostra o motivo e não grava nada. Um token em branco,
     numa integração que existe, mantém o guardado. Mudar o endereço ou a tabela apaga o mapeamento.
     As conferências são da ação (`app.admin.actions.integrations.connect`), que a API também usa."""
     expected = integration_actions.version_number(version)
-    typed = {"base_url": base_url.strip(), "table_id": table_id.strip()}
+    typed = {"base_url": base_url.strip(), "table_id": table_id.strip(), "purpose": purpose or ""}
     try:
         connected = integration_actions.connect(
             get_deps(),
             slug,
             base_url=base_url,
+            purpose=purpose,
             table_id=integration_actions.table_number(typed["table_id"]),
             token=token,
             expected_version=expected,

@@ -55,3 +55,8 @@ Consulte a [matriz das operações de captura](cobertura.md#capturas-sem-geraç�
 [contrato OpenAPI](openapi.json) e a [operação das integrações](../../app/README.md#integrações-de-captura)
 para configuração, repetição e limites. O [roteiro de migração e rollback](../migrations.md#entregas-de-captura-e-rollback)
 preserva as capturas e seus registros confirmados.
+
+A finalidade do receptor de captura é sempre **interna**: configure `purpose=internal` no webhook
+e na conexão Baserow. Finalidade participante é recusada com orientação para corrigir o destino
+efetivo, inclusive o padrão herdado. Não há projeção pública de respostas de captura; veja
+[planos por audiência](projecoes.md).

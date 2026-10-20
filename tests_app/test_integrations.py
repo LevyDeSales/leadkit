@@ -59,6 +59,7 @@ def connect_form(
             actor="operadora",
             expected_version=0,
             production=False,
+            purpose="internal",
         )
         stored = config.save_mapping(
             session,
@@ -172,6 +173,7 @@ def test_connecting_again_keeps_the_token_when_none_is_given_and_resets_the_mapp
                 expected_version=version,
                 production=False,
                 **values,
+                purpose="internal",
             )
 
     same = reconnect(stored.version)
@@ -225,6 +227,7 @@ def test_the_first_connection_needs_the_token_and_the_key(deps: Deps) -> None:
             actor="x",
             expected_version=0,
             production=False,
+            purpose="internal",
         )
     deps.cipher = None
     with deps.sessions.begin() as session, pytest.raises(NoCipher):
@@ -238,6 +241,7 @@ def test_the_first_connection_needs_the_token_and_the_key(deps: Deps) -> None:
             actor="x",
             expected_version=0,
             production=False,
+            purpose="internal",
         )
 
 

@@ -175,11 +175,11 @@ class Artifact(Base):
 
 
 class Delivery(Base):
-    """Entrega do resultado a um destino externo (hoje: o webhook). Retries ficam no Hatchet.
+    """Fato PDF com receptor, revisão, audiência e tentativa fixados; epochs cercam repetições.
 
-    `destination_scope` e `destination_host`: qual destino do webhook o último envio usou (o do
-    formulário ou o padrão, resolvido na hora) e o host da URL. Nulos antes do primeiro envio e nas
-    entregas de antes do destino no admin."""
+    Históricos sem correlação são internos legados e nunca adotam participante por fallback.
+    Escopo e host registram o último transporte; a exclusão do receptor não apaga o fato nem
+    autoriza outro destino. Nenhuma URL, segredo ou cópia do documento vive nesta linha."""
 
     __tablename__ = "deliveries"
     __table_args__ = (

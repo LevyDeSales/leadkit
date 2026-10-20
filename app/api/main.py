@@ -132,9 +132,13 @@ TestTrigger = Callable[[uuid.UUID], Awaitable[str | None]]
 def _prepare_destinations() -> None:
     """O destino do webhook e os tokens das integrações na subida (`app.destinations.prepare` e
     `app.integrations.config.prepare`). Configuração que impede a subida (`StartupError`) derruba a
-    API; banco fora do ar não: ela sobe como antes, o `/readyz` responde 503 e o worker, que também
-    prepara, faz a importação."""
+    API. O piso de compatibilidade precisa ser lido antes de qualquer preparação: banco
+    indisponível nessa conferência também recusa a subida."""
     try:
+        from app.deployment_contract import assert_runtime_contract
+
+        with get_deps().sessions() as session:
+            assert_runtime_contract(session)
         destinations.prepare(get_deps())
         integration_config.prepare(get_deps())
     except sa.exc.OperationalError:

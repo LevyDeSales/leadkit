@@ -34,6 +34,13 @@ def problems(session, spec, *, check_integrations=True):
         .order_by(WebhookDestination.form_slug.is_(None))
         .limit(1)
     )
+    if destination and profile == "capture" and destination.purpose != "internal":
+        result.append(
+            Problem(
+                "integrations.purpose",
+                "O webhook efetivo de captura exige finalidade interna. Escolha um destino interno autorizado ou remova o destino, conferindo o padrão herdado.",
+            )
+        )
     if destination and event not in destination.events:
         result.append(
             Problem(
@@ -48,6 +55,13 @@ def problems(session, spec, *, check_integrations=True):
             Integration.form_slug == spec.slug, Integration.active.is_(True)
         )
     ):
+        if integration.purpose != "internal":
+            result.append(
+                Problem(
+                    "integrations",
+                    "O Baserow exige finalidade interna. Corrija a conexão ou desative-a antes de publicar.",
+                )
+            )
         entries = mapping.entries_of(
             integration.capture_mapping if profile == "capture" else integration.mapping
         )

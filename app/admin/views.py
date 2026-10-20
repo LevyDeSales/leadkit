@@ -349,6 +349,10 @@ class DeliveryView:
     run_url: str | None
     target: str | None  # para qual destino do webhook foi o último envio, e o host
 
+    audience: str = "internal"
+    authorization_origin: str = "legacy"
+    current_config_version: int | None = None
+
 
 SYNC_BADGES = {
     "pending": Badge("Pendente", "clock", "warn"),
@@ -611,6 +615,9 @@ def _delivery_view(
         job_attempt=delivery.job_attempt,
         run_url=job_queries.run_url(template, delivery.hatchet_run_id),
         target=f"{scope} · {delivery.host}" if scope else None,
+        audience=delivery.audience,
+        authorization_origin=delivery.authorization_origin,
+        current_config_version=delivery.current_config_version,
     )
 
 
@@ -731,6 +738,8 @@ class DestinationView:
     updated: Moment | None
     secret_created: Moment | None
     events: tuple[str, ...] = ("plano.concluido",)
+    purpose: str = "participant"
+    purpose_origin: str = "default"
 
 
 def _destination_view(stored: destinations.StoredDestination) -> DestinationView:
@@ -744,6 +753,8 @@ def _destination_view(stored: destinations.StoredDestination) -> DestinationView
         updated=moment(stored.updated_at),
         secret_created=moment(stored.secret_created_at),
         events=stored.events,
+        purpose=stored.purpose,
+        purpose_origin=stored.purpose_origin,
     )
 
 

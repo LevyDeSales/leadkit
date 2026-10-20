@@ -354,6 +354,7 @@ def test_an_address_whose_destination_outlived_its_form_is_refused(
             expected_version=0,
             production=False,
             http_confirmed=False,
+            purpose="internal",
         )
     create(client)
     fields = editor(client, DRAFT)

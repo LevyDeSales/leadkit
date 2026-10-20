@@ -64,7 +64,21 @@ Triggered = list[tuple[uuid.UUID, int]]
 
 @pytest.fixture
 def world(deps: Deps) -> JobsWorld:
-    return build_jobs_world(deps)
+    world = build_jobs_world(deps)
+    # O reenvio deste cenário é da tentativa atual; o histórico não autoriza outro PDF.
+    from app.models import Artifact, utcnow
+
+    with deps.sessions.begin() as session:
+        rows = session.execute(
+            sa.select(Delivery, Artifact.version)
+            .join(Artifact, Artifact.id == Delivery.artifact_id)
+            .where(Delivery.job_id == world.beatriz.id)
+        ).all()
+        for row, attempt in rows:
+            row.status = "failed" if attempt == 2 else "succeeded"
+            if row.status == "succeeded":
+                row.delivered_at, row.last_error = utcnow(), None
+    return world
 
 
 @pytest.fixture
@@ -441,7 +455,10 @@ class Resend:
         return url_of(self.operation_id, public_id=public_id, **{self.id_name: str(target)})
 
     def post(self, client: ApiClient, public_id: str, target: Any, **body: Any) -> httpx.Response:
-        return client.post(self.url(public_id, target), json={"confirm": True, **body})
+        versions = (
+            {"expected_config_version": 1, "expected_attempt": 2} if self.kind == "delivery" else {}
+        )
+        return client.post(self.url(public_id, target), json={"confirm": True, **versions, **body})
 
     def page_url(self, public_id: str, target: Any) -> str:
         return f"{PAGE}/jobs/{public_id}/{self.page_part}/{target}/resend"
@@ -503,18 +520,23 @@ def test_resend_job_delivery_returns_the_failed_delivery_to_pending_and_launches
             public_id=world.beatriz.public_id,
             delivery_id=str(delivery_id),
         ),
-        json={"confirm": True},
+        json={"confirm": True, "expected_config_version": 1, "expected_attempt": 2},
     )
 
     assert response.status_code == 200 and response.headers["cache-control"] == "no-store"
     body = response.json()
     assert (body["id"], body["status"], body["launched"]) == (str(delivery_id), "pending", True)
-    assert body["destination"] == "webhook" and body["attempt"] == 1
+    assert body["destination"] == "webhook" and body["attempt"] == 2
     assert calls == [delivery_id]  # o Hatchet recebeu o disparo, uma vez
     assert failed_ids(deps, Delivery) == []
     (entry,) = audits(deps, "delivery.resend")
     assert (entry.actor, entry.target_id) == (client.actor, str(delivery_id))
-    assert entry.details == {"job_id": str(world.beatriz.id)}
+    assert entry.details == {
+        "job_id": str(world.beatriz.id),
+        "audience": "internal",
+        "config_version": 1,
+        "dispatch_no": 2,
+    }
     state = client.get(url_of("get_job", public_id=world.beatriz.public_id)).json()
     shown = next(item for item in state["deliveries"] if item["id"] == str(delivery_id))
     assert shown["status"] == "pending"
@@ -758,7 +780,14 @@ def page_resend(
         assert login(client).status_code == 303
         return client.post(
             resend.page_url(public_id, target),
-            data={"csrf_token": csrf_token(client)},
+            data={
+                "csrf_token": csrf_token(client),
+                **(
+                    {"expected_config_version": 1, "expected_attempt": 2}
+                    if resend.kind == "delivery"
+                    else {}
+                ),
+            },
             headers=ORIGIN,
         )
 

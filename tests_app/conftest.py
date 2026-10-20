@@ -347,7 +347,7 @@ def database_url() -> str:
         with engine.connect() as connection:
             assert connection.exec_driver_sql(
                 "SELECT version_num FROM alembic_version"
-            ).scalars().all() == ["0015_capture_delivery"]
+            ).scalars().all() == ["0016_plan_audiences"]
     finally:
         engine.dispose()
     return TEST_DATABASE_URL
@@ -382,6 +382,7 @@ def record_webhook(deps: Deps, error: Exception | None = None) -> RecordingWebho
                 session,
                 deps.cipher,
                 form_slug=None,
+                purpose="internal",
                 url=RECORDED_DESTINATION,
                 actor="testes",
                 expected_version=0,

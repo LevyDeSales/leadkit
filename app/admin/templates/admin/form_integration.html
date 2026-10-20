@@ -32,6 +32,7 @@
   <h2 id="con-titulo">Conexão</h2>
   {% if page.stored %}
   <dl class="kv">
+    <dt>Finalidade</dt><dd>{{ "Interna — respostas e dados comerciais" if page.stored.purpose == "internal" else "Participante — incompatível com Baserow" }} · {{ {"legacy": "origem legada", "explicit": "escolha explícita", "default": "padrão seguro"}.get(page.stored.purpose_origin) }}</dd>
     <dt>Baserow</dt><dd class="mono">{{ page.stored.base_url }}</dd>
     <dt>Tabela</dt><dd>{{ page.stored.table_id }}</dd>
     <dt>Token</dt><dd>guardado, cifrado; não aparece de novo · trocado em {{ m.when(page.stored.token_changed) }}</dd>
@@ -45,11 +46,19 @@
   {% if errors.get("connect") %}
   <div class="alert alert--error" role="alert">{{ m.icon('alert-circle', 'icon--lg') }}<div><strong class="alert__title">A conexão não foi guardada</strong><p>{{ errors["connect"] }}</p></div></div>
   {% endif %}
+  {% if errors.get('purpose') %}<p role="alert"><a href="#baserow-purpose">Corrija a finalidade da conexão.</a></p>{% endif %}
   <form class="form-stack" method="post" action="{{ page.url }}/connect">
     <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
     <input type="hidden" name="version" value="{{ page.stored.version if page.stored else 0 }}">
     <p class="muted">O token é o <strong>token de banco de dados</strong> do Baserow (em Configurações › Tokens de banco de dados), com permissão de ler, criar e atualizar linhas desta tabela. Ao conectar, o app lê os campos da tabela com ele; se o Baserow recusar, nada é guardado.</p>
     <div class="field">
+      <label for="baserow-purpose">Finalidade da conexão</label>
+      <select id="baserow-purpose" name="purpose"{% if errors.get('purpose') %} autofocus{% endif %} aria-describedby="baserow-purpose-ajuda{% if errors.get('purpose') %} baserow-purpose-erro{% endif %}"{% if errors.get('purpose') %} aria-invalid="true"{% endif %}>
+        <option value="">Selecione a finalidade</option>
+        <option value="internal"{% if typed.get('purpose') == 'internal' %} selected{% endif %}>Interna — respostas e dados comerciais</option>
+      </select>
+      <p id="baserow-purpose-ajuda">Baserow recebe dados internos. Confirme esta finalidade ao conectar ou mudar a URL; finalidade participante não é compatível.</p>
+      {% if errors.get('purpose') %}<p class="error" id="baserow-purpose-erro" role="alert">{{ errors['purpose'] }}</p>{% endif %}
       <label for="base_url">Endereço do Baserow <span class="opt">(https, sem usuário e senha)</span></label>
       <input class="input mono" id="base_url" name="base_url" type="url" value="{{ typed.base_url }}" maxlength="{{ max_url_length }}" required autocomplete="off" spellcheck="false" placeholder="https://baserow.example.test"{% if errors.get("base_url") %} aria-invalid="true" aria-describedby="base_url-erro"{% endif %}>
       {% if errors.get("base_url") %}<p class="error" id="base_url-erro">{{ m.icon('alert-circle') }}{{ errors["base_url"] }}</p>{% endif %}
