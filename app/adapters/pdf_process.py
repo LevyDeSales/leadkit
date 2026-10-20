@@ -167,7 +167,14 @@ def render_pdf(
                                     content = base64.b64decode(message["content"], validate=True)
                                     # O PDF inteiro já foi drenado: só agora é seguro esperar a
                                     # saída e observar também erros tardios da limpeza do motor.
-                                    code = process.wait(timeout=0.5)
+                                    try:
+                                        code = process.wait(
+                                            timeout=max(0, deadline - time.monotonic())
+                                        )
+                                    except subprocess.TimeoutExpired:
+                                        raise RenderLimit(
+                                            f"passou do prazo de {seconds:g} s"
+                                        ) from None
                                     if code:
                                         _process_failure(code, memory)
                                     return content, int(message["pages"])

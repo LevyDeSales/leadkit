@@ -366,6 +366,65 @@ def test_a_pdf_process_that_stops_responding_is_reaped_before_the_next_pdf(
     assert PLAN_TITLE in text_of(following.content)
 
 
+@pytest.mark.parametrize(
+    ("before_pdf", "exit_code", "seconds", "failure"),
+    [
+        pytest.param(0, 0, 4, None, id="late-clean-exit"),
+        pytest.param(0, 75, 4, "RenderCleanupError", id="late-unraisable"),
+        pytest.param(1.2, 0, 2, "o PDF passou do prazo de 2 s", id="deadline-exhausted"),
+    ],
+)
+def test_a_pdf_process_exit_obeys_the_deadline_and_preserves_cleanup_failures(
+    monkeypatch: pytest.MonkeyPatch,
+    before_pdf: float,
+    exit_code: int,
+    seconds: float,
+    failure: str | None,
+) -> None:
+    """O frame não confirma sucesso nem reinicia o prazo: a saída tardia ainda conta."""
+    processes: list[subprocess.Popen[bytes]] = []
+    start = subprocess.Popen
+    content = minimal_pdf("Plano sintético")
+    encoded_pdf = base64.b64encode(content).decode("ascii")
+    program = (
+        "import socket, sys, time; "
+        "from app.adapters.pdf_ipc import encode, receive; "
+        "channel = socket.socket(fileno=int(sys.argv[1])); "
+        "channel.sendall(encode({'type': 'ready'})); "
+        "receive(channel); "
+        f"time.sleep({before_pdf}); "
+        f"channel.sendall(encode({{'type': 'pdf', 'content': {encoded_pdf!r}, 'pages': 1}})); "
+        f"time.sleep(1.2); sys.exit({exit_code})"
+    )
+
+    def launch(arguments: list[str], **options: object) -> subprocess.Popen[bytes]:
+        process = start([sys.executable, "-c", program, arguments[-1]], **options)
+        processes.append(process)
+        return process
+
+    with monkeypatch.context() as patch:
+        patch.setattr(subprocess, "Popen", launch)
+        patch.setattr(weasyprint_pdf, "PDF_SECONDS", seconds)
+        if failure is None:
+            rendered = WeasyPrintRenderer().render(DEMO, EXAMPLE_PLAN, context(name=SECRET))
+            assert rendered.content == content
+            assert rendered.page_count == 1
+        else:
+            with pytest.raises(TerminalError, match=failure) as caught:
+                WeasyPrintRenderer().render(DEMO, EXAMPLE_PLAN, context(name=SECRET))
+            assert caught.value.code is FailureCode.RENDER_FAILED
+            assert SECRET not in str(caught.value)
+
+    assert len(processes) == 1
+    if before_pdf == 0:
+        assert processes[0].returncode == exit_code
+    with pytest.raises(ChildProcessError):
+        os.waitpid(processes[0].pid, os.WNOHANG)
+    following = WeasyPrintRenderer().render(DEMO, EXAMPLE_PLAN, context())
+    assert PLAN_TITLE in text_of(following.content)
+    assert fonts_of(following.content) and all(fonts_of(following.content).values())
+
+
 def test_cancelling_an_asset_read_reaps_the_pdf_process(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
