@@ -104,3 +104,58 @@ são etapas distintas. Quem opera o sistema é responsável por consentimento, r
 
 O [roteiro de migração](../docs/migrations.md) detalha o guard, os ensaios e a preservação de
 fonte, código, dados, storage, marca e chaves na futura adoção do núcleo.
+
+## Disponibilidade do PDF da tentativa atual
+
+O processamento (`status`/`stage`) é separado de `current_pdf` e da autorização. `completed`
+continua sendo o registro da geração, mesmo se o arquivo tiver sido removido. A consulta autenticada
+`GET /v1/jobs/{public_id}` e `get_job` no admin/API/MCP usam o mesmo serviço, com a tentativa atual,
+existência no storage, validade técnica, acessibilidade e instante da verificação dos bytes.
+A consulta de estado não baixa o arquivo nem inicia uma geração. A lista de pedidos conserva
+seu contrato e não consulta storage; abra o detalhe para conferir a disponibilidade atual.
+
+| `current_pdf.state` | Significado |
+| --- | --- |
+| `available` | Tentativa concluída, bytes verificados e objeto atual acessível com a mesma identidade e tamanho. |
+| `missing` | A tentativa atual não tem artefato ou o storage confirmou ausência. |
+| `removed` | Retenção registrada; o download responde 410. |
+| `unavailable` | Não foi possível conferir o acesso, inclusive timeout e permissão negada; não afirma inexistência. |
+| `unknown` | Sem prova suficiente, inclusive histórico anterior à migration 0013; não anuncia pronto. |
+| `invalid` | Objeto mudou de identidade ou tamanho em relação à prova persistida; não é servido. |
+
+`exists`, `valid` e `accessible` podem ser nulos quando não há evidência. `available` é uma
+conveniência técnica e nunca concede acesso: token válido continua obrigatório na interface pública;
+o download administrativo exige sessão de operadora ou chave `total`. No MCP, o download mantém a
+exigência da opção de dados da lead. A consulta de disponibilidade administrativa exige `leitura`
+e não traz documento, token, chave de storage, identidade opaca do objeto ou hash do conteúdo.
+A política adicional de liberação por tentativa é tratada na #13.
+
+Na conclusão, o serviço confere o vínculo pedido/tentativa/plano, lê o objeto, verifica hash SHA-256
+e tamanho, compara a identidade do storage antes/depois e abre o PDF em modo estrito com pypdf.
+Exige documento não criptografado, ao menos uma página com dimensões positivas e streams legíveis;
+cabeçalho `%PDF` isolado é insuficiente. Isso não avalia aparência, completude do texto, segurança de
+conteúdo ativo nem qualidade semântica. pypdf já estava no lock sob BSD-3-Clause e passa a ser
+uma dependência de runtime; a versão e os avisos seguem em `THIRD_PARTY_NOTICES.md`.
+
+Consultas posteriores usam HEAD no S3 ou metadados do arquivo local, sem baixar os bytes. ETag e
+VersionId são identidades opacas, não hashes SHA-256. Essa observação não garante disponibilidade
+futura de um link: storage e retenção podem mudar depois da consulta. Downloads leem e conferem
+novamente os bytes antes de responder ou assinar a URL. Reprocessamento e gravação/conclusão são
+serializados por pedido; uma renderização duplicada não sobrescreve o arquivo da vencedora.
+O download público relê a tentativa e a versão do token sob esse bloqueio.
+
+Históricos não recebem prova por backfill. A ação **Verificar e baixar PDF** em uma consulta
+autorizada valida o arquivo real e registra a evidência sob bloqueio, sem mudar o estado histórico,
+sem inventar eventos do engine e sem usar IA. Um histórico inválido ou inacessível falha com erro
+seguro. Essa escrita técnica também acontece no download API/MCP autorizado; nenhuma consulta de
+status a provoca. Sem `version`, o download administrativo seleciona exclusivamente a tentativa
+atual; a operadora pode pedir uma versão histórica explicitamente.
+
+Os links de PDF em eventos de conclusão e no mapeamento `job.pdf_url` fixam a tentativa observada
+em `attempt`. O endpoint público recusa com 409 uma tentativa que já não é atual; o link antigo não
+passa a baixar outros bytes com outro hash. Uma entrega de webhook ainda pendente de tentativa
+anterior é recusada com código seguro, sem enviar conteúdo antigo como atual. O mapeamento Baserow
+continua sendo por pedido/submissão, sem documento/hash de plano; apenas seu link fixa a tentativa
+observada na montagem da linha. Isso não cria controle de ordem de eventos nem altera o upsert.
+URLs diretas de storage já emitidas conservam a validade original; esta mudança não revoga URLs
+pré-assinadas anteriores nem cópias já baixadas.

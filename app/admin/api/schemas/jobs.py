@@ -22,6 +22,7 @@ from pydantic import AwareDatetime, BaseModel, Field, StringConstraints
 from app.admin.actions.jobs import REASON_MAX_LENGTH, REASON_MIN_LENGTH
 from app.admin.api.common import ConfirmedInput, Page, utc
 from app.admin.queries import jobs as queries
+from app.pdf_availability import PdfState, availability_dict
 
 JobStatus = Literal["queued", "running", "completed", "failed"]
 JobStage = Literal["queued", "generating", "rendering", "completed", "failed"]
@@ -187,8 +188,8 @@ class JobPdf(BaseModel):
     byte_size: int = Field(description="O tamanho do arquivo, em bytes.", examples=[184320])
     created_at: AwareDatetime = Field(description="Quando o PDF foi gerado (ISO 8601, UTC).")
     purged_at: AwareDatetime | None = Field(
-        description="Quando o prazo de retenção apagou o arquivo (o registro fica). Nulo: o arquivo "
-        "ainda existe."
+        description="Quando a retenção registrou a remoção do arquivo. Nulo não comprova existência "
+        "nem acesso; consulte `current_pdf` para a tentativa atual."
     )
 
 
@@ -436,6 +437,7 @@ def _sync_of(sync: queries.SyncState) -> dict[str, Any]:
 def _state_fields(state: queries.JobState, run_url_template: str | None) -> dict[str, Any]:
     """Os campos de `JobState`, o estado do pedido, sem nada da lead."""
     return {
+        "current_pdf": availability_dict(state.current_pdf),
         "public_id": state.public_id,
         "status": state.status,
         "stage": state.stage,
@@ -482,6 +484,26 @@ def _state_fields(state: queries.JobState, run_url_template: str | None) -> dict
     }
 
 
+class CurrentPdf(BaseModel):
+    """Evidência técnica da tentativa atual; disponibilidade não concede acesso ao documento."""
+
+    attempt: int
+    state: PdfState = Field(
+        description="available, missing, removed, unavailable, unknown ou invalid."
+    )
+    available: bool = Field(description="PDF atual verificado e acessível; não é autorização.")
+    exists: bool | None = Field(
+        description="Existência no storage; nulo se não foi possível conferir."
+    )
+    valid: bool | None = Field(
+        description="Validade estrutural mínima; nulo sem evidência confiável."
+    )
+    accessible: bool | None
+    verified_at: AwareDatetime | None = Field(
+        description="Verificação real dos bytes; históricos ficam nulos."
+    )
+
+
 class JobState(BaseModel):
     """O estado de um pedido, sem nada que diga quem é a lead."""
 
@@ -515,6 +537,7 @@ class JobState(BaseModel):
     run_url: str | None = Field(
         description="O link da execução no painel do Hatchet, se o ambiente tem o modelo do link."
     )
+    current_pdf: CurrentPdf
     pdfs: list[JobPdf] = Field(description="Os PDFs, da tentativa mais nova para a mais antiga.")
     deliveries: list[JobDelivery] = Field(
         description="As entregas ao webhook, da mais antiga para a mais nova."

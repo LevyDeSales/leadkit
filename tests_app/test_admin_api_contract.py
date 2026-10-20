@@ -117,6 +117,14 @@ LEAD_STATE: dict[str, frozenset[str]] = {
     ),
     "get_job": frozenset(
         {
+            "current_pdf",
+            "current_pdf.accessible",
+            "current_pdf.attempt",
+            "current_pdf.available",
+            "current_pdf.exists",
+            "current_pdf.state",
+            "current_pdf.valid",
+            "current_pdf.verified_at",
             "attempt",
             "completed_at",
             "created_at",

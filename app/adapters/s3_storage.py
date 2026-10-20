@@ -7,6 +7,7 @@ com a credencial, antes do prazo pedido.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
@@ -16,6 +17,7 @@ from botocore.config import Config
 from botocore.exceptions import BotoCoreError, ClientError, HTTPClientError
 from botocore.exceptions import ConnectionError as BotocoreConnectionError
 
+from app.adapters.storage import StoredObject
 from app.errors import FailureCode, RetryableError, TerminalError
 from app.settings import Settings
 
@@ -82,8 +84,31 @@ class S3Storage:
             )
 
     def get(self, key: str) -> bytes:
-        with _provider_errors("get_object"):
-            return self.client.get_object(Bucket=self.bucket, Key=key)["Body"].read()
+        with (
+            _provider_errors("get_object"),
+            self.client.get_object(Bucket=self.bucket, Key=key)["Body"] as body,
+        ):
+            return body.read()
+
+    def head(self, key: str) -> StoredObject:
+        try:
+            value = self.client.head_object(Bucket=self.bucket, Key=key)
+        except ClientError as exc:
+            code = exc.response.get("Error", {}).get("Code", "")
+            if code in ("404", "NoSuchKey", "NotFound"):
+                raise FileNotFoundError from None
+            raise RetryableError(
+                FailureCode.STORAGE_FAILED, "consulta de storage indisponível"
+            ) from None
+        except BotoCoreError:
+            raise RetryableError(
+                FailureCode.STORAGE_FAILED, "consulta de storage indisponível"
+            ) from None
+        # ETag é opaca: multipart e criptografia impedem tratá-la como hash do conteúdo.
+        revision = json.dumps(
+            [value.get("VersionId"), value.get("ETag"), str(value.get("LastModified"))]
+        )
+        return StoredObject(value["ContentLength"], revision)
 
     def delete(self, key: str) -> None:
         """Chave inexistente não é erro no S3. Em bucket com versionamento isto só cria um

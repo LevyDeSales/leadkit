@@ -14,6 +14,7 @@ from urllib.parse import parse_qs, urlsplit
 import boto3
 import pytest
 import requests
+import sqlalchemy as sa
 from botocore.config import Config
 from botocore.stub import Stubber
 from conftest import record_webhook
@@ -286,3 +287,55 @@ def test_retention_empties_the_bucket_and_a_later_delivery_has_no_direct_link(
     assert report.pdfs_deleted == 1 and bucket.list_objects_v2(Bucket=BUCKET)["KeyCount"] == 0
     pdf = webhook.calls[0][2]["pdf"]
     assert (pdf["direct_url"], pdf["direct_url_expires_in"]) == (None, None)
+
+
+@pytest.mark.parametrize(
+    ("code", "status", "expected"),
+    [
+        ("NoSuchKey", 404, FileNotFoundError),
+        ("404", 404, FileNotFoundError),
+        ("AccessDenied", 403, RetryableError),
+        ("SlowDown", 503, RetryableError),
+    ],
+)
+def test_pdf_head_distinguishes_missing_from_unavailable_without_provider_details(
+    code: str, status: int, expected: type[Exception]
+) -> None:
+    client = s3_client()
+    with Stubber(client) as stubber:
+        stubber.add_client_error(
+            "head_object",
+            service_error_code=code,
+            service_message="PRIVATE-PROVIDER-DETAIL",
+            http_status_code=status,
+        )
+        with pytest.raises(expected) as caught:
+            S3Storage(client, BUCKET).head(KEY)
+    assert "PRIVATE-PROVIDER-DETAIL" not in str(caught.value)
+
+
+def test_s3_availability_uses_head_and_detects_replaced_bytes_without_downloading(
+    deps: Deps, bucket: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.models import Artifact
+    from app.pdf_availability import current_pdf
+
+    deps.storage = S3Storage(bucket, BUCKET)
+    job_id, _ = run_until_finalize(deps)
+    with deps.sessions() as session:
+        artifact = session.scalar(sa.select(Artifact).where(Artifact.job_id == job_id))
+        key = artifact.storage_key
+
+    def no_download(key):
+        raise AssertionError("status must use HEAD")
+
+    monkeypatch.setattr(deps.storage, "get", no_download)
+    with deps.sessions() as session:
+        assert current_pdf(session, deps.storage, session.get_one(Job, job_id)).available
+    deps.storage.put(key, minimal_pdf("Outro plano sintético"), "application/pdf")
+    with deps.sessions() as session:
+        state = current_pdf(session, deps.storage, session.get_one(Job, job_id))
+        assert state.state == "invalid" and state.valid is False
+    deps.storage.delete(key)
+    with deps.sessions() as session:
+        assert current_pdf(session, deps.storage, session.get_one(Job, job_id)).state == "missing"
