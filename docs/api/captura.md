@@ -37,6 +37,20 @@ capturas de pedidos e arquivos PDF. A contagem `seen` aceita `pedidos:PDFs:captu
 `pedidos:PDFs` equivale a zero capturas e não confirma uma redução que já apague capturas.
 A exclusão remove recibo e respostas e conserva a lead enquanto houver outra submissão válida.
 
-Esta é a entrega **8-A**. A notificação assíncrona de respostas às integrações aplicáveis e ativas,
-com outbox e recuperação, pertence à **8-B da mesma issue #8** e ainda não está implementada aqui.
-Capturas desta entrega não emitem `plano.concluido` nem acionam geração.
+As integrações aplicáveis e ativas recebem as respostas pelo evento `submissao.persistida`,
+de forma assíncrona após o commit da captura. A intenção fica persistida com o destino e a revisão
+autorizados, e o reconciliador recupera falhas de disparo. Falha ou timeout do transporte conserva
+a captura confirmada e sua conclusão; esse fluxo funciona sem IA, plano ou PDF. Reenvio da mesma
+submissão conserva as intenções originais, e ativar uma conexão depois não faz envio retroativo.
+
+Prepare o perfil de captura no Baserow com `submission.id` como chave; a ativação da conexão segue
+a finalidade publicada. No webhook, declare `submissao.persistida` entre os eventos aceitos.
+A publicação aponta configurações incompatíveis localmente. Você acompanha as entregas na captura
+e na integração, inclusive por API/MCP; **Repetir entrega** exige papel total, confirmação e versões
+esperadas do mesmo destino. Sucesso indica confirmação do transporte; leitura pela participante
+exige evidência própria. Captura usa evento próprio, distinto de `plano.concluido`.
+
+Consulte a [matriz das operações de captura](cobertura.md#capturas-sem-geração), o
+[contrato OpenAPI](openapi.json) e a [operação das integrações](../../app/README.md#integrações-de-captura)
+para configuração, repetição e limites. O [roteiro de migração e rollback](../migrations.md#entregas-de-captura-e-rollback)
+preserva as capturas e seus registros confirmados.
