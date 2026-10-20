@@ -41,6 +41,9 @@ Priorize UX/UI e regras de negócio. Teste comportamentos principais e checks ex
 não imponha metas de cobertura, mutação, complexidade, tamanho ou quantidade de dependências.
 Skills orientam o método: a instrução de quem solicita e o escopo autorizado governam a ação.
 
+Para converter padrões pesquisados em aceites de UX, editor, projeções e recuperação, consulte
+[product-quality.md](product-quality.md) na especificação, implementação e revisão da mudança.
+
 ## Papéis no Orca
 
 O mapeamento é por função, sem promessa de equivalência de desempenho entre modelos.
@@ -60,8 +63,11 @@ não use spawn nativo nem coordenação paralela. Carregue as skills atuais `orc
 instalada não oferecer o recurso, registre o bloqueio sem improvisar outra orquestração.
 
 Cada objetivo tem um Run, cada resultado uma Task e cada tentativa um Dispatch. A Task explicita
-alvo, resultado, ownership, restrições, dependências e aceite observável. Use só as workers
-necessárias, com ownership sem disputa; código isolado parte de `origin/develop`, preservando o
+alvo, resultado, ownership, restrições, dependências, aceite observável e skills concretas.
+Nomeie `implement`/`implement-spec` para a autora e `tdd` quando houver mudança de comportamento;
+em instruções/documentação, use `writing-for-agents` e `research` quando houver fontes a investigar.
+Nomeie `code-review` para a revisão independente e a função de guardiã nos casos abaixo.
+Use só as workers necessárias, com ownership sem disputa; código isolado parte de `origin/develop`, preservando o
 worktree principal em `main`. Confira modelo e esforço efetivos no recibo antes de afirmar seleção.
 
 Workers seguem o preâmbulo ativo para mensagens, perguntas bloqueantes, heartbeat e entrega.
@@ -82,9 +88,12 @@ verdes no mesmo commit, incluindo `Tests / app-tests` e `ci-ready`. Consulte
 [docs/ci.md](../ci.md) e os workflows atuais: documentação isolada dispensa pytest local,
 mas não dispensa os gates remotos existentes.
 
-Promoção `develop` → `main` usa merge commit, sem apagar `develop`. Deploy exige commit de
+Promoção `develop` → `main` usa merge commit, sem apagar `develop`. Deploy em produção exige commit de
 `main`, Release correspondente (`vAAAA.M.N`, mês de São Paulo) e autorização explícita de Levy
 na conversa atual.
+Homologação/deploy de `develop` em DEV segue o escopo autorizado, checks verdes e alvo isolado;
+a exigência de `main` e Release acima é de produção. Autorização já concedida para DEV permanece
+válida no alvo e escopo concedidos, sem nova confirmação; não se estende à produção.
 O publisher permanece OFF; este setup não ativa variáveis, bootstrap, automações ou configuração
 externa. A existência de um plano de release não comprova publicação nem permite deploy.
 

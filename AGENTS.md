@@ -12,6 +12,9 @@ pt-BR com quem solicita. Interface e documentação do produto se dirigem ao pú
 - **Triagem:** consulte [triage-labels.md](docs/agents/triage-labels.md) antes de classificar uma issue.
 - **Escolha de skills, delegação, revisão ou integração:** siga
   [skills-orchestration.md](docs/agents/skills-orchestration.md), inclusive os limites de autorização.
+- **Aceites de produto, UX, editor, projeções ou recuperação:** leia
+  [product-quality.md](docs/agents/product-quality.md) ao especificar, implementar ou revisar
+  o comportamento alterado.
 - **Validação e release:** consulte [docs/ci.md](docs/ci.md). Testes usam Python 3.11, dados sintéticos
   e banco próprio terminado em `_test`; a suíte apaga tabelas. Documentação isolada exige validar
   links e diff, sem pytest local. Nenhuma credencial, asset ou dado de instalação entra em exemplos.
