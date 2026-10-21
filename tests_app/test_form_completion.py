@@ -2,6 +2,7 @@
 
 import pytest
 from conftest import legacy_definition
+from handoff_support import isolated_handoff_contract  # noqa: F401
 
 from app.admin.form_editor import FormEdit
 from app.forms.definition import DefinitionError, compile_definition
@@ -142,8 +143,11 @@ def test_capture_rejects_even_explicit_automatic_release(mode):
 def test_draft_persistence_refuses_new_format_before_verified_floor_two(deps, extension):
     from app.deployment_contract import DeploymentContractError
     from app.forms import drafts
+    from app.models import DeploymentContract
 
-    with deps.sessions() as session:
+    with deps.sessions.begin() as session:
+        state = session.get(DeploymentContract, 1)
+        state.minimum_contract, state.phase = 1, "blocked"
         draft = drafts.load(session, "demo")
     with pytest.raises(DeploymentContractError):
         drafts.save_document(
@@ -151,3 +155,57 @@ def test_draft_persistence_refuses_new_format_before_verified_floor_two(deps, ex
         )
     with deps.sessions() as session:
         assert drafts.load(session, "demo").token == draft.token
+
+
+def test_copy_drops_receiver_binding_but_preserves_manual_release(deps):
+    from test_handoffs import configured
+
+    from app.forms import drafts
+
+    with deps.sessions.begin() as session:
+        configured(session, generation="pdf", release_mode="manual")
+    slug = drafts.create(
+        deps, slug="synthetic-copy", title="Cópia sintética", source="synthetic", actor="teste"
+    )
+    with deps.sessions() as session:
+        copied = drafts.load(session, slug)
+    assert copied.document["release"] == {"mode": "manual"}
+    assert "handoff" not in copied.document["completion"]
+    assert compile_definition(copied.document).release_mode == "manual"
+
+
+def test_unpublished_form_with_receiver_refuses_rename_as_domain_error(deps):
+    from test_handoffs import NOW, configured
+
+    from app import handoff_receivers
+    from app.forms import drafts
+    from app.handoff_types import SaveReceiver
+
+    with deps.sessions.begin() as session:
+        configured(session)
+    drafts.create(deps, slug="unpublished", title="Não publicado", actor="teste")
+    with deps.sessions.begin() as session:
+        handoff_receivers.save_receiver(
+            session,
+            "unpublished",
+            command=SaveReceiver(
+                expected_version="0",
+                name="Teste",
+                entry_url="https://example.test/continuar",
+                confirm=True,
+            ),
+            actor="teste",
+            now=NOW,
+        )
+        draft = drafts.load(session, "unpublished")
+    with pytest.raises(DefinitionError) as caught:
+        drafts.save_document(
+            deps,
+            "unpublished",
+            {**draft.document, "slug": "renamed"},
+            actor="teste",
+            expected=draft.token,
+            new_slug="renamed",
+        )
+    assert caught.value.problems[0].path == "slug"
+    assert "receptor de encaminhamento" in caught.value.problems[0].message

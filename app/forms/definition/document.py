@@ -537,7 +537,7 @@ class CompletionDoc(_Strict):
     )
     url: HttpsUrl | None = Field(
         default=None,
-        description="URL HTTPS exata autorizada pela configuração autenticada. Obrigatória em button/redirect e ausente em result/confirmation; sem usuário/senha, override público ou anexos automáticos de dados/token.",
+        description="URL HTTPS exata autorizada pela configuração autenticada. Obrigatória em button/redirect e ausente em result/confirmation; sem usuário/senha ou override público. Sem handoff conserva o endereço exato; com opt-in acrescenta somente a referência opaca, sem contato, respostas ou bearer PDF.",
         examples=["https://example.test/proximo-passo"],
     )
 
@@ -789,6 +789,8 @@ def parse(document: Mapping[str, Any] | str | bytes) -> FormDocument:
     if problems:
         raise DefinitionError(problems)
     problems = [Problem(key, message) for key, message in RESERVED.items() if key in document]
+    if document.get("generation") == "none" and "release" in document:
+        problems.append(Problem("release", "captura não usa política de liberação de PDF"))
     try:
         parsed = (
             CaptureFormDocument if document.get("generation") == "none" else PdfFormDocument

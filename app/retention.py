@@ -85,6 +85,10 @@ def purge_expired(deps: Deps, *, now: datetime | None = None) -> RetentionReport
     """Uma passada completa. Idempotente: o que falhar fica para a próxima."""
     now = now or utcnow()
     report = RetentionReport()
+    from app.handoffs import expire_ciphertexts
+
+    with deps.sessions.begin() as session:
+        expire_ciphertexts(session, now=now)
     _purge_captures(deps, now, report)
     _purge_requests(deps, now, report)
     if not report.storage_errors:  # storage fora do ar: a próxima execução tenta de novo

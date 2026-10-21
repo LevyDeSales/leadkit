@@ -420,15 +420,23 @@ class CompletionEdit:
 
     @classmethod
     def of_form(cls, form: FormFields) -> CompletionEdit:
+        selected = (form.getlist("completion.handoff.selection") or [""])[0]
+        prefix = "completion.handoff.current" if selected == "current" else "completion.handoff"
         return cls.of_document(
             {
-                key: form.getlist(f"completion.{key}")[0]
+                key: (
+                    (form.getlist("completion.handoff.current.entry_url") or [""])[0]
+                    if key == "url" and selected == "current"
+                    else form.getlist(f"completion.{key}")[0]
+                )
                 for key in ("mode", "message", "button_label", "url")
                 if form.getlist(f"completion.{key}")
             }
             | {
                 "handoff": {
-                    key: (form.getlist(f"completion.handoff.{key}") or [""])[0]
+                    key: (form.getlist(f"{prefix}.{key}") or [""])[0]
+                    if selected in ("saved", "current")
+                    else ""
                     for key in ("receiver_id", "receiver_revision")
                 }
             }

@@ -192,6 +192,7 @@ def accept_submission(
     limits: SubmissionLimits,
     now: datetime | None = None,
     forms: FormRegistry | None = None,
+    cipher=None,
 ) -> Accepted | CaptureAccepted:
     """Levanta `pydantic.ValidationError` (respostas inválidas, ou autorização de marketing por um
     canal que o formulário não pede), `ConsentTextMismatch`, `IdempotencyConflict`,
@@ -200,6 +201,9 @@ def accept_submission(
 
     Reenviar uma chave já gravada devolve o resultado de antes sem passar pelos limites: o replay
     não cria pedido nem conta como envio."""
+    from app.integration_readiness import configuration_lock
+
+    configuration_lock(session, shared=True)
     _lock_submission(session, spec.slug, idempotency_key)
     existing = _find_submission(session, spec.slug, idempotency_key)
     if existing is not None and forms is not None:
@@ -259,6 +263,16 @@ def accept_submission(
                 )
                 session.add(receipt)
                 session.flush()
+                from app.handoffs import prepare_handoff
+
+                prepare_handoff(
+                    session,
+                    submission,
+                    spec,
+                    receipt_expires_at=receipt.expires_at,
+                    cipher=cipher,
+                    now=now,
+                )
                 return CaptureAccepted(
                     submission,
                     receipt,
@@ -273,6 +287,11 @@ def accept_submission(
             )
             session.add(job)
             session.flush()
+            from app.handoffs import prepare_handoff
+
+            prepare_handoff(
+                session, submission, spec, receipt_expires_at=job.expires_at, cipher=cipher, now=now
+            )
     except IntegrityError:
         # Duas requisições iguais ao mesmo tempo: a perdedora devolve o resultado da vencedora.
         existing = _find_submission(session, spec.slug, idempotency_key)

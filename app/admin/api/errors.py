@@ -461,10 +461,22 @@ async def _generation_unavailable(request: Request, exc: Exception) -> JSONRespo
     )
 
 
+def _contract_unavailable(request: Request, exc: Exception) -> JSONResponse:
+    return error_response(
+        ApiError(
+            "unavailable",
+            "A atualização ainda não habilitou esta operação.",
+            retry_after=UNAVAILABLE_RETRY_AFTER,
+        )
+    )
+
+
 def install(app: FastAPI) -> None:
     """Os tratadores da sub-aplicação: o formato único para cada recusa."""
+    from app.deployment_contract import DeploymentContractError
     from app.forms import GenerationUnavailable
 
+    app.add_exception_handler(DeploymentContractError, _contract_unavailable)
     app.add_exception_handler(GenerationUnavailable, _generation_unavailable)
     app.add_exception_handler(ApiError, _api_error)
     app.add_exception_handler(RequestValidationError, _validation_error)

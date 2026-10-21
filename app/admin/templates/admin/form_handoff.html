@@ -1,0 +1,37 @@
+{% extends "admin/layout.html" %}
+{% set section = "forms" %}
+{% block title %}Encaminhamento · {{ slug }}{% endblock %}
+{% macro confirm(label) %}<label><input type="checkbox" name="confirm" value="true" required> {{ label }}</label>{% endmacro %}
+{% macro csrf() %}<input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">{% endmacro %}
+{% macro expiry(prefix) %}
+<label for="{{ prefix }}-expiry">Vencimento</label>
+<select id="{{ prefix }}-expiry" name="expiry_choice"><option value="none"{% if values.get("expiry_choice", "none") == "none" %} selected{% endif %}>Sem vencimento</option><option value="date"{% if values.get("expiry_choice") == "date" %} selected{% endif %}>Definir data</option></select>
+<label for="{{ prefix }}-date">Data com fuso (quando escolhida)</label><input class="input" id="{{ prefix }}-date" name="expires_at" placeholder="2027-01-01T12:00:00Z" value="{{ values.get('expires_at', '') }}">
+{% endmacro %}
+{% block content %}
+<nav><a href="/admin/forms/{{ slug }}">Voltar ao formulário</a></nav>
+<h1>Encaminhamento</h1>
+<p>Configure uma referência opaca para continuar a submissão em um serviço autorizado. Não envia contato ou respostas, não identifica a participante e não libera PDF. Não coloque dados pessoais ou segredos no endereço.</p>
+{% if message %}<div class="alert alert--warn" role="alert" tabindex="-1" autofocus id="handoff-errors"><h2>Confira antes de continuar</h2><p>{{ message }}</p><a href="#receiver-name">Revisar configuração</a></div>{% endif %}
+{% if created %}<section class="box" role="status"><h2>Guarde o segredo agora</h2><p>Este valor aparece somente nesta resposta. Se perder, revogue ou gire explicitamente a credencial.</p><code>{{ created.secret.get_secret_value() }}</code><p>Credencial: {{ created.credential.id }}</p></section>{% endif %}
+<section class="box"><h2>Receptor{% if receiver %} · revisão {{ receiver.revision }} · {{ 'habilitado' if receiver.enabled else 'pausado' }}{% endif %}</h2>
+<form method="post" action="/admin/forms/{{ slug }}/handoff/save">{{ csrf() }}
+<input type="hidden" name="expected_version" value="{{ receiver.version if receiver else '0' }}">
+<label for="receiver-name">Nome</label><input class="input" id="receiver-name" name="name" required maxlength="100" value="{{ values.get('name', receiver.name if receiver else '') }}">
+<label for="receiver-url">Endereço de entrada HTTPS</label><input class="input" id="receiver-url" name="entry_url" required aria-describedby="url-help" value="{{ values.get('entry_url', receiver.entry_url if receiver else '') }}"><p id="url-help">Sem query, fragmento, usuário, senha ou interpolação. A referência será acrescentada pelo sistema após salvar respostas.</p>
+<label for="receiver-ttl">Validade da referência (segundos)</label><input class="input" id="receiver-ttl" name="reference_ttl_seconds" type="number" min="60" max="604800" value="{{ values.get('reference_ttl_seconds', receiver.reference_ttl_seconds if receiver else 604800) }}">
+{{ confirm('Confirmo salvar e pausar esta configuração. Não publica formulário nem envia dados.') }}<button class="btn btn--primary">Salvar configuração</button></form>
+{% if receiver %}<p>Uma alteração de endereço ou validade cria nova revisão. Referências anteriores não adotam o destino novo. Publique uma nova versão para optar pela revisão.</p>
+<form method="post" action="/admin/forms/{{ slug }}/handoff/enabled">{{ csrf() }}<input type="hidden" name="expected_version" value="{{ receiver.version }}"><input type="hidden" name="enabled" value="{{ 'false' if receiver.enabled else 'true' }}">{{ confirm('Confirmo mudar a autorização de uso desta revisão, sem transporte externo.') }}<button class="btn btn--secondary">{{ 'Pausar receptor' if receiver.enabled else 'Habilitar receptor' }}</button></form>{% endif %}</section>
+{% if receiver %}
+<section class="box"><h2>Credenciais de serviço</h2><p>Escopo exclusivo handoffs:resolve. Não aceita chave administrativa no resolvedor. Uma credencial nova na mesma revisão pode recuperar o uso de referências ainda válidas.</p>
+<form method="post" action="/admin/forms/{{ slug }}/handoff/create">{{ csrf() }}<input type="hidden" name="expected_version" value="{{ receiver.version }}"><input type="hidden" name="receiver_revision" value="{{ receiver.revision }}"><input type="hidden" name="idempotency_key" value="{{ idempotency_key }}">
+<label for="credential-name">Nome da credencial</label><input class="input" id="credential-name" name="name" required maxlength="100">{{ expiry('create') }}{{ confirm('Confirmo criar uma credencial e guardar o segredo mostrado uma vez.') }}<button class="btn btn--primary">Criar credencial</button></form>
+{% for credential in credentials %}<article><h3>{{ credential.name }} · {{ {'active': 'ativa', 'expired': 'vencida', 'revoked': 'revogada'}[credential.state] }}</h3><p>Revisão {{ credential.receiver_revision }} · {{ credential.id }} · {{ credential.expires_at or 'Sem vencimento' }}</p>
+{% if credential.state != 'revoked' %}
+<form method="post" action="/admin/forms/{{ slug }}/handoff/rotate">{{ csrf() }}<input type="hidden" name="credential_id" value="{{ credential.id }}"><input type="hidden" name="expected_version" value="{{ credential.version }}"><input type="hidden" name="idempotency_key" value="{{ idempotency_key }}">{{ expiry(credential.id|string) }}{{ confirm('Confirmo girar esta credencial e revogar a anterior no mesmo commit.') }}<button class="btn btn--secondary">Girar credencial</button></form>
+<form method="post" action="/admin/forms/{{ slug }}/handoff/revoke">{{ csrf() }}<input type="hidden" name="credential_id" value="{{ credential.id }}"><input type="hidden" name="expected_version" value="{{ credential.version }}">{{ confirm('Confirmo revogar permanentemente esta credencial.') }}<button class="btn btn--secondary">Revogar credencial</button></form>{% endif %}</article>{% endfor %}</section>
+{% endif %}
+<section class="box"><h2>Consultar encaminhamento</h2><form method="get"><label for="submission-id">Identificador da submissão</label><input class="input" id="submission-id" name="submission_id" required><button class="btn btn--secondary">Consultar</button></form>
+{% if handoff %}<p>Intenção {{ handoff.id }} · {{ 'referência emitida' if handoff.issuance_state == 'ready' else 'referência não emitida' }}{% if handoff.revoked_at %} · revogado em {{ handoff.revoked_at }}{% endif %} · validade {{ handoff.expires_at }}{% if handoff.unavailable_code %} · {{ handoff.unavailable_code }}{% endif %}</p><form method="post" action="/admin/forms/{{ slug }}/handoff/revoke-reference">{{ csrf() }}<input type="hidden" name="submission_id" value="{{ handoff.submission_id }}"><input type="hidden" name="expected_version" value="{{ handoff.version }}">{{ confirm('Confirmo revogar permanentemente este encaminhamento, preservando as respostas.') }}<button class="btn btn--secondary">Revogar encaminhamento</button></form>{% endif %}</section>
+{% endblock %}

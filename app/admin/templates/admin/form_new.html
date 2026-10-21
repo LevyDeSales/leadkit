@@ -37,7 +37,7 @@
     </div>
     <div class="field">
       <label for="f-source">Começar de</label>
-      <p class="muted field__hint" id="f-source-dica">A cópia de um formulário leva a versão publicada dele (ou o rascunho, se ele ainda não foi publicado), com a pontuação, o modelo do plano, os dados e o PDF.</p>
+      <p class="muted field__hint" id="f-source-dica">A cópia de um formulário leva a versão publicada dele (ou o rascunho, se ele ainda não foi publicado), com a pontuação, o modelo do plano, os dados e o PDF. A política de liberação é conservada. O vínculo de encaminhamento e suas credenciais não são copiados: configure um receptor próprio no novo formulário.</p>
       <select class="select" id="f-source" name="source" aria-describedby="f-source-dica{% if page.errors.get('source') %} f-source-erro{% endif %}"{% if page.errors.get('source') %} aria-invalid="true"{% endif %}>
         <option value=""{% if not page.source %} selected{% endif %}>O modelo inicial, pronto para gerar um plano</option>
         {%- for item in page.sources %}

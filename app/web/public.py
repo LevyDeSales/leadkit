@@ -28,11 +28,14 @@ from starlette.datastructures import FormData
 
 from app.admin.actions.jobs import NoPdf, PdfRemoved, pdf_file
 from app.deployment_contract import DeploymentContractError
+from app.admin.auth import instant
 from app.deps import Deps, get_deps
+from app.destinations import SecretCipher
 from app.errors import RetryableError, TerminalError
 from app.forms import FormSpec, InactiveForm, Notices, Screen, UnknownForm
 from app.forms.dates import long_date
 from app.forms.sandbox import TemplateProblem
+from app.handoffs import completion_view
 from app.intake import (
     Accepted,
     CaptureAccepted,
@@ -293,6 +296,7 @@ def _prepare_form_submission(
             link_ttl=deps.link_ttl,
             limits=deps.submission_limits,
             forms=deps.forms,
+            cipher=SecretCipher.from_settings(deps.settings),
         )
     except ValidationError as exc:
         # As respostas já passaram por `form_errors`: sobra o canal de marketing que a página não
@@ -512,11 +516,18 @@ def completion_page(public_id: str, request: Request) -> Response:
             spec = deps.forms.get(submission.form_slug, submission.form_version_number)
         except UnknownForm:
             return _page(request, "unknown", 404)
+        completion = completion_view(
+            session,
+            submission,
+            spec,
+            cipher=SecretCipher.from_settings(deps.settings),
+            now=instant(request.app.state.admin_clock),
+        )
     if spec.completion.mode == "result":
         return RedirectResponse(f"/d/{job.public_id}", status_code=303)
     from fastapi.responses import HTMLResponse
 
-    return HTMLResponse(render_completion(spec))
+    return HTMLResponse(render_completion(spec, completion=completion))
 
 
 @router.get("/d/{public_id}")
@@ -663,9 +674,16 @@ def capture_completion_page(public_id: str, request: Request) -> Response:
             spec = deps.forms.get(submission.form_slug, submission.form_version_number)
         except UnknownForm:
             return _page(request, "capture_unknown", 404)
+        completion = completion_view(
+            session,
+            submission,
+            spec,
+            cipher=SecretCipher.from_settings(deps.settings),
+            now=instant(request.app.state.admin_clock),
+        )
     headers = {"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"}
     if token is not None:
         response = RedirectResponse(f"/s/{public_id}/conclusao", status_code=303, headers=headers)
         _grant_capture_access(response, request, receipt, token)
         return response
-    return HTMLResponse(render_completion(spec), headers=headers)
+    return HTMLResponse(render_completion(spec, completion=completion), headers=headers)

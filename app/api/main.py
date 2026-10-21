@@ -35,7 +35,6 @@ from app.deps import Deps, get_deps
 from app.errors import RetryableError, TerminalError
 from app.forms import FormSpec, InactiveForm, UnknownForm
 from app.forms.data_notices import log_data_notices
-from app.forms.definition.document import CompletionDoc
 from app.forms.image_optimizer import MAX_UPLOAD_BYTES
 from app.intake import (
     CaptureAccepted,
@@ -82,9 +81,14 @@ logger = logging.getLogger(__name__)
 Trigger = Callable[[uuid.UUID, int], Awaitable[str | None]]
 
 
-class SubmissionCompletion(CompletionDoc):
-    """Próximo passo fixado na versão do envio. O recibo é local; `url` nunca recebe dados anexos."""
+class SubmissionCompletion(BaseModel):
+    """Próximo passo pós-commit. Com opt-in, a URL inclui somente uma referência opaca autorizada."""
 
+    mode: Literal["result", "confirmation", "button", "redirect"]
+    message: str
+    button_label: str
+    url: str | None
+    handoff_status: Literal["not_configured", "ready", "unavailable"] = "not_configured"
     receipt_url: str
 
 
@@ -389,6 +393,10 @@ def create_app(
         environment=settings.app_env,
     )
     app.mount(admin_api_errors.PREFIX, app.state.admin_api, name="admin-api")
+    from app.api.handoffs import create_integration_api
+
+    app.state.integration_api = create_integration_api(clock=app.state.admin_clock)
+    app.mount("/integrations/v1", app.state.integration_api, name="integration-api")
     app.router.add_route(
         admin_api_errors.PREFIX, admin_api_errors.BarePrefix(), include_in_schema=False
     )
@@ -457,6 +465,7 @@ def create_app(
                     link_ttl=deps.link_ttl,
                     limits=deps.submission_limits,
                     forms=deps.forms,
+                    cipher=destinations.SecretCipher.from_settings(deps.settings),
                 )
                 return accepted
 
@@ -492,6 +501,11 @@ def create_app(
                 503, "queue_full", "há pedidos demais em andamento; tente de novo", exc.retry_after
             )
 
+        from app.web.completion import accepted_completion
+
+        completion = await run_in_threadpool(
+            accepted_completion, deps, accepted, now=instant(request.app.state.admin_clock)
+        )
         if isinstance(accepted, CaptureAccepted):
             if not accepted.replay:
                 launch_capture_after_commit(request.app, accepted.submission.id)
@@ -504,7 +518,7 @@ def create_app(
                     "receipt_token": accepted.token,
                     "receipt_url": receipt_url,
                     "replay": accepted.replay,
-                    "completion": {**vars(accepted.form.completion), "receipt_url": receipt_url},
+                    "completion": {**vars(completion), "receipt_url": receipt_url},
                 },
                 status_code=202,
                 headers=PRIVATE_HEADERS,
@@ -533,10 +547,7 @@ def create_app(
                 "replay": accepted.replay,
                 **links,
                 "completion": {
-                    "mode": accepted.form.completion.mode,
-                    "message": accepted.form.completion.message,
-                    "button_label": accepted.form.completion.button_label,
-                    "url": accepted.form.completion.url,
+                    **vars(completion),
                     "receipt_url": links["page_url"].replace("?t=", "/conclusao?t="),
                 },
             },

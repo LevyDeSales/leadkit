@@ -74,3 +74,14 @@ autorizado. Sua confirmação de transporte não comprova leitura nem recebiment
 
 **Capacidade interna de PDF:** permissão limitada a uma tentativa e a um receptor interno autorizado.
 Não concede acesso público nem altera a liberação da participante.
+**Referência de encaminhamento:** identificador opaco que correlaciona uma submissão com uma
+finalidade e um receptor autorizados; não identifica a participante nem concede acesso ao plano.
+
+**Receptor de encaminhamento:** serviço autorizado a resolver referências no âmbito de um
+formulário, finalidade e revisão de configuração.
+
+**Intenção de encaminhamento:** vínculo histórico fixado quando a submissão é confirmada,
+exista ou não uma referência utilizável.
+
+**Credencial de serviço:** capacidade que autentica um receptor para resolver referências no
+âmbito autorizado; não autentica a participante nem herda permissões administrativas.

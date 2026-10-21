@@ -35,6 +35,7 @@ from app.admin.auth import COOKIE_NAME, COOKIE_PATH, AdminAuth, AdminSession, in
 from app.admin.form_editor import FormEdit
 from app.admin.queries import forms as form_queries
 from app.admin.queries import jobs as job_queries
+from app.deployment_contract import DeploymentContractError
 from app.deps import get_deps
 from app.errors import RetryableError, TerminalError
 from app.forms import GenerationUnavailable, UnknownForm, draft_previews, draft_tests, drafts
@@ -137,6 +138,12 @@ class AdminRoute(APIRoute):
                     403,
                     "Não deu para confirmar que o pedido saiu deste painel. "
                     "Recarregue a página e tente de novo.",
+                )
+            except DeploymentContractError:
+                response = _error(
+                    request,
+                    503,
+                    "A atualização ainda não habilitou esta operação. Aguarde a conclusão.",
                 )
             except GenerationUnavailable:
                 response = _error(
@@ -247,6 +254,15 @@ def _page(
     session: AdminSession = request.state.admin_session
     flash, session.flash = session.flash, None
     settings = get_deps().settings
+    if name == "admin/form_draft.html":
+        from app.handoff_receivers import get_receiver
+        from app.handoff_types import HandoffError
+
+        try:
+            with get_deps().sessions() as db:
+                context["handoff_receiver"] = get_receiver(db, context["page"].nav.slug)
+        except HandoffError:
+            context["handoff_receiver"] = None
     return templates.TemplateResponse(
         request,
         name,
@@ -2411,6 +2427,10 @@ def capture_test_page(
 ) -> Response:
     return _capture_tests_page(request, _draft(slug), answers=_given(answers), day=date)
 
+
+from app.admin import handoff_routes
+
+handoff_routes.register(protected)
 
 router.include_router(open_routes)
 router.include_router(protected)

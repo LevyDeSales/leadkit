@@ -412,6 +412,7 @@ SECTIONS: tuple[tuple[str, str, Callable[[Mapping[str, Any]], Any]], ...] = (
     ("pagina", "Página pública: título, introdução e tempo", _page),
     ("avisos", "Avisos das páginas de espera e de falha", _at("notices")),
     ("conclusao", "Conclusão após salvar as respostas", _at("completion")),
+    ("liberacao", "Liberação do plano", _at("release")),
     ("etapas", "Etapas e perguntas", _steps),
     ("identidade", "Identidade da lead", _at("identity")),
     ("consentimento", "Consentimento", _at("consent")),
@@ -430,7 +431,18 @@ SECTIONS: tuple[tuple[str, str, Callable[[Mapping[str, Any]], Any]], ...] = (
 )
 COVERED = frozenset(
     {"title", "intro", "minutes", "steps", "identity", "consent", "scoring", "instructions"}
-    | {"prompt", "plan", "phases", "data", "pdf", "preview", "examples", "notices", "completion"}
+    | {
+        "prompt",
+        "plan",
+        "phases",
+        "data",
+        "pdf",
+        "preview",
+        "examples",
+        "notices",
+        "completion",
+        "release",
+    }
 )
 
 

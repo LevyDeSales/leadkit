@@ -114,10 +114,24 @@
           </div>
           {{ f.field('completion.message', 'Mensagem de confirmação', s.edit.completion.message, hint='Texto puro, até 2000 caracteres. Em branco: Recebemos suas respostas. Obrigada por participar.', area=True, rows=3, opt=True) }}
           {{ f.field('completion.button_label', 'Rótulo do botão de continuidade', s.edit.completion.button_label, hint='Até 300 caracteres. Em branco: Continuar.', opt=True) }}
-          {{ f.field('completion.url', 'Destino do botão ou encaminhamento', s.edit.completion.url, hint='URL exata começando por https://, sem usuário ou senha. Não recebe respostas nem credenciais automaticamente. Deixe em branco nos modos locais.', opt=True, mono=True) }}
-          {{ f.field('completion.handoff.receiver_id', 'Receptor de encaminhamento', s.edit.completion.receiver_id, hint='Opcional. Copie o identificador da configuração de encaminhamento deste formulário. A referência não identifica a participante nem libera PDF.', opt=True, mono=True) }}
-          {{ f.field('completion.handoff.receiver_revision', 'Revisão do receptor', s.edit.completion.receiver_revision, hint='Use a revisão autorizada e o mesmo endereço de entrada. Deixe os dois campos vazios para conclusão estática.', opt=True) }}
-          {{ f.error_for('completion.handoff') }}
+          {{ f.field('completion.url', 'Destino do botão ou encaminhamento', s.edit.completion.url, hint='URL exata começando por https://, sem usuário ou senha. Sem opt-in, conserva a URL exata. Com encaminhamento, acrescenta somente a referência opaca autorizada. Deixe em branco nos modos locais.', opt=True, mono=True) }}
+          <label for="{{ s.field_id('completion.handoff.selection') }}">Referência opaca de encaminhamento</label>
+          <select class="select" id="{{ s.field_id('completion.handoff.selection') }}" name="completion.handoff.selection">
+            <option value=""{% if not s.edit.completion.receiver_id %} selected{% endif %}>Sem encaminhamento por referência</option>
+            {% if s.edit.completion.receiver_id %}<option value="saved" selected>Conservar vínculo salvo (revisão {{ s.edit.completion.receiver_revision }})</option>{% endif %}
+            {% if handoff_receiver %}<option value="current">Usar {{ handoff_receiver.name }} — revisão {{ handoff_receiver.revision }}{% if not handoff_receiver.enabled %} (pausado){% endif %}</option>{% endif %}
+          </select>
+          {% for key in ['receiver_id', 'receiver_revision'] %}
+          <input type="hidden" name="completion.handoff.{{ key }}" value="{{ s.edit.completion[key] }}">
+          {% endfor %}
+          {% if handoff_receiver %}
+          <input type="hidden" name="completion.handoff.current.entry_url" value="{{ handoff_receiver.entry_url }}">
+          <input type="hidden" name="completion.handoff.current.receiver_id" value="{{ handoff_receiver.id }}">
+          <input type="hidden" name="completion.handoff.current.receiver_revision" value="{{ handoff_receiver.revision }}">
+          <p>Destino observado: {{ handoff_receiver.entry_url }}. Ao optar por este receptor, o destino de conclusão passa a usar este endereço no salvamento. Salvar confirma o vínculo escolhido; nenhuma versão publicada muda.</p>
+          {% else %}<p>Nenhum receptor configurado. <a href="/admin/forms/{{ page.nav.slug }}/handoff">Configurar encaminhamento</a>.</p>{% endif %}
+          <p>Opcionalmente acrescenta somente uma referência opaca à URL, sem contato ou respostas. Não identifica a participante nem libera PDF.</p>
+          {{ f.error_for('completion.handoff.selection') }}
           <a class="btn btn--secondary" href="/admin/forms/{{ page.nav.slug }}/draft/completion-preview">Conferir conclusão salva</a>
           <p class="muted">A prévia usa o rascunho salvo e mantém o botão desativado, sem sair desta página nem enviar respostas.</p>
         </div>

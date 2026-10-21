@@ -15,7 +15,7 @@
       {% if preview %}
       <button class="btn btn--primary" type="button" disabled>{{ completion.button_label }}</button>
       <p>Destino configurado: {{ completion.url }}</p>
-      {% else %}
+      {% elif completion.url %}
       <a class="btn btn--primary" href="{{ completion.url }}" rel="noreferrer noopener"{% if completion.mode == 'redirect' %} data-completion-redirect{% endif %}>{{ completion.button_label }}</a>
       {% if completion.mode == 'redirect' %}<p>Se o encaminhamento não acontecer, use o botão para continuar.</p>{% endif %}
       {% endif %}

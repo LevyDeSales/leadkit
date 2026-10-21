@@ -532,3 +532,27 @@ remoção informa o inventário efetivamente removido. Intenções de captura n�
 esperam novo destino: são apagadas por cascade, preservando as submissões. O fallback/retry PDF
 legado segue a regra existente. O teste HTML transporta o perfil selecionado como a API/MCP;
 erros na seleção de `events` são associados ao grupo de eventos e retornam esse campo na API.
+
+## Encaminhamento opcional por referência
+
+A gestão usa os papéis administrativos atuais e o catálogo MCP derivado. A resolução é serviço
+separado em `POST /integrations/v1/handoffs/resolve`, com credencial própria e esquema em
+`integrations-openapi.json`; não é operação administrativa nem ferramenta MCP. `expires_at` é
+obrigatório e nullable; `null` permite credencial sem vencimento. Criação/rotação levam
+`idempotency_key` no corpo e mostram o segredo utilizável uma vez. As leituras administrativas
+nunca devolvem referência bruta, cifra, hash, respostas ou URL com referência.
+
+| Rota atual | O que faz | Serviço hoje | Operação da API | `operation_id` | Papel | Marcas | Status |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `GET /admin/forms/{slug}/handoff` | Consulta receptor configurado | `handoff_receivers.get_receiver` | `GET /forms/{slug}/handoff-receiver` | `get_handoff_receiver` | leitura | — | feita · tests_app/test_admin_api_handoffs.py::test_manage_receiver_and_credentials_requires_total_confirmation_and_explicit_expiry |
+| `POST /admin/forms/{slug}/handoff/save` | Salva e pausa configuração | `handoff_receivers.save_receiver` | `PUT /forms/{slug}/handoff-receiver` | `save_handoff_receiver` | total | externo | feita · tests_app/test_admin_api_handoffs.py::test_manage_receiver_and_credentials_requires_total_confirmation_and_explicit_expiry |
+| `POST /admin/forms/{slug}/handoff/enabled` | Habilita ou pausa revisão | `handoff_receivers.set_receiver_enabled` | `POST /forms/{slug}/handoff-receiver/enabled` | `set_handoff_receiver_enabled` | total | externo | feita · tests_app/test_admin_api_handoffs.py::test_manage_receiver_and_credentials_requires_total_confirmation_and_explicit_expiry |
+| `POST /admin/forms/{slug}/handoff/create` | Emite segredo uma vez | `integration_credentials.create_credential` | `POST /forms/{slug}/handoff-receiver/credentials` | `create_integration_credential` | total | externo | feita · tests_app/test_admin_api_handoffs.py::test_manage_receiver_and_credentials_requires_total_confirmation_and_explicit_expiry |
+| `POST /admin/forms/{slug}/handoff/rotate` | Gira e revoga anterior no commit | `integration_credentials.rotate_credential` | `POST /integration-credentials/{credential_id}/rotate` | `rotate_integration_credential` | total | externo | feita · tests_app/test_admin_api_handoffs.py::test_manage_receiver_and_credentials_requires_total_confirmation_and_explicit_expiry |
+| `POST /admin/forms/{slug}/handoff/revoke` | Revoga credencial | `integration_credentials.revoke_credential` | `POST /integration-credentials/{credential_id}/revoke` | `revoke_integration_credential` | total | destrutiva, externo | feita · tests_app/test_admin_api_handoffs.py::test_manage_receiver_and_credentials_requires_total_confirmation_and_explicit_expiry |
+| `POST /admin/forms/{slug}/handoff/revoke-reference` | Revoga referência preservando respostas | `handoffs.revoke_handoff` | `POST /submissions/{submission_id}/handoff/revoke` | `revoke_submission_handoff` | total | destrutiva, externo | feita · tests_app/test_admin_api_handoffs.py::test_get_and_revoke_submission_handoff_do_not_expose_pii_or_reference |
+
+| `operation_id` | Operação da API | O que faz | Papel | Marcas | Status |
+| --- | --- | --- | --- | --- | --- |
+| `list_integration_credentials` | `GET /forms/{slug}/handoff-receiver/credentials` | Lista credenciais sem segredo | leitura | — | feita · tests_app/test_admin_api_handoffs.py::test_manage_receiver_and_credentials_requires_total_confirmation_and_explicit_expiry |
+| `get_submission_handoff` | `GET /submissions/{submission_id}/handoff` | Consulta intenção pelo identificador da submissão | leitura | — | feita · tests_app/test_admin_api_handoffs.py::test_get_and_revoke_submission_handoff_do_not_expose_pii_or_reference |
