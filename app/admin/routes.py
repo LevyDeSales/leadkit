@@ -2470,7 +2470,7 @@ async def release_job_pdf(
     fields = {key: posted.get(key, "") for key in allowed}
     try:
         command = ReleasePdfCommand.model_validate(
-            {**fields, "confirm": bool(posted.get("confirm"))}
+            {**fields, "confirm": posted.get("confirm") == "on"}
         )
         done = await job_actions.release_pdf(
             get_deps(),

@@ -528,7 +528,10 @@ def job_page(public_id: str, request: Request) -> Response:
     job = _lead_job(request, deps, public_id)
     if isinstance(job, Response):
         return job
-    details = _details(deps, job)
+    try:
+        details = _details(deps, job)
+    except NoPdf:
+        return _page(request, "plan_held", 409, job=job)
     if job.status == "failed":
         return _page(
             request, "failed", job=job, details=details, notice=_notices(deps, details).failed

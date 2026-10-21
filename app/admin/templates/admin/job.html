@@ -54,7 +54,7 @@
         <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
         <input type="hidden" name="attempt" value="{{ job.attempt }}">
         <h2 id="rep-titulo">Reprocessar este pedido</h2>
-        <div class="note">{{ m.icon('alert-triangle') }}<p>Isso cria a tentativa {{ job.attempt + 1 }} e uma nova chamada de IA. O PDF atual continua no histórico, e o lead passa a ver o novo plano quando ele ficar pronto. Fica registrado em seu nome.</p></div>
+        <div class="note">{{ m.icon('alert-triangle') }}<p>Isso cria a tentativa {{ job.attempt + 1 }} e uma nova chamada de IA. O PDF atual continua no histórico. {% if job.release.policy == 'manual' %}A participante aguardará uma nova liberação para acessar a nova tentativa.{% else %}A participante verá o novo plano quando ele ficar pronto.{% endif %} Fica registrado em seu nome.</p></div>
         <div class="field">
           <label for="rep-motivo">Motivo <span class="opt">(de 10 a 300 caracteres)</span></label>
           <textarea class="input" id="rep-motivo" name="reason" rows="3" required minlength="10" maxlength="300"{% if errors.get("reason") %} aria-invalid="true" aria-describedby="rep-motivo-erro"{% endif %}>{{ reason }}</textarea>
@@ -100,7 +100,7 @@
           <tbody>
           {% for delivery in job.deliveries %}
             <tr>
-              <td><b>{{ delivery.destination }}</b>{% if delivery.target %}<span class="sub mono">{{ delivery.target }}</span>{% endif %}{% if delivery.run_url %}<a class="sub" href="{{ delivery.run_url }}" target="_blank" rel="noopener noreferrer">execução{{ m.icon('external', 'icon--sm') }}<span class="sr-only"> (abre em nova aba)</span></a>{% endif %}</td>
+              <td><b>{{ delivery.destination }}</b><span class="sub">{{ "Liberação do plano" if delivery.event == "plano.liberado" else "Conclusão do plano" }}</span>{% if delivery.blocked_reason %}<span class="sub">Aguarda liberação da participante; nenhum envio realizado.</span>{% endif %}{% if delivery.target %}<span class="sub mono">{{ delivery.target }}</span>{% endif %}{% if delivery.run_url %}<a class="sub" href="{{ delivery.run_url }}" target="_blank" rel="noopener noreferrer">execução{{ m.icon('external', 'icon--sm') }}<span class="sr-only"> (abre em nova aba)</span></a>{% endif %}</td>
               <td class="num">{{ delivery.job_attempt }}</td>
               <td>{{ m.badge(delivery.badge) }}</td>
               <td class="num">{{ delivery.attempts }}</td>

@@ -88,7 +88,13 @@ class SubmissionCompletion(CompletionDoc):
     receipt_url: str
 
 
+class PublicReleaseStatus(BaseModel):
+    policy: Literal["automatic", "manual", "unavailable"]
+    state: Literal["automatic", "held", "released", "unavailable"]
+
+
 class SubmissionAccepted(BaseModel):
+    release: PublicReleaseStatus
     """Pedido persistido; geração e conclusão são independentes."""
 
     public_id: str
@@ -114,6 +120,7 @@ class CaptureSubmissionAccepted(BaseModel):
 
 
 class PublicJobStatus(BaseModel):
+    release: PublicReleaseStatus
     """Estado autenticado; disponibilidade técnica não concede nova autorização."""
 
     public_id: str
@@ -506,11 +513,21 @@ def create_app(
         if not accepted.replay:
             launch_after_commit(request.app, job_id, attempt)
         links = pipeline.lead_links(deps, accepted.job)
-        if accepted.form.release_mode == "manual":
+        with deps.sessions() as session:
+            artifact = session.scalar(
+                sa.select(Artifact).where(
+                    Artifact.job_id == accepted.job.id,
+                    Artifact.version == accepted.job.attempt,
+                    Artifact.kind == "pdf",
+                )
+            )
+            access = participant_access(session, accepted.job, artifact)
+        if not access.allowed:
             links["pdf_url"] = None
         return JSONResponse(
             {
                 "public_id": public_id,
+                "release": {"policy": access.policy, "state": access.state},
                 "token": accepted.token,
                 "status": accepted.job.status,
                 "replay": accepted.replay,

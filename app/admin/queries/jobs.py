@@ -543,6 +543,10 @@ class DeliveryState:
     config_version: int | None = None
     current_config_version: int | None = None
     dispatch_no: int = 1
+    event: str = "plano.concluido"
+    release_id: uuid.UUID | None = None
+    occurred_at: datetime | None = None
+    blocked_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -763,6 +767,10 @@ def read_job(
             if d.webhook_destination_id
             else None,
             dispatch_no=d.dispatch_no,
+            event=d.event,
+            release_id=d.release_id,
+            occurred_at=d.occurred_at or d.created_at,
+            blocked_reason=d.blocked_reason,
             scope=d.destination_scope,
             host=d.destination_host,
         )

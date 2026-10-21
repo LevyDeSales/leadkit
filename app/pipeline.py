@@ -26,7 +26,7 @@ from app.internal_links import internal_links
 from app.models import Artifact, Delivery, Job, Plan, Submission, WebhookDestination, utcnow
 from app.pdf_availability import current_pdf, verify_completion
 from app.pdf_validation import validate_pdf
-from app.plan_release import delivery_eligible, require_participant_access
+from app.plan_release import delivery_eligible, participant_access, require_participant_access
 from app.submission_identity import identity_from_answers, resolve_identity, submission_form
 
 WEBHOOK_DESTINATION = "webhook"
@@ -212,6 +212,11 @@ def finalize(
                 authorized_attempt=attempt,
                 destination=WEBHOOK_DESTINATION,
                 event=PLAN_COMPLETED_EVENT,
+                occurred_at=job.completed_at,
+                blocked_reason="plan_held"
+                if destination.purpose == "participant"
+                and not participant_access(session, job, artifact).allowed
+                else None,
             )
             .on_conflict_do_nothing(constraint="uq_deliveries_artifact_destination")
         )
@@ -378,15 +383,29 @@ def set_delivery_run_id(
     deps: Deps, delivery_id: uuid.UUID, run_id: str, dispatch_no: int = 1
 ) -> None:
     with deps.sessions.begin() as session:
-        session.execute(
-            sa.update(Delivery)
-            .where(
-                Delivery.id == delivery_id,
-                Delivery.dispatch_no == dispatch_no,
-                Delivery.status == "pending",
-            )
-            .values(hatchet_run_id=run_id)
+        from app.integration_readiness import configuration_lock
+
+        configuration_lock(session, shared=True)
+        metadata = session.get(Delivery, delivery_id)
+        if metadata is None:
+            return
+        session.scalar(sa.select(Job).where(Job.id == metadata.job_id).with_for_update())
+        session.scalar(
+            sa.select(Artifact).where(Artifact.id == metadata.artifact_id).with_for_update()
         )
+        row = session.scalar(
+            sa.select(Delivery)
+            .where(Delivery.id == delivery_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        if (
+            row is not None
+            and row.status == "pending"
+            and row.dispatch_no == dispatch_no
+            and delivery_eligible(session, row)
+        ):
+            row.hatchet_run_id = run_id
 
 
 def mark_delivery_failed(

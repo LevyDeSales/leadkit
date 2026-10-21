@@ -263,6 +263,16 @@ def release_pdf(
     )
     session.add(release)
     session.flush()
+    session.execute(
+        sa.update(Delivery)
+        .where(
+            Delivery.job_id == job.id,
+            Delivery.artifact_id == artifact.id,
+            Delivery.audience == "participant",
+            Delivery.event == "plano.concluido",
+        )
+        .values(blocked_reason=None)
+    )
     if decision == "outbox":
         session.add(
             Delivery(

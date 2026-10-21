@@ -194,6 +194,11 @@ class JobPdf(BaseModel):
 
 
 class JobDelivery(BaseModel):
+    event: str = "plano.concluido"
+    release_id: uuid.UUID | None = None
+    occurred_at: AwareDatetime | None = None
+    blocked_reason: str | None = None
+
     audience: Literal["internal", "participant"] = "internal"
     authorization_origin: Literal["legacy", "explicit"] = "legacy"
     config_version: int | None = None
@@ -416,6 +421,10 @@ def _delivery_of(delivery: queries.DeliveryState, run_url_template: str | None) 
         "config_version": delivery.config_version,
         "current_config_version": delivery.current_config_version,
         "dispatch_no": delivery.dispatch_no,
+        "event": delivery.event,
+        "release_id": delivery.release_id,
+        "occurred_at": utc(delivery.occurred_at),
+        "blocked_reason": delivery.blocked_reason,
         "id": delivery.id,
         "destination": delivery.destination,
         "status": delivery.status,

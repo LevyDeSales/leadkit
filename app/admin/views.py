@@ -352,6 +352,8 @@ class DeliveryView:
     audience: str = "internal"
     authorization_origin: str = "legacy"
     current_config_version: int | None = None
+    event: str = "plano.concluido"
+    blocked_reason: str | None = None
 
 
 SYNC_BADGES = {
@@ -620,6 +622,8 @@ def _delivery_view(
         audience=delivery.audience,
         authorization_origin=delivery.authorization_origin,
         current_config_version=delivery.current_config_version,
+        event=delivery.event,
+        blocked_reason=delivery.blocked_reason,
     )
 
 
