@@ -252,9 +252,10 @@ def test_the_swarm_rebuild_from_the_local_image_stays_on_the_default_builder() -
     parte da imagem local `gerador-planos:ci`: só o builder padrão a enxerga, não o do cache."""
     plain = [s["run"] for s in steps_of("swarm") if "docker build" in str(s.get("run", ""))]
     assert len(plain) == 2  # Imagem histórica fixada e reconstrução local da candidata.
-    (script,) = [script for script in plain if "FROM gerador-planos:ci" in script]
-    assert "FROM gerador-planos:ci" in script
-    assert "LABEL ci.build=reaproveitada" in script
+    local_rebuilds = [script for script in plain if "FROM gerador-planos:ci" in script]
+    assert len(local_rebuilds) == 2
+    assert any("LABEL ci.build=reaproveitada" in script for script in local_rebuilds)
+    assert any("ci.continuation-return" in script for script in local_rebuilds)
     assert all("--builder" not in script for script in plain)
     assert [s for s in steps_of("image") if "docker build" in str(s.get("run", ""))] == []
 
@@ -297,7 +298,9 @@ def test_inline_shell_and_python_commands_remain_syntactically_valid() -> None:
                     ["bash", "-n"], input=script, text=True, capture_output=True, check=False
                 )
                 assert result.returncode == 0, (name, step["name"], result.stderr)
-                for snippet in re.findall(r"<<'PY'\n(.*?)\nPY(?:\n|$)", script, re.DOTALL):
+                for _, snippet in re.findall(
+                    r"<<'(PY[A-Z_]*)'\n(.*?)\n\1(?:\n|$)", script, re.DOTALL
+                ):
                     compile(snippet, step["name"], "exec")
 
 
@@ -440,7 +443,7 @@ def test_swarm_rehearsal_accepts_the_real_guard_refusal(request, tmp_path: Path)
                 connection.exec_driver_sql(
                     "select minimum_contract || ':' || phase from deployment_contract where id=1"
                 ).scalar_one()
-                == "1:blocked"
+                == "2:blocked"
             )
         log = tmp_path / "back-sem-rollback.log"
         log.write_text(refused.stdout + refused.stderr)
@@ -681,7 +684,7 @@ def test_bootstrap_err_trap_keeps_exit_cleanup_and_only_reports_safe_location(
         for step in steps_of("swarm")
         if step.get("name") == "Rehearse real pre-projection bootstrap and forward recovery"
     )
-    prefix = rehearsal[: rehearsal.index("old_sha=")]
+    prefix = rehearsal[: rehearsal.index('case "${CI_ADOPTION_BASELINE')]
     cleanup = rehearsal[rehearsal.index("cleanup_compat()") :]
     cleanup = cleanup[: cleanup.index("trap cleanup_compat EXIT") + len("trap cleanup_compat EXIT")]
     script = (
@@ -691,6 +694,7 @@ def test_bootstrap_err_trap_keeps_exit_cleanup_and_only_reports_safe_location(
         + '  "stack rm") : > "$CLEANUP_MARKER" ;;\n'
         + '  "network inspect") return 1 ;;\n'
         + "esac; }\n"
+        + 'python3() { return 0; }; folder="$CLEANUP_FOLDER";\n'
         + cleanup
         + '\nbootstrap_role="$SYNTHETIC_ROLE"\n'
         + 'docker service inspect "$SYNTHETIC_PRIVATE_ARG"\n'
@@ -703,6 +707,7 @@ def test_bootstrap_err_trap_keeps_exit_cleanup_and_only_reports_safe_location(
             "SYNTHETIC_ROLE": role,
             "SYNTHETIC_PRIVATE_ARG": "SYNTHETIC_PRIVATE_ARGUMENT",
             "CLEANUP_MARKER": str(tmp_path / "cleanup-ran"),
+            "CLEANUP_FOLDER": str(tmp_path),
         },
         capture_output=True,
         text=True,
@@ -791,7 +796,7 @@ def test_bootstrap_evidence_never_publishes_private_helper_logs(tmp_path: Path) 
     first = rehearsal[rehearsal.index("test -s before-ddl") :]
     first = first[: first.index('test "$(psql_compat')]
     refused = rehearsal[rehearsal.index('test "$(versions)" = "$before"') :]
-    refused = refused[: refused.index("env -u DOMAIN -u STACK IMAGE=gerador-planos:ci ./deploy.sh")]
+    refused = refused.split("# O rollback explícito", 1)[0]
     (tmp_path / "before-ddl").write_text("synthetic-api 1 0 0\n")
     (tmp_path / "ddl-committed-launcher-failed").touch()
     for name in ("first-adoption.log", "refuse-old.log"):
@@ -801,7 +806,7 @@ def test_bootstrap_evidence_never_publishes_private_helper_logs(tmp_path: Path) 
             "bash",
             "-e",
             "-c",
-            "versions() { echo synthetic; }; before=synthetic; psql_compat() { echo 1:blocked; };\n"
+            "versions() { echo synthetic; }; before=synthetic; psql_compat() { echo 2:blocked; };\n"
             + first
             + refused,
         ],
@@ -917,7 +922,9 @@ def test_bootstrap_proves_old_container_exit_without_requiring_retention(
     wrapper.write_text(rehearsal.split("cat > bin/docker <<'SH'\n", 1)[1].split("\nSH\n", 1)[0])
     wrapper.chmod(0o700)
     baseline = rehearsal[
-        rehearsal.index('python3 - "$folder" "$compat"') : rehearsal.index("export CI_REAL_DOCKER=")
+        rehearsal.index('python3 - "$folder" "$compat" <<\'PYBASE\'') : rehearsal.index(
+            "export CI_REAL_DOCKER="
+        )
     ]
     script = server.folder / "prove.sh"
     script.write_text(
@@ -1098,7 +1105,7 @@ elif args[:2]==['inspect','--type']:
     row=next((row for role in ('db','api','worker') for row in active(role) if identity==row[0 if kind=='task' else 1]),None)
     if row is None: sys.stderr.write('SYNTHETIC_PRIVATE_DAEMON_ERROR'); raise SystemExit(1)
     print(row[1] if kind=='task' else json.dumps(row[2]))
-elif args[0]=='exec': print('1:blocked' if fault=='adoption_contract' else '1:verified')
+elif args[0]=='exec': print('2:blocked' if fault=='adoption_contract' else '2:verified')
 else:
     sys.stderr.write('SYNTHETIC_PRIVATE_DAEMON_ERROR'); raise SystemExit(2)
 """
@@ -1276,11 +1283,11 @@ def test_preflight_and_migration_evidence_require_distinct_proofs(
             **os.environ,
             "RUNNER_TEMP": str(tmp_path),
             "OBSERVED_VERSION": "changed" if fault == "changed_service" else "original",
-            "OBSERVED_CONTRACT": "1:verified"
+            "OBSERVED_CONTRACT": "2:verified"
             if fault == "verified"
             else "0:blocked"
             if fault == "wrong_floor"
-            else "1:blocked",
+            else "2:blocked",
         },
     )
     assert result.returncode == expected, result.stdout + result.stderr
@@ -1453,3 +1460,172 @@ if handled:
     raise SystemExit(code)
 os.execv(str(real),[str(real),*args])
 """
+
+
+def test_post_ddl_rehearsal_accepts_only_the_composed_schema_and_blocked_floor(tmp_path):
+    """Executa as verificações SQL reais do workflow contra a resposta do schema composto."""
+    rehearsal = next(
+        step["run"]
+        for step in steps_of("swarm")
+        if step.get("name") == "Rehearse real pre-projection bootstrap and forward recovery"
+    )
+    assertions = rehearsal.split("test -s before-ddl\n", 1)[1].split(
+        "for role in api worker; do", 1
+    )[0]
+    (tmp_path / "before-ddl").write_text("synthetic exit proof\n")
+    (tmp_path / "ddl-committed-launcher-failed").touch()
+    script = (
+        """psql_compat() {
+      case "$1" in
+        *version_num*) echo 0017_continuation_release ;;
+        *) echo 2:blocked ;;
+      esac
+    }
+"""
+        + assertions
+    )
+    result = subprocess.run(
+        ["bash", "-e", "-c", script], cwd=tmp_path, capture_output=True, text=True, check=False
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_swarm_rehearses_both_initial_adoption_and_the_real_public_contract_one_baseline():
+    swarm = load("deploy-image.yml")["jobs"]["swarm"]
+    assert swarm["strategy"]["matrix"]["adoption_baseline"] == ["pre-projection", "contract-one"]
+    assert swarm["strategy"]["fail-fast"] is False
+    rehearsal = next(
+        step["run"]
+        for step in steps_of("swarm")
+        if step.get("name") == "Rehearse real pre-projection bootstrap and forward recovery"
+    )
+    assert "365f8bf2dc94dbe8894020ed5198fe0142a36ab2" in rehearsal
+    assert "old_schema=0016_plan_audiences" in rehearsal
+    assert "old_schema=0015_capture_delivery" in rehearsal
+
+
+def test_composed_image_probe_is_isolated_and_checks_real_http_capabilities():
+    step = next(
+        step
+        for step in steps_of("swarm")
+        if step.get("name") == "Write the isolated continuation and release probe"
+    )
+    script = step["run"]
+    probe = script.split("<<'PYPROBE'\n", 1)[1].split("\nPYPROBE", 1)[0]
+    compile(probe, "continuation-probe", "exec")
+    assert 'sys.path.insert(0, "/app")' in probe
+    assert 'Path("/app/app/__init__.py")' in probe
+    assert "/integrations/v1/handoffs/resolve" in probe
+    assert "/release" in probe and "client.get(pdf_path, headers=auth).status_code == 403" in probe
+    assert 'pdf.content.startswith(b"%PDF")' in probe
+    assert '"replay"] == (phase == "return")' in probe
+    assert 'body["release_id"] == state["release_id"]' in probe
+    assert 'phase == "blocked"' in probe and "assert_contract(session, required=2)" in probe
+    assert "validate_database(session.connection(), SIGNATURES)" in probe
+
+
+@pytest.mark.parametrize(
+    "operation,expected",
+    [
+        ("run.status", 0),
+        ("run.begin", 1),
+        ("image.tag", 1),
+        ("service.scale", 1),
+        ("run.migrate", 1),
+        ("other", 1),
+    ],
+)
+def test_return_one_refusal_audits_operations_before_any_mutation(tmp_path, operation, expected):
+    rehearsal = next(
+        step["run"]
+        for step in steps_of("swarm")
+        if step.get("name") == "Rehearse real pre-projection bootstrap and forward recovery"
+    )
+    audit = rehearsal.split("<<'PYNOMUTATE'\n", 1)[1].split("\nPYNOMUTATE", 1)[0]
+    trace = tmp_path / "trace"
+    trace.write_text("image.inspect\nrun.capability\n" + operation + "\n")
+    result = subprocess.run(
+        [sys.executable, "-c", audit, str(trace)], capture_output=True, text=True, check=False
+    )
+    assert result.returncode == expected
+    assert not result.stdout and not result.stderr
+
+
+@pytest.mark.parametrize("proof_exit", [0, 37])
+def test_always_cleanup_preserves_volumes_and_private_state_without_exit_proof(
+    tmp_path, proof_exit
+):
+    import json
+
+    step = next(
+        step
+        for step in steps_of("swarm")
+        if step.get("name") == "Clean isolated adoption resources after proven exit"
+    )
+    assert step["if"] == "always()"
+    folder = tmp_path / "swarm-compat"
+    (folder / "proof").mkdir(parents=True)
+    (folder / "rollout.py").touch()
+    state = folder / "proof/state.json"
+    state.write_text("SYNTHETIC_PRIVATE_STATE")
+    volume = tmp_path / "volume"
+    volume.touch()
+    binary = tmp_path / "bin"
+    binary.mkdir()
+    python = binary / "python3"
+    python.write_text(
+        f"#!{sys.executable}\n"
+        + """import os,subprocess,sys
+code=sys.stdin.read()
+if 'rollout.quiesce()' in code: raise SystemExit(int(os.environ['PROOF_EXIT']))
+raise SystemExit(subprocess.run([sys.executable,*sys.argv[1:]],input=code,text=True).returncode)
+"""
+    )
+    python.chmod(0o700)
+    docker = binary / "docker"
+    docker.write_text("""#!/usr/bin/env bash
+case "$1 ${2:-}" in
+  "network inspect") exit 1 ;;
+  "volume rm") rm "$SYNTHETIC_VOLUME" ;;
+esac
+""")
+    docker.chmod(0o700)
+    result = subprocess.run(
+        ["bash", "-e", "-u", "-c", step["run"]],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={
+            **os.environ,
+            "PATH": f"{binary}:{os.environ['PATH']}",
+            "RUNNER_TEMP": str(tmp_path),
+            "PROOF_EXIT": str(proof_exit),
+            "SYNTHETIC_VOLUME": str(volume),
+        },
+    )
+    assert result.returncode == proof_exit
+    assert state.exists() == volume.exists() == bool(proof_exit)
+    if not proof_exit:
+        assert json.loads(result.stdout) == {"stage": "cleanup", "result": "proved"}
+    assert "SYNTHETIC_PRIVATE_STATE" not in result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("phase", ["SYNTHETIC_PRIVATE_ARGUMENT", "create"])
+def test_temporary_probe_refuses_the_wrong_import_location_without_raw_errors(tmp_path, phase):
+    import json
+
+    step = next(
+        step
+        for step in steps_of("swarm")
+        if step.get("name") == "Write the isolated continuation and release probe"
+    )
+    probe = step["run"].split("<<'PYPROBE'\n", 1)[1].split("\nPYPROBE", 1)[0]
+    result = subprocess.run(
+        [sys.executable, "-c", probe, phase], cwd=ROOT, capture_output=True, text=True, check=False
+    )
+    assert result.returncode == 1
+    assert json.loads(result.stdout) == {
+        "scenario": "create" if phase == "create" else "invalid",
+        "result": "failed",
+    }
+    assert result.stderr == "" and "SYNTHETIC_PRIVATE_ARGUMENT" not in result.stdout

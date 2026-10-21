@@ -239,7 +239,13 @@ jobs:
     # segunda stack sobe ao lado da primeira, com outro nome e outro domínio.
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # O mesmo roteiro conserva a adoção0 e prova separadamente a transição pública1→2.
+    strategy:
+      fail-fast: false
+      matrix:
+        adoption_baseline: [pre-projection, contract-one]
     env:
+      CI_ADOPTION_BASELINE: ${{ matrix.adoption_baseline }}
       DOMAIN: planos.ci.test
       # O domínio e a pasta de configuração da segunda stack, gerador-planos-b.
       DOMAIN_B: planos-b.ci.test
@@ -404,6 +410,225 @@ jobs:
           chmod 600 "$conf/app.env" "$conf/db.env"
           ls -l "$conf"
 
+      - name: Write the isolated continuation and release probe
+        run: |
+          umask 077
+          cat > "$RUNNER_TEMP/continuation-probe.py" <<'PYPROBE'
+          """Prova sintética na imagem imutável; somente cenário, resultado e contagens saem no log."""
+          import hashlib
+          import json
+          import os
+          import subprocess
+          import sys
+          import time
+          from datetime import UTC, datetime
+          from pathlib import Path
+          from uuid import UUID, uuid4
+
+          sys.path.insert(0, "/app")
+          PHASES = {"baseline", "blocked", "create", "return"}
+
+
+          def persist(path, state):
+              path.write_text(json.dumps(state, sort_keys=True, default=str))
+              path.chmod(0o600)
+
+
+          def business_snapshot(session):
+              import sqlalchemy as sa
+
+              result = {}
+              for table in ("forms", "form_versions", "leads", "submissions", "jobs", "plans", "artifacts"):
+                  rows = session.execute(sa.text(f"SELECT row_to_json(t) FROM {table} t ORDER BY id")).scalars().all()
+                  # A criação das provas2 não entra no snapshot histórico da adoção.
+                  result[table] = rows
+              return result
+
+
+          def run(phase, root):
+              import app
+              import sqlalchemy as sa
+              from app import jobs, pipeline
+              from app.deps import get_deps
+              from app.forms import starter
+              from app.forms.stored import import_definition
+              from app.intake import SubmissionIn, accept_submission
+              from app.models import Artifact, Job
+
+              assert Path(app.__file__).resolve() == Path("/app/app/__init__.py")
+              state_path = root / "state.json"
+              state = json.loads(state_path.read_text()) if state_path.exists() else {}
+              if phase == "baseline":
+                  from cryptography.fernet import Fernet
+                  state["cipher_key"] = Fernet.generate_key().decode()
+              os.environ.update(APP_ENV="test", LLM_MODE="fake", PDF_MODE="fake", STORAGE_MODE="local",
+                                LOCAL_STORAGE_DIR=str(root / "artifacts"), WEBHOOK_ENCRYPTION_KEY=state["cipher_key"])
+              deps = get_deps()
+              if phase == "baseline":
+                  document = starter.definition(slug="ci-history", title="Histórico sintético")
+                  document["examples"]["answers"]["email"] = "history@example.test"
+                  import_definition(deps, json.dumps(document), actor="ci", contact_confirmed=True)
+                  spec = deps.forms.current("ci-history")
+                  with deps.sessions.begin() as session:
+                      accepted = accept_submission(session, spec, SubmissionIn(answers=document["examples"]["answers"],
+                          consent={"privacy": True, "text_version": spec.consent_text_version}),
+                          idempotency_key="ci-history", signer=deps.signer, link_ttl=deps.link_ttl, limits=deps.submission_limits)
+                      job_id, token = accepted.job.id, accepted.token
+                  with deps.sessions.begin() as session:
+                      jobs.claim(session, job_id, 1, "ci-synthetic")
+                  plan_id, _ = pipeline.generate_plan(deps, job_id, 1)
+                  artifact_id, _ = pipeline.render_pdf(deps, job_id, 1, plan_id)
+                  pipeline.finalize(deps, job_id, 1, artifact_id)
+                  with deps.sessions() as session:
+                      from app.migrations.contracts import SIGNATURES
+                      state.update(history=business_snapshot(session), history_job=str(job_id), history_token=token,
+                          history_artifact=str(artifact_id), signatures={revision: hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest() for revision, value in SIGNATURES.items()})
+                  persist(state_path, state)
+                  return
+              from app.deployment_contract import DeploymentContractError, assert_contract
+              from app.migrations.compatibility import validate_database
+              from app.migrations.contracts import SIGNATURES
+              with deps.sessions() as session:
+                  assert validate_database(session.connection(), SIGNATURES) == "0017_continuation_release"
+                  assert all(hashlib.sha256(json.dumps(SIGNATURES[revision], sort_keys=True).encode()).hexdigest() == digest for revision, digest in state["signatures"].items())
+                  job = session.get_one(Job, UUID(state["history_job"]))
+                  deps.signer.verify(state["history_token"], job)
+                  artifact = session.get_one(Artifact, UUID(state["history_artifact"]))
+                  assert hashlib.sha256(deps.storage.get(artifact.storage_key)).hexdigest() == artifact.sha256
+                  # Conserve cada linha original, inclusive definição/fingerprint, assinaturas e retenção.
+                  current = business_snapshot(session)
+                  for table, rows in state["history"].items():
+                      by_id = {str(row["id"]): row for row in current[table]}
+                      assert all(by_id[str(row["id"])] == row for row in rows)
+                  if phase == "blocked":
+                      row = session.execute(sa.text("SELECT minimum_contract,phase,epoch,evidence,attested_at FROM deployment_contract WHERE id=1")).one()
+                      assert tuple(row) == (2, "blocked", None, {}, None)
+                      try:
+                          assert_contract(session, required=2)
+                      except DeploymentContractError:
+                          return
+                      raise AssertionError
+                  assert_contract(session, required=2)
+              import httpx
+              server = subprocess.Popen([sys.executable, "-m", "uvicorn", "app.api.main:app", "--host", "127.0.0.1",
+                  "--port", "18080", "--no-access-log", "--log-level", "critical"], cwd="/app",
+                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+              try:
+                  with httpx.Client(base_url="http://127.0.0.1:18080", timeout=20, trust_env=False) as client:
+                      deadline = time.monotonic() + 60
+                      while True:
+                          if server.poll() is not None:
+                              raise AssertionError
+                          try:
+                              if client.get("/readyz").status_code == 200:
+                                  break
+                          except httpx.HTTPError:
+                              pass
+                          if time.monotonic() >= deadline:
+                              raise AssertionError
+                          time.sleep(0.2)
+                      if phase == "create":
+                          from app import handoff_receivers, integration_credentials
+                          from app.admin.api import keys
+                          from app.forms import drafts
+                          from app.handoff_types import CreateCredential, SaveReceiver, SetReceiverEnabled
+                          now = datetime.now(UTC)
+                          drafts.create(deps, slug="ci-handoff", title="Captura sintética", generation="none", actor="ci")
+                          with deps.sessions.begin() as session:
+                              receiver = handoff_receivers.save_receiver(session, "ci-handoff", command=SaveReceiver(
+                                  expected_version="0", name="Receptor sintético", entry_url="https://example.test/continue",
+                                  reference_ttl_seconds=3600, confirm=True), actor="ci", now=now)
+                              credential = integration_credentials.create_credential(session, "ci-handoff", command=CreateCredential(
+                                  name="CI", receiver_revision=receiver.revision, expected_receiver_version=receiver.version,
+                                  expires_at=None, idempotency_key=uuid4(), confirm=True), actor="ci", now=now)
+                              handoff_receivers.set_receiver_enabled(session, "ci-handoff", command=SetReceiverEnabled(
+                                  expected_version=receiver.version, enabled=True, confirm=True), actor="ci", cipher=deps.cipher, now=now)
+                              draft = drafts.load(session, "ci-handoff")
+                          document = dict(draft.document)
+                          document["examples"]["answers"]["email"] = "capture@example.test"
+                          document["completion"] = {"mode": "redirect", "url": receiver.entry_url,
+                              "handoff": {"receiver_id": str(receiver.id), "receiver_revision": receiver.revision}}
+                          saved = drafts.save_document(deps, "ci-handoff", document, actor="ci", expected=draft.token)
+                          drafts.publish(deps, "ci-handoff", actor="ci", note="Prova sintética CI", expected=saved.token, contact_confirmed=True)
+                          spec = deps.forms.current("ci-handoff")
+                          state.update(service_secret=credential.secret.get_secret_value(), capture_body={"answers": document["examples"]["answers"],
+                              "consent": {"privacy": True, "text_version": spec.consent_text_version}})
+                          document = starter.definition(slug="ci-manual", title="Plano sintético")
+                          document["examples"]["answers"]["email"] = "manual@example.test"
+                          document["release"] = {"mode": "manual"}
+                          import_definition(deps, json.dumps(document), actor="ci", contact_confirmed=True)
+                          spec = deps.forms.current("ci-manual")
+                          with deps.sessions.begin() as session:
+                              accepted = accept_submission(session, spec, SubmissionIn(answers=document["examples"]["answers"],
+                                  consent={"privacy": True, "text_version": spec.consent_text_version}), idempotency_key="ci-manual",
+                                  signer=deps.signer, link_ttl=deps.link_ttl, limits=deps.submission_limits)
+                              state.update(manual_job=str(accepted.job.id), public_id=accepted.job.public_id, pdf_token=accepted.token)
+                              admin_key = keys.create(session, name="ci-proof", role="total", actor="ci", expires_at=None, now=now)
+                              state["admin_key"] = admin_key.key
+                          with deps.sessions.begin() as session:
+                              jobs.claim(session, UUID(state["manual_job"]), 1, "ci-synthetic")
+                          plan_id, _ = pipeline.generate_plan(deps, UUID(state["manual_job"]), 1)
+                          artifact_id, _ = pipeline.render_pdf(deps, UUID(state["manual_job"]), 1, plan_id)
+                          pipeline.finalize(deps, UUID(state["manual_job"]), 1, artifact_id)
+                          state["release_command"] = {"expected_attempt": 1, "expected_artifact_id": str(artifact_id),
+                              "expected_form_version_number": 1, "expected_release_version": 0, "idempotency_key": str(uuid4()),
+                              "mode": "alternative", "reason_code": "alternative_channel", "confirm": True}
+                      response = client.post("/v1/forms/ci-handoff/submissions", json=state["capture_body"], headers={"Idempotency-Key": "ci-handoff"})
+                      assert response.status_code == 202
+                      capture = response.json()
+                      assert capture["kind"] == "capture" and capture["completion"]["handoff_status"] == "ready"
+                      url = capture["completion"]["url"]
+                      if phase == "return":
+                          assert capture["replay"] and url == state["handoff_url"]
+                      state["handoff_url"] = url
+                      assert client.post("/integrations/v1/handoffs/resolve", content=b"{").status_code == 401
+                      resolved = client.post("/integrations/v1/handoffs/resolve", json={"reference": url.split("leadkit_ref=")[1]},
+                          headers={"Authorization": "Bearer " + state["service_secret"]})
+                      assert resolved.status_code == 200 and resolved.json()["submission_id"] == capture["submission_id"]
+                      assert set(resolved.json()) == {"schema_version", "reference_id", "submission_id", "form_slug", "form_version_number",
+                          "generation", "purpose", "receiver_id", "receiver_revision", "projection", "submitted_at", "expires_at"}
+                      auth = {"Authorization": "Bearer " + state["pdf_token"]}
+                      pdf_path = "/v1/jobs/" + state["public_id"] + "/pdf"
+                      if phase == "create":
+                          assert client.get(pdf_path, headers=auth).status_code == 403
+                      with deps.sessions() as session:
+                          job = session.get_one(Job, UUID(state["manual_job"]))
+                          clocks = (job.updated_at, job.expires_at)
+                      release = client.post("/admin/api/v1/jobs/" + state["public_id"] + "/release", json=state["release_command"],
+                          headers={"Authorization": "Bearer " + state["admin_key"]})
+                      assert release.status_code == 200
+                      body = release.json()
+                      assert body["notification_decision"] == "no_participant_channel" and not body["launched"]
+                      assert body["replay"] == (phase == "return")
+                      if phase == "return":
+                          assert body["release_id"] == state["release_id"]
+                      state["release_id"] = body["release_id"]
+                      pdf = client.get(pdf_path, headers=auth)
+                      assert pdf.status_code == 200 and pdf.content.startswith(b"%PDF")
+                      with deps.sessions() as session:
+                          job = session.get_one(Job, UUID(state["manual_job"]))
+                          assert (job.updated_at, job.expires_at) == clocks
+                      persist(state_path, state)
+              finally:
+                  server.terminate()
+                  try:
+                      server.wait(timeout=10)
+                  except subprocess.TimeoutExpired:
+                      server.kill()
+                      server.wait(timeout=10)
+
+
+          phase = sys.argv[1] if len(sys.argv) == 2 and sys.argv[1] in PHASES else "invalid"
+          try:
+              assert phase in PHASES
+              run(phase, Path("/proof"))
+          except Exception:
+              print(json.dumps({"scenario": phase, "result": "failed"}))
+              raise SystemExit(1) from None
+          print(json.dumps({"scenario": phase, "result": "passed", "checks": 1}))
+          PYPROBE
+          chmod 600 "$RUNNER_TEMP/continuation-probe.py"
+
       - name: Rehearse real pre-projection bootstrap and forward recovery
         run: |
           umask 077
@@ -416,8 +641,16 @@ jobs:
             exit "$failure_status"
           }
           trap 'bootstrap_error "$?" "$LINENO"' ERR
-          old_sha=7e199a5f0e2a6cf538f99d486cef0cd9f21bc783
-          old_image=leadkit:compat-old-7e
+          case "${CI_ADOPTION_BASELINE:-pre-projection}" in
+            pre-projection)
+              old_sha=7e199a5f0e2a6cf538f99d486cef0cd9f21bc783
+              old_schema=0015_capture_delivery ;;
+            contract-one)
+              old_sha=365f8bf2dc94dbe8894020ed5198fe0142a36ab2
+              old_schema=0016_plan_audiences ;;
+            *) exit 1 ;;
+          esac
+          old_image="leadkit:compat-old-${old_sha:0:8}"
           compat=leadkit-compat
           folder="$RUNNER_TEMP/swarm-compat"
           source="$RUNNER_TEMP/source-compat-old"
@@ -449,6 +682,8 @@ jobs:
               "PUBLIC_BASE_URL": "https://compat.ci.test",
               "DATABASE_URL": urlunsplit((url.scheme, f"{credentials}@{stack}_db:{url.port or 5432}", url.path, url.query, url.fragment)),
               "HATCHET_CLIENT_NAMESPACE": "ci-compat-",
+              # Somente a stack descartável: nenhum cron pode disparar geração paga no ensaio.
+              "RECONCILE_CRON": "", "RETENTION_CRON": "",
           }
           for name, value in changes.items():
               if re.search(rf"^{name}=", text, flags=re.M):
@@ -458,12 +693,38 @@ jobs:
           path.write_text(text)
           PY
           chmod 600 "$folder/app.env" "$folder/db.env"
+          mkdir -p "$folder/proof"
+          probe() {
+            local identity="$1" phase="$2"
+            [[ "$identity" =~ ^sha256:[a-f0-9]{64}$ ]]
+            docker run --rm --user "$(id -u):$(id -g)" --workdir /app \
+              --network "${compat}_internal" --env-file "$folder/app.env" \
+              -v "$RUNNER_TEMP/continuation-probe.py:/ci-probe.py:ro" \
+              -v "$folder/proof:/proof" "$identity" python -I /ci-probe.py "$phase"
+          }
           cleanup_compat() {
+            # Só remover volumes depois da prova positiva de saída do helper existente.
+            if ! python3 - "$folder" "$compat" <<'PYCLEAN'
+          import sys
+          sys.path.insert(0, sys.argv[1])
+          from rollout import Rollout
+          try:
+              rollout = Rollout(sys.argv[1], "", sys.argv[2], False)
+              rollout.node = rollout.docker("info", "--format", "{{.Swarm.NodeID}}").stdout.strip()
+              rollout.quiesce()
+          except Exception:
+              raise SystemExit(1) from None
+          PYCLEAN
+            then
+              echo '{"stage":"cleanup","result":"exit_unproved"}'
+              return 1
+            fi
             docker stack rm "$compat" >/dev/null 2>&1 || true
             for _ in $(seq 1 60); do
               if ! docker network inspect "${compat}_internal" >/dev/null 2>&1; then break; fi
               sleep 2
             done
+            if docker network inspect "${compat}_internal" >/dev/null 2>&1; then return 1; fi
             docker volume rm "${compat}_pgdata" >/dev/null 2>&1 || true
           }
           trap cleanup_compat EXIT
@@ -508,12 +769,19 @@ jobs:
           PY
             exit "$migration_exit"
           fi
-          test "$(psql_compat 'select version_num from alembic_version')" = 0015_capture_delivery
+          test "$(psql_compat 'select version_num from alembic_version')" = "$old_schema"
           IMAGE="$old_image" STACK="$compat" DOMAIN=compat.ci.test \
             docker stack deploy --detach=false --resolve-image never -c stack.yaml "$compat"
+          if [ "${CI_ADOPTION_BASELINE:-pre-projection}" = contract-one ]; then
+            # A imagem pública1 confirma seu próprio contrato antes de qualquer DDL2.
+            env -u DOMAIN -u STACK IMAGE="$old_image" ./deploy.sh > baseline-one.log 2>&1
+            test "$(psql_compat "select minimum_contract || ':' || phase from deployment_contract where id=1")" = 1:verified
+          fi
+          old_identity=$(docker image inspect --format '{{.Id}}' "$old_image")
+          probe "$old_identity" baseline
           : > old-containers
           # API e worker históricos reais, ligados somente ao Hatchet Lite local do runner.
-          # Não se criam pedidos, nem chamadas LLM/S3/webhook ou tasks com dados de lead.
+          # Os dados sintéticos anteriores usam somente adaptadores locais; sem LLM/S3/webhook externos.
           for role in api worker; do
             bootstrap_role="$role"
             task=$(docker service ps -q --filter desired-state=running "${compat}_$role" | head -n 1)
@@ -571,7 +839,8 @@ jobs:
                 esac ;;
             esac
             # Uma falha do checkpoint não substitui a operação ou seu exit code.
-            { printf '%s\n' "$operation" > "$CI_COMPAT_FOLDER/last-docker-operation"; } 2>/dev/null || true
+            { printf '%s\n' "$operation" > "$CI_COMPAT_FOLDER/last-docker-operation";
+              printf '%s\n' "$operation" >> "$CI_COMPAT_FOLDER/operation-trace"; } 2>/dev/null || true
           }
           observed_docker() {
             record_operation "$@"
@@ -655,7 +924,7 @@ jobs:
               ("remote_task", "Há task em outro nó ou nó desconhecido"),
               ("docker_operation", "Docker recusou uma operação"),
               ("docker_unavailable", "Docker indisponível ou operação sem conclusão"),
-              ("image_contract", "A imagem não comprova contrato1"),
+              ("image_contract", "A imagem não comprova contrato2"),
               ("database_contract", "O banco não confirmou o contrato"),
               ("pause_unconfirmed", "não ficou pausado; não execute a migration"),
               ("migration_failure", "as migrations falharam"),
@@ -677,23 +946,40 @@ jobs:
           test -s before-ddl
           test -e ddl-committed-launcher-failed
           cat before-ddl
-          test "$(psql_compat 'select version_num from alembic_version')" = 0016_plan_audiences
-          test "$(psql_compat "select minimum_contract || ':' || phase from deployment_contract where id=1")" = 1:blocked
+          test "$(psql_compat 'select version_num from alembic_version')" = 0017_continuation_release
+          test "$(psql_compat "select minimum_contract || ':' || phase from deployment_contract where id=1")" = 2:blocked
           for role in api worker; do
             bootstrap_role="$role"
             test "$(docker service inspect --format '{{.Spec.Mode.Replicated.Replicas}}' "${compat}_$role")" = 0
             test "$(docker service inspect --format '{{.PreviousSpec.Mode.Replicated.Replicas}}' "${compat}_$role")" = 0
           done
           bootstrap_role=none
+          candidate=$(docker image inspect --format '{{.Id}}' gerador-planos:ci)
+          probe "$candidate" blocked
           versions() { docker service inspect --format '{{.ID}} {{.Version.Index}}' "${compat}_api" "${compat}_worker"; }
           before=$(versions)
-          if env -u DOMAIN -u STACK IMAGE="$old_image" ./deploy.sh > refuse-old.log 2>&1; then
-            echo 'Imagem antiga não pode voltar após0016'; exit 1
+          contract_before=$(psql_compat "select md5(row_to_json(d)::text) from deployment_contract d where id=1")
+          : > "$folder/operation-trace"
+          if env -u DOMAIN -u STACK PATH="$folder/bin:$PATH" IMAGE="$old_image" ./deploy.sh > refuse-old.log 2>&1; then
+            echo 'Imagem antiga não pode voltar após0017'; exit 1
           fi
           test "$(versions)" = "$before"
-          test "$(psql_compat "select minimum_contract || ':' || phase from deployment_contract where id=1")" = 1:blocked
+          test "$(psql_compat "select minimum_contract || ':' || phase from deployment_contract where id=1")" = 2:blocked
+          # O rollback explícito também recusa1 antes de tag, begin, DDL ou serviço.
+          if env -u DOMAIN -u STACK PATH="$folder/bin:$PATH" ROLLBACK=1 IMAGE="$old_image" ./deploy.sh > refuse-old-rollback.log 2>&1; then exit 1; fi
+          test "$(versions)" = "$before"
+          test "$(psql_compat "select md5(row_to_json(d)::text) from deployment_contract d where id=1")" = "$contract_before"
+          python3 - "$folder/operation-trace" <<'PYNOMUTATE'
+          import sys
+          from pathlib import Path
+          allowed = {"image.inspect", "run.capability", "info", "network.inspect", "run.status",
+                     "service.inspect", "service.ls", "service.ps", "container.inspect", "node.inspect"}
+          observed = Path(sys.argv[1]).read_text().splitlines()
+          if not observed or any(operation not in allowed for operation in observed):
+              raise SystemExit(1)
+          PYNOMUTATE
           env -u DOMAIN -u STACK IMAGE=gerador-planos:ci ./deploy.sh
-          test "$(psql_compat "select minimum_contract || ':' || phase from deployment_contract where id=1")" = 1:verified
+          test "$(psql_compat "select minimum_contract || ':' || phase from deployment_contract where id=1")" = 2:verified
           candidate=$(docker image inspect --format '{{.Id}}' gerador-planos:ci)
           for role in api worker; do
             bootstrap_role="$role"
@@ -708,7 +994,24 @@ jobs:
           while read -r container; do
             "$folder/bin/docker" ci-prove-stopped "$container"
           done < old-containers
-          echo 'Bootstrap real: saída antesDDL, falha apósDDL, recusaold0 e retomadacap1 comprovadas'
+          probe "$candidate" create
+          # Imagem distinta de mesmo código2: atualização e rollback reais, sem target1 apósDDL.
+          docker build --quiet --tag leadkit:compat-return - <<'DOCKERFILE'
+          FROM gerador-planos:ci
+          LABEL ci.continuation-return="compatible-two"
+          DOCKERFILE
+          env -u DOMAIN -u STACK IMAGE=leadkit:compat-return ./deploy.sh
+          env -u DOMAIN -u STACK ROLLBACK=1 IMAGE="$candidate" ./deploy.sh
+          test "$(psql_compat "select minimum_contract || ':' || phase from deployment_contract where id=1")" = 2:verified
+          for role in api worker; do
+            for spec in Spec PreviousSpec; do
+              reference=$(docker service inspect --format "{{.$spec.TaskTemplate.ContainerSpec.Image}}" "${compat}_$role")
+              identity=$(docker image inspect --format '{{.Id}}' "$reference")
+              docker run --rm --network none "$identity" python -m app.deployment_contract capability | python3 -c 'import json,sys; assert json.load(sys.stdin) == {"contract":2}'
+              probe "$identity" return
+            done
+          done
+          echo 'Bootstrap real: saída antesDDL, falha apósDDL, recusa de retorno antigo e recuperação2 comprovadas'
 
       - name: Check that two stack names never share a Traefik name
         run: |
@@ -1063,7 +1366,7 @@ jobs:
                           db = {"task": task, "container": cid, "started": item["started"], "restarts": item["restarts"]}
               if mode in {"verified", "snapshot"}:
                   query = "select minimum_contract || ':' || phase from deployment_contract where id=1"
-                  if docker("exec", db["container"], "sh", "-c", 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "$1"', "sh", query) != "1:verified": raise ValueError
+                  if docker("exec", db["container"], "sh", "-c", 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "$1"', "sh", query) != "2:verified": raise ValueError
               print(json.dumps(sorted(fleet, key=lambda row: (row["role"], row["task"])) if mode == "snapshot" else db, sort_keys=True))
           except Exception:
               print("A frota não confirmou identidade, saúde ou contrato do ensaio.", file=sys.stderr)
@@ -1182,7 +1485,7 @@ jobs:
           grep -F 'revisão incompatível' "$RUNNER_TEMP/back-sem-rollback.log"
           grep -F 'a imagem não foi atualizada' "$RUNNER_TEMP/back-sem-rollback.log"
           test "$(versions)" = "$before"
-          test "$(psql_db "select minimum_contract || ':' || phase from deployment_contract where id=1")" = 1:blocked
+          test "$(psql_db "select minimum_contract || ':' || phase from deployment_contract where id=1")" = 2:blocked
           ROLLBACK=1 IMAGE=gerador-planos:ci ./deploy.sh > "$RUNNER_TEMP/back.log" 2>&1 || { cat "$RUNNER_TEMP/back.log"; exit 1; }
           cat "$RUNNER_TEMP/back.log"
           grep -F 'sem migrations' "$RUNNER_TEMP/back.log"
@@ -1550,6 +1853,43 @@ jobs:
           echo "::group::hatchet-lite"
           docker logs --tail 200 hatchet-lite 2>&1 || true
           echo "::endgroup::"
+
+      - name: Clean isolated adoption resources after proven exit
+        if: always()
+        run: |
+          folder="$RUNNER_TEMP/swarm-compat"
+          compat=leadkit-compat
+          if [ ! -f "$folder/rollout.py" ]; then exit 0; fi
+          python3 - "$folder" "$compat" <<'PYCLEAN'
+          import sys
+          sys.path.insert(0, sys.argv[1])
+          from rollout import Rollout
+          try:
+              rollout = Rollout(sys.argv[1], "", sys.argv[2], False)
+              rollout.node = rollout.docker("info", "--format", "{{.Swarm.NodeID}}").stdout.strip()
+              rollout.quiesce()
+          except Exception:
+              raise SystemExit(1) from None
+          PYCLEAN
+          docker stack rm "$compat" >/dev/null 2>&1 || true
+          for _ in $(seq 1 60); do
+            if ! docker network inspect "${compat}_internal" >/dev/null 2>&1; then break; fi
+            sleep 2
+          done
+          if docker network inspect "${compat}_internal" >/dev/null 2>&1; then exit 1; fi
+          if docker volume inspect "${compat}_pgdata" >/dev/null 2>&1; then
+            docker volume rm "${compat}_pgdata" >/dev/null
+          fi
+          python3 - "$folder" "$RUNNER_TEMP/continuation-probe.py" <<'PY'
+          import shutil
+          import sys
+          from pathlib import Path
+          root = Path(sys.argv[1])
+          shutil.rmtree(root / "proof", ignore_errors=True)
+          for path in (root / "app.env", root / "db.env", Path(sys.argv[2])):
+              path.unlink(missing_ok=True)
+          print('{"stage":"cleanup","result":"proved"}')
+          PY
 
   validation:
     if: always()
