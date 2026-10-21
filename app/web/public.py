@@ -595,6 +595,8 @@ def download_pdf(public_id: str, request: Request) -> Response:
             filename=f"plano-{job.public_id}.pdf",
             access=ParticipantPdfAccess(job.id, job.attempt, job.token_version),
         )
+    except TokenError:
+        return _page(request, "expired", 410, job=job, days=deps.settings.link_ttl_days)
     except PlanHeld:
         return _page(request, "plan_held", 403, job=job)
     except (ReleaseRefused, DeploymentContractError):

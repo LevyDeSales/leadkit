@@ -519,15 +519,18 @@ def build_payload(session: Any, deps: Deps, delivery: Delivery) -> dict[str, Any
                 receiver_id=receiver.id,
                 receiver_version=receiver.version,
             )
+    direct_ttl = min(
+        int(DIRECT_URL_TTL.total_seconds()),
+        max(0, int((job.expires_at - utcnow()).total_seconds())),
+    )
     direct_url = (
         None  # a retenção já apagou o arquivo (reenvio feito muito depois)
-        if artifact.version != job.attempt or not current_pdf(session, deps.storage, job).available
+        if direct_ttl < 1
+        or artifact.version != job.attempt
+        or not current_pdf(session, deps.storage, job).available
         else deps.storage.presigned_url(
             artifact.storage_key,
-            ttl_seconds=min(
-                int(DIRECT_URL_TTL.total_seconds()),
-                max(1, int((job.expires_at - utcnow()).total_seconds())),
-            ),
+            ttl_seconds=direct_ttl,
             filename=f"plano-{job.public_id}.pdf",
         )
     )
@@ -546,7 +549,7 @@ def build_payload(session: Any, deps: Deps, delivery: Delivery) -> dict[str, Any
             "url": links["pdf_url"],
             "expires_at": job.expires_at.isoformat(),
             "direct_url": direct_url,
-            "direct_url_expires_in": int(DIRECT_URL_TTL.total_seconds()) if direct_url else None,
+            "direct_url_expires_in": direct_ttl if direct_url else None,
             "sha256": artifact.sha256,
             "size_bytes": artifact.byte_size,
         },

@@ -2607,10 +2607,10 @@ async def release_job_pdf(
             release_form=fields,
             status_code=error.status,
         )
-    session.flash = (
-        "ok",
-        "Acesso liberado; notificação não enviada."
-        if done.commit.notification_decision != "outbox"
-        else "Acesso liberado; notificação registrada para envio.",
-    )
+    messages = {
+        "no_participant_channel": "Acesso liberado; notificação não enviada.",
+        "event_not_selected": "Acesso liberado; a comunicação de conclusão já autorizada foi mantida.",
+        "outbox": "Acesso liberado; notificação registrada para envio.",
+    }
+    session.flash = ("ok", messages[done.commit.notification_decision])
     return RedirectResponse(f"/admin/jobs/{public_id}", status_code=303)

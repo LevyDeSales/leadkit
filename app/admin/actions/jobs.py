@@ -42,6 +42,7 @@ from app.internal_links import (
 from app.models import Artifact, Delivery, IntegrationSync, Job, utcnow
 from app.pdf_availability import artifact_availability, verified_content, verify_completion
 from app.plan_release import ReleaseCommit, ReleasePdfCommand, require_participant_access
+from app.tokens import TokenError
 
 logger = logging.getLogger(__name__)
 
@@ -130,9 +131,18 @@ def pdf_file(
             raise RetryableError(FailureCode.STORAGE_FAILED, "PDF indisponível ou não verificado")
         filename = filename or f"plano-{public_id}-v{artifact.version}.pdf"
         if signed_url:
+            ttl_seconds = SIGNED_URL_TTL_SECONDS
+            if not isinstance(access, AdminPdfAccess):
+                now = utcnow().timestamp()
+                deadline = job.expires_at.timestamp()
+                if isinstance(access, InternalPdfAccess):
+                    deadline = min(deadline, access.claims.expires_at)
+                ttl_seconds = min(ttl_seconds, int(deadline - now))
+                if ttl_seconds < 1:
+                    raise TokenError("expired")
             try:
                 url = deps.storage.presigned_url(
-                    artifact.storage_key, ttl_seconds=SIGNED_URL_TTL_SECONDS, filename=filename
+                    artifact.storage_key, ttl_seconds=ttl_seconds, filename=filename
                 )
             except Exception:  # noqa: BLE001 — fronteira de storage com erro seguro
                 raise RetryableError(
@@ -361,7 +371,12 @@ async def release_pdf(
             return tuple(
                 {"id": row.id, "event": row.event, "status": row.status}
                 for row in session.scalars(
-                    sa.select(Delivery).where(Delivery.release_id == committed.release_id)
+                    sa.select(Delivery).where(
+                        sa.or_(
+                            Delivery.release_id == committed.release_id,
+                            Delivery.id.in_(committed.delivery_ids),
+                        )
+                    )
                 )
             )
 

@@ -172,3 +172,81 @@ def test_internal_pdf_holds_receiver_authorization_until_bytes_are_read(
     assert results[0].content.startswith(b"%PDF")
     with pytest.raises(TokenError):
         pdf_file(deps, job.public_id, None, signed_url=False, access=InternalPdfAccess(claims))
+
+
+@pytest.mark.parametrize("access_kind", ["internal", "participant", "admin"])
+def test_signed_pdf_ttl_respects_bearer_deadline_but_preserves_admin_inspection(
+    deps, manual_pdf, monkeypatch, access_kind
+):
+    from datetime import timedelta
+    from urllib.parse import parse_qs, urlsplit
+
+    from test_plan_release import command_for
+
+    from app import destinations
+    from app.admin.actions.jobs import pdf_file
+    from app.internal_links import (
+        AdminPdfAccess,
+        InternalPdfAccess,
+        ParticipantPdfAccess,
+        internal_links,
+    )
+    from app.models import Artifact, Job
+    from app.plan_release import release_pdf
+
+    job_id, artifact_id = manual_pdf
+    with deps.sessions.begin() as session:
+        job = session.get_one(Job, job_id)
+        if access_kind == "participant":
+            release_pdf(
+                session, deps, job.public_id, actor="operadora", command=command_for(artifact_id)
+            )
+        job.expires_at = utcnow() + timedelta(seconds=40)
+        if access_kind == "internal":
+            receiver = destinations.save(
+                session,
+                deps.cipher,
+                form_slug="manual",
+                purpose="internal",
+                url="https://example.test/ttl",
+                actor="operadora",
+                expected_version=0,
+                production=False,
+                http_confirmed=False,
+            )
+            links = internal_links(
+                session,
+                deps,
+                job,
+                session.get_one(Artifact, artifact_id),
+                receiver_kind="webhook",
+                receiver_id=receiver.destination.id,
+                receiver_version=1,
+            )
+            token = parse_qs(urlsplit(links["pdf_url"]).query)["k"][0]
+            claims = InternalLinkSigner(deps.signer.secrets_).verify(token, now=utcnow())
+            claims = claims.model_copy(
+                update={"expires_at": int((utcnow() + timedelta(seconds=20)).timestamp())}
+            )
+            access = InternalPdfAccess(claims)
+            deadline = claims.expires_at
+        elif access_kind == "participant":
+            access = ParticipantPdfAccess(job.id, job.attempt, job.token_version)
+            deadline = job.expires_at.timestamp()
+        else:
+            access = AdminPdfAccess()
+            deadline = None
+    observed = []
+
+    def sign(key, *, ttl_seconds, filename):
+        observed.append((ttl_seconds, utcnow().timestamp()))
+        return "https://storage.example.test/synthetic"
+
+    monkeypatch.setattr(deps.storage, "presigned_url", sign)
+    assert pdf_file(deps, job.public_id, None, signed_url=True, access=access).url
+    assert len(observed) == 1
+    ttl, issued_at = observed[0]
+    if deadline is None:
+        assert ttl == 300
+    else:
+        assert 0 < ttl <= deadline - issued_at

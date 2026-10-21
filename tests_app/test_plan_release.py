@@ -196,7 +196,7 @@ def test_release_outbox_uses_distinct_fact_and_unblocks_completion(deps, manual_
         job = session.get_one(Job, job_id)
         first = release_pdf(session, deps, job.public_id, actor="operadora", command=command)
         assert first.notification_decision == "outbox"
-        assert len(first.delivery_ids) == 1
+        assert len(first.delivery_ids) == 2
     pipeline.deliver(deps, first.delivery_ids[0])
     pipeline.deliver(deps, completed_id)
     assert [call[0] for call in deps.webhook.calls] == ["plano.liberado", "plano.concluido"]
@@ -449,3 +449,134 @@ def test_database_preserves_legacy_uniqueness_and_bidirectional_release_channel(
                 )
             )
             session.flush()
+
+
+def test_direct_url_metadata_reports_the_actual_remaining_signature_ttl(
+    deps, manual_pdf, monkeypatch
+):
+    from datetime import timedelta
+
+    from app import destinations
+    from app.models import Delivery, utcnow
+
+    job_id, artifact_id = manual_pdf
+    observed = []
+
+    def sign(key, *, ttl_seconds, filename):
+        observed.append(ttl_seconds)
+        return "https://storage.example.test/synthetic"
+
+    monkeypatch.setattr(deps.storage, "presigned_url", sign)
+    with deps.sessions.begin() as session:
+        target = destinations.save(
+            session,
+            deps.cipher,
+            form_slug="manual",
+            purpose="internal",
+            url="https://example.test/internal",
+            actor="operadora",
+            expected_version=0,
+            production=False,
+            http_confirmed=False,
+        )
+        job = session.get_one(Job, job_id)
+        job.expires_at = utcnow() + timedelta(seconds=40)
+        delivery = Delivery(
+            job_id=job_id,
+            artifact_id=artifact_id,
+            webhook_destination_id=target.destination.id,
+            config_version=1,
+            audience="internal",
+            authorization_origin="explicit",
+            authorized_attempt=1,
+            destination="webhook",
+            event="plano.concluido",
+        )
+        session.add(delivery)
+        session.flush()
+        payload = pipeline.build_payload(session, deps, delivery)
+    assert len(observed) == 1
+    assert payload["pdf"]["direct_url_expires_in"] == observed[0]
+    assert 0 < observed[0] <= 40
+
+
+@pytest.mark.parametrize("manual_pdf", [["plano.concluido"]], indirect=True)
+def test_release_dispatches_original_completion_once_without_late_adoption(
+    deps, manual_pdf, monkeypatch
+):
+    import asyncio
+
+    from app.admin import launching
+    from app.admin.actions import jobs as actions
+    from app.models import Delivery
+
+    job_id, artifact_id = manual_pdf
+    with deps.sessions() as session:
+        public_id = session.get_one(Job, job_id).public_id
+        completed_id = session.scalars(
+            sa.select(Delivery.id).where(Delivery.job_id == job_id)
+        ).one()
+    called = []
+
+    async def launch(deps, delivery_id):
+        called.append(delivery_id)
+        return True
+
+    monkeypatch.setattr(launching, "launch_delivery", launch)
+    command = command_for(artifact_id)
+    released = asyncio.run(
+        actions.release_pdf(deps, None, public_id, actor="operadora", command=command)
+    )
+    assert released.commit.notification_decision == "event_not_selected"
+    assert called == [completed_id] and released.launched
+    assert [row["event"] for row in released.notifications] == ["plano.concluido"]
+    replay = asyncio.run(
+        actions.release_pdf(deps, None, public_id, actor="operadora", command=command)
+    )
+    assert replay.commit.replay and not replay.launched
+    assert called == [completed_id]
+
+
+@pytest.mark.parametrize("manual_pdf", [["plano.concluido"]], indirect=True)
+@pytest.mark.parametrize("blocked", ["held", "obsolete", "expired"])
+def test_reconciler_page_advances_past_ineligible_intents_without_changing_them(
+    deps, manual_pdf, blocked
+):
+    from datetime import timedelta
+
+    from test_integrations import completed_job
+
+    from app.models import Delivery, utcnow
+
+    held_job_id, artifact_id = manual_pdf
+    eligible_job = completed_job(deps, key="eligible-after-blocked")
+    with deps.sessions.begin() as session:
+        held_job = session.get_one(Job, held_job_id)
+        if blocked == "obsolete":
+            release_pdf(
+                session,
+                deps,
+                held_job.public_id,
+                actor="operadora",
+                command=command_for(artifact_id),
+            )
+            jobs.reprocess(
+                session,
+                held_job_id,
+                actor="operadora",
+                reason="Nova tentativa sintética",
+                expected_attempt=1,
+            )
+        elif blocked == "expired":
+            held_job.expires_at = utcnow() - timedelta(seconds=1)
+        held = session.scalars(sa.select(Delivery).where(Delivery.job_id == held_job_id)).one()
+        eligible = session.scalars(
+            sa.select(Delivery).where(Delivery.job_id == eligible_job.id)
+        ).one()
+        held.created_at = utcnow() - timedelta(minutes=10)
+        eligible.created_at = utcnow() - timedelta(minutes=5)
+        held_id, expected_id = held.id, eligible.id
+    with deps.sessions.begin() as session:
+        rows = jobs.unlaunched_deliveries(session, older_than=timedelta(seconds=0), limit=1)
+        assert [row.id for row in rows] == [expected_id]
+        assert session.get_one(Delivery, held_id).status == "pending"
