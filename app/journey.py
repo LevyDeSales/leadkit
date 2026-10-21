@@ -5,7 +5,7 @@ import json
 from datetime import timedelta
 
 import sqlalchemy as sa
-from sqlalchemy.orm import undefer
+from sqlalchemy.orm import load_only, undefer
 
 from app import event_sources
 from app.admin.api.common import decode_keyset, encode_keyset
@@ -23,6 +23,7 @@ from app.journey_types import (
     SubmissionJourney,
 )
 from app.models import (
+    CaptureDelivery,
     Delivery,
     EventCredential,
     HandoffReceiver,
@@ -178,10 +179,33 @@ def ingest_event(session, principal, body, *, now):
 
 
 def reference_for_submission(session, submission_id, *, lock=False):
-    submission = session.get(Submission, submission_id, with_for_update=lock)
+    query = (
+        sa.select(Submission)
+        .where(Submission.id == submission_id)
+        .options(
+            load_only(
+                Submission.id,
+                Submission.form_slug,
+                Submission.created_at,
+                Submission.form_version_number,
+            )
+        )
+    )
+    submission = session.scalar(query.with_for_update() if lock else query)
     if submission is None:
         raise HandoffError("not_found", status=404)
-    query = sa.select(HandoffReference).where(HandoffReference.submission_id == submission_id)
+    query = (
+        sa.select(HandoffReference)
+        .where(HandoffReference.submission_id == submission_id)
+        .options(
+            load_only(
+                HandoffReference.id,
+                HandoffReference.submission_id,
+                HandoffReference.version,
+                HandoffReference.revoked_at,
+            )
+        )
+    )
     reference = session.scalar(query.with_for_update() if lock else query)
     return submission, reference
 
@@ -238,7 +262,15 @@ def event_info(session, row, *, with_lead=False):
 
 def read_journey(session, submission_id, *, with_lead=False):
     submission, reference = reference_for_submission(session, submission_id)
-    job = session.scalar(sa.select(Job).where(Job.submission_id == submission.id))
+    job = session.scalar(
+        sa.select(Job)
+        .where(Job.submission_id == submission.id)
+        .options(
+            load_only(
+                Job.id, Job.submission_id, Job.attempt, Job.status, Job.created_at, Job.expires_at
+            )
+        )
+    )
     local = [LocalFact(type="submission", state="persisted", occurred_at=submission.created_at)]
     if job:
         from app.plan_release import release_snapshot
@@ -257,8 +289,10 @@ def read_journey(session, submission_id, *, with_lead=False):
                 type="generation", state=job.status, occurred_at=job.created_at, attempt=job.attempt
             )
         )
-        for release in session.scalars(
-            sa.select(PlanRelease).where(PlanRelease.job_id == job.id).order_by(PlanRelease.attempt)
+        for release in session.execute(
+            sa.select(PlanRelease.attempt, PlanRelease.occurred_at)
+            .where(PlanRelease.job_id == job.id)
+            .order_by(PlanRelease.attempt)
         ):
             local.append(
                 LocalFact(
@@ -268,8 +302,10 @@ def read_journey(session, submission_id, *, with_lead=False):
                     attempt=release.attempt,
                 )
             )
-        for delivery in session.scalars(
-            sa.select(Delivery).where(Delivery.job_id == job.id).order_by(Delivery.created_at)
+        for delivery in session.execute(
+            sa.select(Delivery.status, Delivery.created_at, Delivery.authorized_attempt)
+            .where(Delivery.job_id == job.id)
+            .order_by(Delivery.created_at)
         ):
             local.append(
                 LocalFact(
@@ -279,6 +315,16 @@ def read_journey(session, submission_id, *, with_lead=False):
                     attempt=delivery.authorized_attempt,
                 )
             )
+    for delivery in session.execute(
+        sa.select(CaptureDelivery.status, CaptureDelivery.created_at)
+        .where(CaptureDelivery.submission_id == submission.id)
+        .order_by(CaptureDelivery.created_at)
+    ):
+        local.append(
+            LocalFact(
+                type="capture_transport", state=delivery.status, occurred_at=delivery.created_at
+            )
+        )
     projected = []
     if reference:
         ranked = (

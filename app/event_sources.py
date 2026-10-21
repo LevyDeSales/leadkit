@@ -15,7 +15,7 @@ from app.handoff_types import HandoffError, confirmed, version_matches
 from app.integration_credentials import digest
 from app.integration_readiness import configuration_lock
 from app.journey_types import CreatedEventCredential, EventCredentialInfo, EventSourceInfo
-from app.models import AuditLog, EventCredential, EventSource, HandoffReceiver
+from app.models import AuditLog, EventCredential, EventSource, Form, HandoffReceiver
 
 PATTERN = re.compile(r"^lke_([a-f0-9]{32})_([A-Za-z0-9_-]{43})$")
 
@@ -80,6 +80,8 @@ def source_row(session, source_id, *, lock=False):
 
 
 def list_sources(session, slug):
+    if session.scalar(sa.select(Form.id).where(Form.slug == slug)) is None:
+        raise HandoffError("not_found", status=404)
     return [
         source_info(row)
         for row in session.scalars(

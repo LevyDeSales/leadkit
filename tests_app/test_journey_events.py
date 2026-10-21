@@ -1,9 +1,19 @@
 """Eventos declarados nas interfaces públicas, com PostgreSQL e dados sintéticos."""
 
+import copy
+from datetime import timedelta
+from uuid import UUID, uuid4
+
+import pytest
+import sqlalchemy as sa
 from admin_api_support import url_of
 from fastapi.testclient import TestClient
+from handoff_support import isolated_handoff_contract  # noqa: F401
+from test_handoffs import NOW, accept, configured
+from test_plan_release import manual_pdf as manual_pdf  # noqa: PLC0414
 
 from app.api.handoffs import create_integration_api
+from app.models import HandoffReceiver, HandoffReference
 
 
 def test_event_authentication_precedes_malformed_json():
@@ -17,13 +27,6 @@ def test_event_authentication_precedes_malformed_json():
 
 
 def test_paused_source_specific_credential_and_capture_ingestion(deps, api_client):
-    from uuid import uuid4
-
-    import sqlalchemy as sa
-    from test_handoffs import NOW, accept, configured
-
-    from app.models import HandoffReceiver, HandoffReference
-
     with deps.sessions.begin() as session:
         spec, _ = configured(session)
         accepted = accept(session, spec, deps)
@@ -102,18 +105,6 @@ def test_paused_source_specific_credential_and_capture_ingestion(deps, api_clien
     assert journey.json()["job"] is None
     assert "meeting-1" not in journey.text and "adapter-1" not in journey.text
     assert journey.json()["external_declared"][0]["starts_at"] == "2026-10-25T13:00:00Z"
-
-
-import copy
-from datetime import timedelta
-from uuid import UUID, uuid4
-
-import pytest
-import sqlalchemy as sa
-from handoff_support import isolated_handoff_contract  # noqa: F401
-from test_handoffs import NOW, accept, configured
-
-from app.models import HandoffReceiver, HandoffReference
 
 
 class SyntheticWorld(dict):
@@ -1018,3 +1009,157 @@ def test_credential_explicit_nullable_expiry_is_enforced_and_expired_key_is_refu
             },
         )
     assert expired.status_code == 401 and expired.json() == {"code": "invalid_credentials"}
+
+
+def test_withdrawal_before_snapshot_never_resurrects_older_revisions(world):
+    withdrawn = event(world, 3)
+    withdrawn.update(type="entity.withdrawn", data={"reason_code": "incorrect"})
+    withdrawn["evidence"]["kind"] = "operator_correction"
+    assert post(world, withdrawn).status_code == 201
+    for revision in (1, 2):
+        accepted = post(world, event(world, revision))
+        assert accepted.status_code == 201 and accepted.json()["projection_effect"] == "historical"
+    assert read(world)["external_declared"][0]["state"] == "withdrawn"
+    assert read(world)["external_declared"][0]["entity_revision"] == 3
+
+
+def test_other_form_reference_is_indistinguishable_from_missing_correlation(world, deps):
+    from app.models import Lead, Submission
+
+    with deps.sessions.begin() as session:
+        receiver = HandoffReceiver(
+            form_slug="demo",
+            name="Outro receptor sintético",
+            entry_url="https://example.test/other",
+            reference_ttl_seconds=3600,
+            created_by="teste",
+            updated_by="teste",
+        )
+        lead = Lead(email="outra@example.test")
+        session.add_all([receiver, lead])
+        session.flush()
+        submission = Submission(
+            lead_id=lead.id,
+            form_slug="demo",
+            form_version="synthetic",
+            form_version_number=1,
+            idempotency_key="other-form",
+            answers={},
+            consent={},
+        )
+        session.add(submission)
+        session.flush()
+        reference = HandoffReference(
+            submission_id=submission.id,
+            receiver_id=receiver.id,
+            receiver_revision=1,
+            entry_url=receiver.entry_url,
+            token_hash="synthetic-other-reference",
+            issuance_state="ready",
+            created_at=NOW,
+            expires_at=NOW + timedelta(hours=1),
+        )
+        session.add(reference)
+        session.flush()
+        reference_id = str(reference.id)
+    refused = post(world, {**event(world), "reference_id": reference_id})
+    missing = post(world, {**event(world), "reference_id": str(uuid4())})
+    assert refused.status_code == missing.status_code == 404
+    assert refused.json() == missing.json() == {"code": "correlation_unavailable"}
+
+
+def test_same_source_event_id_across_two_references_conflicts_concurrently(world, deps):
+    from concurrent.futures import ThreadPoolExecutor
+
+    with deps.sessions.begin() as session:
+        accepted = accept(session, world["spec"], deps, key="other-reference-concurrent")
+        reference = session.scalar(
+            sa.select(HandoffReference).where(
+                HandoffReference.submission_id == accepted.submission.id
+            )
+        )
+        other_id = str(reference.id)
+    bodies = [event(world), {**event(world), "reference_id": other_id}]
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda body: post(world, body), bodies))
+    assert sorted(response.status_code for response in results) == [201, 409]
+    assert next(response for response in results if response.status_code == 409).json() == {
+        "code": "event_conflict"
+    }
+
+
+def test_capture_transport_is_local_and_never_implies_participant_receipt(world, deps):
+    from app.models import CaptureDelivery, WebhookDestination
+
+    with deps.sessions.begin() as session:
+        destination = WebhookDestination(
+            form_slug="synthetic",
+            url="https://example.test/synthetic",
+            secret_sealed="synthetic-unusable",
+            purpose="internal",
+            purpose_origin="explicit",
+            created_by="teste",
+            updated_by="teste",
+        )
+        session.add(destination)
+        session.flush()
+        session.add(
+            CaptureDelivery(
+                submission_id=UUID(world["submission"]),
+                webhook_destination_id=destination.id,
+                config_version=1,
+                status="succeeded",
+                delivered_at=NOW,
+                created_at=NOW,
+            )
+        )
+    view = read(world)
+    assert view["job"] is None
+    assert any(
+        fact["type"] == "capture_transport"
+        and fact["state"] == "succeeded"
+        and fact["origin"] == "local"
+        for fact in view["local_facts"]
+    )
+    assert view["external_declared"] == []
+
+
+def test_journey_preserves_local_release_facts_without_external_declarations(
+    deps, api_client, manual_pdf
+):
+    from test_plan_release import command_for
+
+    from app.models import Job
+    from app.plan_release import release_pdf
+
+    job_id, artifact_id = manual_pdf
+    with deps.sessions.begin() as session:
+        job = session.get(Job, job_id)
+        submission_id, public_id = job.submission_id, job.public_id
+        release_pdf(session, deps, public_id, actor="operadora", command=command_for(artifact_id))
+    response = api_client("leitura").get(
+        url_of("get_submission_journey", submission_id=submission_id)
+    )
+    assert response.status_code == 200, response.text
+    facts = response.json()["local_facts"]
+    assert any(
+        fact["type"] == "plan_authorization"
+        and fact["state"] == "released"
+        and fact["attempt"] == 1
+        for fact in facts
+    )
+    assert response.json()["external_declared"] == [] and response.json()["reference_id"] is None
+
+
+def test_html_missing_resources_and_invalid_filters_are_safe_errors(world):
+    from test_admin import login
+
+    client = world["writer"]
+    assert login(client).status_code == 303
+    assert client.get("/admin/event-sources/" + str(uuid4())).status_code == 404
+    assert client.get("/admin/forms/missing-synthetic/event-sources").status_code == 404
+    assert client.get("/admin/submissions/" + str(uuid4()) + "/journey").status_code == 404
+    path = "/admin/submissions/" + world["submission"] + "/journey"
+    for parameter in ("cursor", "type", "source_id"):
+        response = client.get(path, params={parameter: "PRIVATE-INVALID-MARKER"})
+        assert response.status_code == 422 and "PRIVATE-INVALID-MARKER" not in response.text

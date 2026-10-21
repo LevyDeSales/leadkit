@@ -12,6 +12,7 @@ from starlette.concurrency import run_in_threadpool
 
 from app import event_sources, journey
 from app.admin.api.common import PageParams
+from app.admin.api.errors import ApiError
 from app.admin.auth import instant
 from app.admin.handoff_routes import _expires_at
 from app.admin.views import moment
@@ -53,6 +54,7 @@ STATE_LABELS = {
     "held": "Aguardando liberação",
     "released": "Liberado",
     "persisted": "Salva",
+    "succeeded": "Transporte concluído",
     "queued": "Na fila",
     "pending": "Pendente",
     "automatic": "Automático",
@@ -189,14 +191,37 @@ def journey_page(request, submission_id, *, status=200, message=None):
     )
 
 
+def display(request, render, **arguments):
+    from app.admin.routes import _error
+
+    try:
+        return render(request, **arguments)
+    except HandoffError as error:
+        return _error(
+            request,
+            error.status,
+            "Recurso não encontrado."
+            if error.status == 404
+            else "Confira os campos e releia a página antes de continuar.",
+        )
+    except ApiError as error:
+        return _error(
+            request, error.status_code, "Confira os filtros e comece a consulta novamente."
+        )
+    except sa.exc.SQLAlchemyError:
+        return _error(
+            request, 503, "Não foi possível consultar agora. Tente novamente em instantes."
+        )
+
+
 def register(protected):
     @protected.get("/forms/{slug}/event-sources")
     def source_list(slug: str, request: Request):
-        return sources_page(request, slug=slug)
+        return display(request, sources_page, slug=slug)
 
     @protected.get("/event-sources/{source_id}")
     def source_detail(source_id: UUID, request: Request):
-        return sources_page(request, source_id=source_id)
+        return display(request, sources_page, source_id=source_id)
 
     async def source_command(request, *, operation, slug=None, source_id=None, credential_id=None):
         from app.admin.routes import posted_form
@@ -294,7 +319,7 @@ def register(protected):
         try:
             source, created = await run_in_threadpool(apply)
             if created:
-                return sources_page(request, source_id=source_id, created=created)
+                return display(request, sources_page, source_id=source_id, created=created)
             return RedirectResponse(
                 "/admin/event-sources/" + str(source.id if source else source_id), status_code=303
             )
@@ -311,8 +336,9 @@ def register(protected):
                 if status == 409
                 else "Confira os campos e confirme a ação. Nenhuma alteração foi aplicada."
             )
-            return sources_page(
+            return display(
                 request,
+                sources_page,
                 slug=slug,
                 source_id=source_id,
                 status=status,
@@ -359,7 +385,7 @@ def register(protected):
 
     @protected.get("/submissions/{submission_id}/journey")
     def submission_journey(submission_id: UUID, request: Request):
-        return journey_page(request, submission_id)
+        return display(request, journey_page, submission_id=submission_id)
 
     @protected.post("/submissions/{submission_id}/journey/erase")
     async def submission_erase(submission_id: UUID, request: Request):
@@ -386,9 +412,10 @@ def register(protected):
             await run_in_threadpool(apply)
             return RedirectResponse(f"/admin/submissions/{submission_id}/journey", status_code=303)
         except (ValidationError, HandoffError) as error:
-            return journey_page(
+            return display(
                 request,
-                submission_id,
+                journey_page,
+                submission_id=submission_id,
                 status=error.status if isinstance(error, HandoffError) else 422,
                 message="Confira a confirmação e releia as versões antes de tentar novamente.",
             )
