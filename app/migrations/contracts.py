@@ -8176,27 +8176,29 @@ SIGNATURES["0017_continuation_release"] = {
     ],
     "column:public.plan_releases.version": ["integer", "true", "1", "", "", ""],
     "constraint:public.deliveries.ck_deliveries_release_channel": [
-        "CHECK "
-        "(((((destination)::text = "
-        "'webhook.release'::text) AND "
-        "((event)::text = "
-        "'plano.liberado'::text) AND "
-        "(release_id IS NOT NULL) AND "
-        "((audience)::text = "
-        "'participant'::text) AND "
-        "((authorization_origin)::text "
-        "= 'explicit'::text) AND "
-        "(authorized_attempt IS NOT "
-        "NULL) AND "
-        "(webhook_destination_id IS "
-        "NOT NULL) AND "
-        "(config_version IS NOT "
-        "NULL)) OR "
-        "(((destination)::text <> "
-        "'webhook.release'::text) AND "
-        "((event)::text <> "
-        "'plano.liberado'::text) AND "
-        "(release_id IS NULL))))",
+        (
+            "CHECK "
+            "(((((destination)::text = "
+            "'webhook.release'::text) AND "
+            "((event)::text = "
+            "'plano.liberado'::text) AND "
+            "(release_id IS NOT NULL) AND "
+            "((audience)::text = "
+            "'participant'::text) AND "
+            "((authorization_origin)::text "
+            "= 'explicit'::text) AND "
+            "(authorized_attempt IS NOT "
+            "NULL) AND "
+            "(webhook_destination_id IS "
+            "NOT NULL) AND "
+            "(config_version IS NOT "
+            "NULL)) OR "
+            "(((destination)::text <> "
+            "'webhook.release'::text) AND "
+            "((event)::text <> "
+            "'plano.liberado'::text) AND "
+            "(release_id IS NULL))))"
+        ),
         "true",
         "false",
         "false",
@@ -8262,22 +8264,24 @@ SIGNATURES["0017_continuation_release"] = {
         "false",
     ],
     "constraint:public.handoff_references.ck_handoff_references_issuance": [
-        "CHECK "
-        "(((((issuance_state)::text "
-        "= 'ready'::text) "
-        "AND (token_hash IS "
-        "NOT NULL) AND "
-        "(unavailable_code "
-        "IS NULL)) OR "
-        "(((issuance_state)::text "
-        "= "
-        "'unavailable'::text) "
-        "AND (token_hash IS "
-        "NULL) AND "
-        "(token_ciphertext "
-        "IS NULL) AND "
-        "(unavailable_code "
-        "IS NOT NULL))))",
+        (
+            "CHECK "
+            "(((((issuance_state)::text "
+            "= 'ready'::text) "
+            "AND (token_hash IS "
+            "NOT NULL) AND "
+            "(unavailable_code "
+            "IS NULL)) OR "
+            "(((issuance_state)::text "
+            "= "
+            "'unavailable'::text) "
+            "AND (token_hash IS "
+            "NULL) AND "
+            "(token_ciphertext "
+            "IS NULL) AND "
+            "(unavailable_code "
+            "IS NOT NULL))))"
+        ),
         "true",
         "false",
         "false",
@@ -8343,13 +8347,15 @@ SIGNATURES["0017_continuation_release"] = {
         "false",
     ],
     "constraint:public.integration_credentials.ck_integration_credentials_operation": [
-        "CHECK "
-        "(((operation)::text "
-        "= ANY "
-        "(ARRAY[('create'::character "
-        "varying)::text, "
-        "('rotate'::character "
-        "varying)::text])))",
+        (
+            "CHECK "
+            "(((operation)::text "
+            "= ANY "
+            "(ARRAY[('create'::character "
+            "varying)::text, "
+            "('rotate'::character "
+            "varying)::text])))"
+        ),
         "true",
         "false",
         "false",
@@ -8409,41 +8415,47 @@ SIGNATURES["0017_continuation_release"] = {
         "false",
     ],
     "constraint:public.plan_releases.ck_plan_releases_mode": [
-        "CHECK (((mode)::text = ANY "
-        "(ARRAY[('standard'::character "
-        "varying)::text, "
-        "('alternative'::character "
-        "varying)::text])))",
+        (
+            "CHECK (((mode)::text = ANY "
+            "(ARRAY[('standard'::character "
+            "varying)::text, "
+            "('alternative'::character "
+            "varying)::text])))"
+        ),
         "true",
         "false",
         "false",
     ],
     "constraint:public.plan_releases.ck_plan_releases_notification_decision": [
-        "CHECK "
-        "(((notification_decision)::text "
-        "= ANY "
-        "(ARRAY[('outbox'::character "
-        "varying)::text, "
-        "('no_participant_channel'::character "
-        "varying)::text, "
-        "('event_not_selected'::character "
-        "varying)::text])))",
+        (
+            "CHECK "
+            "(((notification_decision)::text "
+            "= ANY "
+            "(ARRAY[('outbox'::character "
+            "varying)::text, "
+            "('no_participant_channel'::character "
+            "varying)::text, "
+            "('event_not_selected'::character "
+            "varying)::text])))"
+        ),
         "true",
         "false",
         "false",
     ],
     "constraint:public.plan_releases.ck_plan_releases_reason_code": [
-        "CHECK "
-        "(((reason_code)::text = "
-        "ANY "
-        "(ARRAY[('operator_review'::character "
-        "varying)::text, "
-        "('participant_request'::character "
-        "varying)::text, "
-        "('alternative_channel'::character "
-        "varying)::text, "
-        "('other'::character "
-        "varying)::text])))",
+        (
+            "CHECK "
+            "(((reason_code)::text = "
+            "ANY "
+            "(ARRAY[('operator_review'::character "
+            "varying)::text, "
+            "('participant_request'::character "
+            "varying)::text, "
+            "('alternative_channel'::character "
+            "varying)::text, "
+            "('other'::character "
+            "varying)::text])))"
+        ),
         "true",
         "false",
         "false",
@@ -8869,30 +8881,36 @@ SIGNATURES["0017_continuation_release"] = {
         "",
     ],
     "index:public.ix_handoff_references_receiver_id": [
-        "CREATE INDEX "
-        "ix_handoff_references_receiver_id ON "
-        "public.handoff_references USING btree "
-        "(receiver_id)",
+        (
+            "CREATE INDEX "
+            "ix_handoff_references_receiver_id ON "
+            "public.handoff_references USING btree "
+            "(receiver_id)"
+        ),
         "true",
         "true",
         "false",
         "false",
     ],
     "index:public.ix_handoff_references_submission_id": [
-        "CREATE INDEX "
-        "ix_handoff_references_submission_id ON "
-        "public.handoff_references USING btree "
-        "(submission_id)",
+        (
+            "CREATE INDEX "
+            "ix_handoff_references_submission_id ON "
+            "public.handoff_references USING btree "
+            "(submission_id)"
+        ),
         "true",
         "true",
         "false",
         "false",
     ],
     "index:public.ix_integration_credentials_receiver_id": [
-        "CREATE INDEX "
-        "ix_integration_credentials_receiver_id "
-        "ON public.integration_credentials "
-        "USING btree (receiver_id)",
+        (
+            "CREATE INDEX "
+            "ix_integration_credentials_receiver_id "
+            "ON public.integration_credentials "
+            "USING btree (receiver_id)"
+        ),
         "true",
         "true",
         "false",
@@ -8920,9 +8938,11 @@ SIGNATURES["0017_continuation_release"] = {
         "false",
     ],
     "index:public.pk_integration_credentials": [
-        "CREATE UNIQUE INDEX pk_integration_credentials "
-        "ON public.integration_credentials USING btree "
-        "(id)",
+        (
+            "CREATE UNIQUE INDEX pk_integration_credentials "
+            "ON public.integration_credentials USING btree "
+            "(id)"
+        ),
         "true",
         "true",
         "false",
@@ -8936,93 +8956,111 @@ SIGNATURES["0017_continuation_release"] = {
         "false",
     ],
     "index:public.uq_deliveries_release_receiver": [
-        "CREATE UNIQUE INDEX "
-        "uq_deliveries_release_receiver ON "
-        "public.deliveries USING btree (release_id, "
-        "webhook_destination_id) WHERE (release_id "
-        "IS NOT NULL)",
+        (
+            "CREATE UNIQUE INDEX "
+            "uq_deliveries_release_receiver ON "
+            "public.deliveries USING btree (release_id, "
+            "webhook_destination_id) WHERE (release_id "
+            "IS NOT NULL)"
+        ),
         "true",
         "true",
         "false",
         "false",
     ],
     "index:public.uq_handoff_receivers_form_slug": [
-        "CREATE UNIQUE INDEX "
-        "uq_handoff_receivers_form_slug ON "
-        "public.handoff_receivers USING btree "
-        "(form_slug)",
+        (
+            "CREATE UNIQUE INDEX "
+            "uq_handoff_receivers_form_slug ON "
+            "public.handoff_receivers USING btree "
+            "(form_slug)"
+        ),
         "true",
         "true",
         "false",
         "false",
     ],
     "index:public.uq_handoff_receivers_id_form": [
-        "CREATE UNIQUE INDEX "
-        "uq_handoff_receivers_id_form ON "
-        "public.handoff_receivers USING btree (id, "
-        "form_slug)",
+        (
+            "CREATE UNIQUE INDEX "
+            "uq_handoff_receivers_id_form ON "
+            "public.handoff_receivers USING btree (id, "
+            "form_slug)"
+        ),
         "true",
         "true",
         "false",
         "false",
     ],
     "index:public.uq_handoff_references_submission_purpose": [
-        "CREATE UNIQUE INDEX "
-        "uq_handoff_references_submission_purpose "
-        "ON public.handoff_references "
-        "USING btree (submission_id, "
-        "purpose)",
+        (
+            "CREATE UNIQUE INDEX "
+            "uq_handoff_references_submission_purpose "
+            "ON public.handoff_references "
+            "USING btree (submission_id, "
+            "purpose)"
+        ),
         "true",
         "true",
         "false",
         "false",
     ],
     "index:public.uq_handoff_references_token_hash": [
-        "CREATE UNIQUE INDEX "
-        "uq_handoff_references_token_hash ON "
-        "public.handoff_references USING btree "
-        "(token_hash)",
+        (
+            "CREATE UNIQUE INDEX "
+            "uq_handoff_references_token_hash ON "
+            "public.handoff_references USING btree "
+            "(token_hash)"
+        ),
         "true",
         "true",
         "false",
         "false",
     ],
     "index:public.uq_integration_credentials_command": [
-        "CREATE UNIQUE INDEX "
-        "uq_integration_credentials_command ON "
-        "public.integration_credentials USING "
-        "btree (created_by, operation, "
-        "idempotency_hash)",
+        (
+            "CREATE UNIQUE INDEX "
+            "uq_integration_credentials_command ON "
+            "public.integration_credentials USING "
+            "btree (created_by, operation, "
+            "idempotency_hash)"
+        ),
         "true",
         "true",
         "false",
         "false",
     ],
     "index:public.uq_integration_credentials_key_id": [
-        "CREATE UNIQUE INDEX "
-        "uq_integration_credentials_key_id ON "
-        "public.integration_credentials USING "
-        "btree (key_id)",
+        (
+            "CREATE UNIQUE INDEX "
+            "uq_integration_credentials_key_id ON "
+            "public.integration_credentials USING "
+            "btree (key_id)"
+        ),
         "true",
         "true",
         "false",
         "false",
     ],
     "index:public.uq_plan_releases_job_attempt": [
-        "CREATE UNIQUE INDEX "
-        "uq_plan_releases_job_attempt ON "
-        "public.plan_releases USING btree (job_id, "
-        "attempt)",
+        (
+            "CREATE UNIQUE INDEX "
+            "uq_plan_releases_job_attempt ON "
+            "public.plan_releases USING btree (job_id, "
+            "attempt)"
+        ),
         "true",
         "true",
         "false",
         "false",
     ],
     "index:public.uq_plan_releases_job_idempotency": [
-        "CREATE UNIQUE INDEX "
-        "uq_plan_releases_job_idempotency ON "
-        "public.plan_releases USING btree (job_id, "
-        "idempotency_key)",
+        (
+            "CREATE UNIQUE INDEX "
+            "uq_plan_releases_job_idempotency ON "
+            "public.plan_releases USING btree (job_id, "
+            "idempotency_key)"
+        ),
         "true",
         "true",
         "false",
