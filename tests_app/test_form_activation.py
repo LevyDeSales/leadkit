@@ -91,7 +91,7 @@ def test_a_deactivated_form_tells_the_lead_it_is_unavailable_and_takes_no_submis
     assert api.json() == {"code": "form_unavailable", "detail": "formulário indisponível"}
     assert triggered == []
     row = text(rows_of(client.get("/admin/forms"))[SLUG])
-    assert "Inativo" in row and "0 envios" in row
+    assert "Inativo" in row and "0 respostas" in row
 
 
 def test_a_form_in_code_is_deactivated_and_activated_again_without_touching_the_others(
