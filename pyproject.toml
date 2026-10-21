@@ -26,6 +26,7 @@ dependencies = [
   "jinja2>=3.1",
   "weasyprint>=70,<71",
   "pillow>=12",
+  "pypdf>=5",
   "itsdangerous>=2.2",
   "argon2-cffi>=23.1",
   "cryptography>=42",
@@ -38,7 +39,6 @@ dev = [
   "pytest>=8.0",
   "pytest-xdist>=3.6",
   "ruff>=0.5",
-  "pypdf>=5",
   "moto[s3]>=5",
 ]
 # O SDK do MCP de admin (`python -m app.admin_mcp`). Fica fora das dependências do app de propósito: o

@@ -73,6 +73,11 @@ A versão publicada fica no banco num JSONB (`app.forms.stored`), e por isso:
   `marketing`, com o texto de cada canal oferecido (`email`, `whatsapp`). O WhatsApp só vale com
   `identity.phone`.
 - `scoring`: a pontuação, opcional (ver "Pontuação").
+- `completion`: conclusão após commit, opcional. `mode`: `result` (padrão PDF legado),
+  `confirmation`, `button` ou `redirect`; `message`: texto puro até 2000 caracteres;
+  `button_label`: texto puro até 300 caracteres (padrão «Continuar»); `url`: HTTPS exata,
+  obrigatória só em `button`/`redirect`. Não é template, não altera geração/liberação e
+  mudar esse bloco não invalida teste LLM. O editor tem prévia sem navegação externa.
 - `instructions` e `prompt`: templates Jinja do texto que vai ao LLM (ver "Templates").
 - `plan`: o modelo do plano, com `description` opcional e `fields`, a árvore de campos. A ordem
   da árvore é a ordem do schema, e por isso a ordem em que o LLM escreve. Cada campo tem `name`

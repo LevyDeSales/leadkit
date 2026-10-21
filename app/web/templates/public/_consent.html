@@ -17,7 +17,7 @@
 
   {%- if text.marketing_email or text.marketing_whatsapp %}
   <div class="consent-optional">
-    <p class="hint"><strong>Opcional:</strong> você recebe o plano mesmo sem marcar.</p>
+    <p class="hint"><strong>Opcional:</strong> {{ "você recebe o plano mesmo sem marcar." if spec.generation == "pdf" else "você pode enviar suas respostas mesmo sem marcar." }}</p>
     {%- if text.marketing_email %}
     <label class="choice choice--check">
       <input type="checkbox" id="consent-email" name="_mkt_email" value="1"{% if consent.marketing_email %} checked{% endif %}>

@@ -74,14 +74,17 @@ from app.deps import Deps
 MISSING_ROWS = 0
 
 # As linhas `fora` (a regra 4), travadas: o que fica fora da API é decisão deliberada, e uma linha
-# `fora` nova exige editar esta constante no mesmo PR, onde a revisão a vê. As 13 de hoje: o login, a
-# sessão e a saída (A); as três telas sem dado nem ação (B); as seis operações dos editores que só
-# redesenham a tela (C); e a tela de configurar o MCP (D). A chave é `Row.key` (a rota, ou o editor e a
-# operação), e o valor, a letra de "O que não entra na API".
+# `fora` nova exige editar esta constante no mesmo PR, onde a revisão a vê. As 15 de hoje: o login, a
+# sessão e a saída (A); as três telas sem dado nem ação e os dois hubs de navegação HTML (B);
+# as seis operações dos editores que só redesenham a tela (C); e a tela de configurar o MCP (D).
+# A chave é `Row.key` (a rota, ou o editor e a operação), e o valor, a letra de
+# "O que não entra na API".
 OUT_OF_THE_API = {
     "GET /admin/login": "A",
     "POST /admin/login": "A",
     "POST /admin/logout": "A",
+    "GET /admin/responses": "B",
+    "GET /admin/advanced": "B",
     "GET /admin/forms/import": "B",
     "GET /admin/forms/new": "B",
     "GET /admin/forms/{slug}/draft/preview": "B",
@@ -847,11 +850,11 @@ def test_rule_4_a_fora_row_with_a_letter_that_does_not_exist_fails(
     assert "a letra (Z) de `fora` não está em «O que não entra na API» (A, B, C, D)" in message
 
 
-def test_rule_4_the_set_of_fora_rows_is_locked_to_the_thirteen_of_today(matrix: Matrix) -> None:
+def test_rule_4_the_set_of_fora_rows_is_locked_to_the_fifteen_of_today(matrix: Matrix) -> None:
     outside = {row.key: row.letter for row in matrix.rows if row.status == "fora"}
 
     assert outside == OUT_OF_THE_API
-    assert len(OUT_OF_THE_API) == 13
+    assert len(OUT_OF_THE_API) == 15
 
 
 def test_rule_4_a_new_fora_row_demands_editing_the_locked_set(matrix: Matrix, world: World) -> None:

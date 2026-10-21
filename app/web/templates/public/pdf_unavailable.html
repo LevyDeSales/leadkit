@@ -1,0 +1,12 @@
+{% extends "public/base.html" %}
+{% block title %}PDF indisponível{% endblock %}
+{% block main %}
+<main id="conteudo" class="container page">
+  <h1>Seu PDF está indisponível</h1>
+  <p>Não foi possível confirmar um PDF acessível para a tentativa atual.</p>
+  <p>Suas respostas continuam registradas. Atualizar esta página não gera outro plano.</p>
+  {% if can_verify|default(false) %}<a class="btn btn--primary" href="/d/{{ job.public_id }}/pdf">Verificar e baixar PDF</a>
+  <p>O arquivo anterior será conferido antes do download. Essa verificação não usa IA.</p>{% endif %}
+  <a class="btn" href="/d/{{ job.public_id }}">Consultar novamente</a>
+</main>
+{% endblock %}

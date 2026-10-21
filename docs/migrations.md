@@ -4,6 +4,38 @@ O Leadkit usa PostgreSQL 16 e schema `public`. A distribuição começa na revis
 baseline estrutural explícita: banco novo ganha tabelas, índices, constraints e gatilhos, sem
 formulário, destino, contato ou outro dado de negócio. O demo é importado explicitamente.
 
+## Cadeia aditiva atual e rollback
+
+O head único é `0018_journey_events`:
+`0012` → `0013` → `0014_capture` → `0015_capture_delivery` → `0016_plan_audiences` →
+`0017_continuation_release` → `0018_journey_events`. Não há head concorrente.
+A revisão publicada `0013` acrescenta evidências de disponibilidade ao artefato PDF;
+`0014_capture_receipts.py` acrescenta os recibos de captura, e `0015_capture_delivery` acrescenta
+sua outbox, os perfis Baserow de captura e os eventos aceitos pelo webhook. As migrations e os
+contratos publicados permanecem congelados; cada sucessora acrescenta seu contrato revisado.
+
+A atualização preserva dados e versões publicadas; não transforma formulários existentes em
+captura nem reescreve conteúdo. Historicamente, até `0015_capture_delivery`, o runtime anterior
+com disponibilidade PDF continuava operando formulários PDF sobre o schema aditivo. Nessa
+fronteira, integrações existentes conservavam a ativação e o perfil PDF; webhooks antigos
+aceitavam apenas `plano.concluido`, sem backfill nem ativação implícita. A garantia de retorno ao
+runtime anterior nessa etapa não se estende às revisões seguintes.
+
+A `0016_plan_audiences` acrescenta audiência/finalidade dos receptores e o contrato operacional.
+A `0017_continuation_release` acrescenta continuidade e liberação e confirma atomicamente o
+piso de capacidade2 em fase `blocked`, limpando epoch e evidência anteriores. A
+`0018_journey_events` acrescenta fontes, credenciais e eventos de jornada sem elevar esse piso.
+Depois do commit da `0017`, runtime de capacidade0/1 é proibido, inclusive como retorno automático
+ativo, mesmo que os formulários continuem automáticos e nenhuma participante tenha sido configurada.
+
+Use uma imagem composta de capacidade2 que implemente continuidade e liberação para operar ou
+recuperar essa fronteira. Um runtime2 compatível pode operar sobre schema `0018`; isso não torna
+seu migrador antigo compatível com uma revisão que desconhece. O guard de um migrador sem contrato
+para o novo head recusa legitimamente esse banco antes de escrita. No retorno, preserve o schema
+e os envios confirmados, sem executar o migrador antigo nem fazer downgrade destrutivo. O
+[roteiro Swarm de adoção composta de capacidade2](../deploy/swarm/README.md#adoção-composta-de-capacidade2)
+é a referência autoritativa para atualização, atestação e recuperação no Swarm.
+
 ## Instalação em banco novo
 
 Crie um banco e um usuário próprios, configure a aplicação e exporte `DATABASE_URL` no processo que
@@ -30,7 +62,8 @@ contornar uma recusa. Mensagens de diagnóstico indicam objetos, sem imprimir SQ
 Cada migration aditiva futura precisa de contrato estrutural revisado na mesma release.
 
 A baseline recusa downgrade. Voltar a versão do aplicativo não significa desfazer o banco:
-compatibilidade do runtime anterior deve ser ensaiada contra o schema aditivo antes da atualização.
+compatibilidade do runtime de retorno deve ser ensaiada contra o schema aditivo e o piso
+operacional antes da atualização. Depois do commit da `0017`, esse runtime precisa de capacidade2.
 
 ## Adoção por uma instalação existente
 
@@ -50,10 +83,21 @@ roteiro descreve a preparação; não executa deploy nem autoriza alterações e
    necessária. Rode o guard da distribuição sobre essa cópia e compare a estrutura, os dados e os
    arquivos antes/depois. Não execute `stamp` para esconder divergência de schema.
 5. Valide admin/API/MCP, respostas antigas, identidade por envio, geração de PDF, webhook e
-   integrações com transportes fictícios. Confirme que o runtime anterior continua lendo a cópia
-   com o schema aditivo. Documente como retornar ao código/configuração anterior preservados.
-6. Só depois da revisão e autorização da operadora, planeje janela e procedimento de atualização
-   da instalação. O novo núcleo não implica publicar formulários nem alterar destinos ou dados.
+   integrações com transportes fictícios. Ensaie o runtime de retorno sobre a cópia migrada,
+   respeitando o piso2 após a `0017`; preserve uma imagem composta2 por ID/digest, além da fonte e
+   configuração anteriores. A imagem0/1 preservada não serve como retorno ativo após esse commit.
+6. Só depois da revisão e autorização da operadora, planeje a janela de adoção0/1→2 pelo
+   [roteiro Swarm autoritativo](../deploy/swarm/README.md#adoção-composta-de-capacidade2).
+   Antes de qualquer DDL, pause e drene API/worker, persista Current/Previous com zero réplicas e
+   comprove positivamente a saída dos processos antigos; ausência no inventário não basta.
+   A prova do helper se limita ao manager local observado; outros nós exigem tratamento próprio.
+   Há indisponibilidade temporária nessa transição. A `0017` confirma piso2/blocked na transação;
+   depois, instale novo epoch, normalize Current2/Previous2 e só ateste após as coletas coerentes.
+   O novo núcleo não implica publicar formulários nem alterar destinos ou dados.
+7. Em falha com commit desconhecido, leia revisão/status antes de escolher a imagem. Depois do
+   commit da `0017`, mantenha os serviços parados e o gate bloqueado e recupere somente com imagem
+   composta2; não baixe o piso nem reative runtime0/1. Depois da atestação, retorno também exige
+   imagem composta2 compatível e revalidação de continuidade e liberação.
 
 Se a revisão ou a estrutura não forem suportadas, interrompa o procedimento e planeje uma migração
 aditiva revisada. Não limpe o banco da instalação para adaptar os dados ao exemplo público.
@@ -93,7 +137,7 @@ from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from app.migrations.compatibility import load_contracts, schema_signature, validate_database
 
-module = importlib.util.spec_from_file_location("draft_revision", "draft/0013_example.py")
+module = importlib.util.spec_from_file_location("draft_revision", "draft/0015_example.py")
 draft_revision = importlib.util.module_from_spec(module)
 module.loader.exec_module(draft_revision)
 
@@ -127,3 +171,20 @@ os modelos atualizados na mesma mudança.
    demonstra esse ciclo com uma revisão temporária que não faz parte do produto.
 5. Revise separadamente a migration, o delta do contrato, os testes e a compatibilidade do runtime
    anterior. Nenhuma opção de ambiente pode substituir contratos ou dispensar o preflight.
+
+## Entregas de captura e rollback
+
+A `0015_capture_delivery` não altera FKs das outboxes PDF. Acrescenta uma tabela vinculada à
+submissão e a exatamente um destino concreto, com revisão, epoch e estado; não copia respostas,
+URLs ou segredos. Retenção exclui as intenções junto da captura. Os contratos anteriores continuam
+congelados e o novo contrato foi preparado em PostgreSQL 16 próprio a partir da fonte pública
+`44ad0738c0eca62f9f2449df00fe99b975a109fa`, pela receita desta página.
+
+Mantenha o schema no rollback de runtime. A garantia histórica de um runtime anterior operando o
+ramo PDF com defaults aditivos vale até `0015`; captura e suas entregas já exigiam runtime que
+entendesse essa finalidade. Depois do commit da `0017`, o piso2 proíbe runtime0/1 também para PDF.
+Use imagem composta2 compatível com o schema `0018`, distinguindo seu runtime do migrador antigo
+que recusa head desconhecido. Siga o [roteiro Swarm autoritativo](../deploy/swarm/README.md#adoção-composta-de-capacidade2)
+para pausa, atestação e recuperação. Não faça downgrade destrutivo nem restaure backup perdendo
+submissões confirmadas. Correção de configuração requer retry explícito da entrega, com revisão
+esperada do mesmo destino. Remover uma conexão apaga suas intenções por cascade, sem apagar dados já enviados ao receptor.

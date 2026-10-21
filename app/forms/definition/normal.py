@@ -24,6 +24,7 @@ from typing import Any
 from pydantic import TypeAdapter, ValidationError
 
 from app.forms.definition.document import (
+    CompletionDoc,
     ConsentDoc,
     DataBlockDoc,
     IdentityDoc,
@@ -33,6 +34,7 @@ from app.forms.definition.document import (
     PdfDoc,
     PhasesDoc,
     PlanDoc,
+    ReleaseDoc,
     ScoringDoc,
     StepDoc,
     Text,
@@ -52,10 +54,12 @@ PARTS: dict[str, TypeAdapter[Any]] = {
     "data": TypeAdapter(dict[Name, DataBlockDoc]),
     "scoring": TypeAdapter(ScoringDoc),
     "notices": TypeAdapter(NoticesDoc),
+    "completion": TypeAdapter(CompletionDoc),
     "pdf": TypeAdapter(PdfDoc),
+    "release": TypeAdapter(ReleaseDoc),
 }
 # As partes opcionais: ausentes, nulas ou vazias, dizem o mesmo (nada).
-OPTIONAL_PARTS = ("scoring", "phases", "notices", "data")
+OPTIONAL_PARTS = ("scoring", "phases", "notices", "data", "completion")
 
 
 def part(key: str, value: Any) -> Any:
@@ -83,9 +87,13 @@ def normalized(document: Mapping[str, Any]) -> dict[str, Any]:
     """A definição na forma normal: cada parte sem os padrões escritos por extenso, as partes
     opcionais vazias ausentes e as respostas de exemplo sem as em branco."""
     found = dict(document)
+    if found.get("generation") == "pdf":
+        found.pop("generation")
     for key in PARTS:
         if key in found and (minimal := part(key, found[key])) is not None:
             found[key] = minimal
+    if found.get("generation", "pdf") == "pdf" and found.get("release") in (None, {}):
+        found.pop("release", None)
     for key in OPTIONAL_PARTS:
         if key in found and found[key] in (None, {}):
             del found[key]

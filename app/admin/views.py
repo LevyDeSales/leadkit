@@ -9,7 +9,7 @@ import json
 import math
 import uuid
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 from urllib.parse import quote, urlencode
@@ -18,6 +18,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app import destinations
+from app.adapters.storage import ArtifactStorage
 from app.adapters.webhook import Probe, outcome
 from app.admin.actions.destinations import BODY_START_CHARS
 from app.admin.actions.versions import DRAFT_REF
@@ -26,6 +27,7 @@ from app.admin.queries import destinations as destination_queries
 from app.admin.queries import forms as form_queries
 from app.admin.queries import jobs as job_queries
 from app.admin.reading import FormReading, reading_of
+from app.capture_deliveries import Counts
 from app.errors import FailureCode
 from app.forms import (
     FormRegistry,
@@ -37,6 +39,7 @@ from app.forms import (
 from app.forms import retention as form_retention
 from app.forms import stored as stored_forms
 from app.integrations import syncs as integration_syncs
+from app.pdf_availability import PdfAvailability
 from app.retention import Due
 from app.settings import Settings
 
@@ -346,6 +349,12 @@ class DeliveryView:
     run_url: str | None
     target: str | None  # para qual destino do webhook foi o último envio, e o host
 
+    audience: str = "internal"
+    authorization_origin: str = "legacy"
+    current_config_version: int | None = None
+    event: str = "plano.concluido"
+    blocked_reason: str | None = None
+
 
 SYNC_BADGES = {
     "pending": Badge("Pendente", "clock", "warn"),
@@ -481,6 +490,8 @@ class JobDetail:
     answers: list[AnswerGroup]
     consents: list[ConsentView]
     plan: PlanView | None
+    current_pdf: PdfAvailability
+    release: dict[str, Any]
     pdfs: list[PdfView]
     deliveries: list[DeliveryView]
     syncs: list[SyncView]
@@ -494,11 +505,14 @@ def job_detail(
     forms: FormRegistry,
     run_url_template: str | None,
     now: datetime,
+    storage: ArtifactStorage | None = None,
 ) -> JobDetail | None:
     """O pedido como a lead o enviou: rótulos e ordem vêm da versão do formulário que ela
     respondeu (`forms`), não da atual. A consulta é `app.admin.queries.jobs`, a mesma da API; aqui
     ela ganha rótulo, data de Brasília e os textos livres de volta nos eventos."""
-    found = job_queries.read_job(session, public_id, forms=forms, now=now, with_lead=True)
+    found = job_queries.read_job(
+        session, public_id, forms=forms, now=now, with_lead=True, storage=storage
+    )
     if found is None:
         return None
     state, lead = found.state, found.lead
@@ -555,6 +569,8 @@ def job_detail(
         answers=_answer_groups(lead.answers, spec),
         consents=_consents(lead.consent),
         plan=_plan_view(lead.plan, spec) if lead.plan else None,
+        current_pdf=state.current_pdf,
+        release=state.release,
         pdfs=[
             PdfView(
                 version=pdf.version,
@@ -603,6 +619,11 @@ def _delivery_view(
         job_attempt=delivery.job_attempt,
         run_url=job_queries.run_url(template, delivery.hatchet_run_id),
         target=f"{scope} · {delivery.host}" if scope else None,
+        audience=delivery.audience,
+        authorization_origin=delivery.authorization_origin,
+        current_config_version=delivery.current_config_version,
+        event=delivery.event,
+        blocked_reason=delivery.blocked_reason,
     )
 
 
@@ -722,6 +743,9 @@ class DestinationView:
     updated_by: str
     updated: Moment | None
     secret_created: Moment | None
+    events: tuple[str, ...] = ("plano.concluido",)
+    purpose: str = "participant"
+    purpose_origin: str = "default"
 
 
 def _destination_view(stored: destinations.StoredDestination) -> DestinationView:
@@ -734,6 +758,9 @@ def _destination_view(stored: destinations.StoredDestination) -> DestinationView
         updated_by=stored.updated_by,
         updated=moment(stored.updated_at),
         secret_created=moment(stored.secret_created_at),
+        events=stored.events,
+        purpose=stored.purpose,
+        purpose_origin=stored.purpose_origin,
     )
 
 
@@ -948,8 +975,8 @@ class FormRow:
     draft: Badge | None  # o aviso de rascunho não publicado
     review: Badge | None  # o aviso de dados vencidos (`notices`)
     notices: tuple[str, ...]  # o que conferir nos dados do formulário (`app.forms.data_notices`)
-    submissions: str  # "3 envios"
-    jobs_url: str  # a lista de pedidos só deste formulário
+    submissions: str  # "3 respostas"
+    responses_url: str  # os dois históricos de respostas deste formulário
 
 
 form_title = form_queries.form_title  # o nome do formulário; a consulta é dividida com a API
@@ -980,8 +1007,8 @@ def form_list(
             draft=DRAFT_PENDING if row.draft_pending else None,
             review=DATA_TO_REVIEW if row.notices else None,
             notices=row.notices,
-            submissions=_plural(row.submissions, "envio", "envios"),
-            jobs_url=job_queries.JobFilters(form=row.slug).url(),
+            submissions=_plural(row.submissions, "resposta", "respostas"),
+            responses_url="/admin/responses?" + urlencode({"form": row.slug}),
         )
         for row in form_queries.form_summaries(
             session, forms, public_base_url=public_base_url, now=now
@@ -1015,6 +1042,7 @@ class NewFormPage:
     errors: Mapping[str, str]
     address_prefix: str  # o endereço público até o slug (`https://.../p/`)
     slug_max_length: int
+    generation: str = ""
 
 
 COPY_SUFFIX = " (cópia)"
@@ -1065,6 +1093,8 @@ class FormDetail:
     # Sem versão publicada (criado do zero ou duplicado no admin): a leitura é a do rascunho.
     unpublished: bool = False
     integration: IntegrationBox | None = None  # a integração com a planilha, se ele tem
+    integration_issues: tuple[str, ...] = ()
+    destination_events: tuple[str, ...] = ()
 
     @property
     def duplicate_url(self) -> str:
@@ -1193,6 +1223,8 @@ def form_detail(
         else None,
         unpublished=found.unpublished,
         integration=integration_box(found.integration, slug),
+        integration_issues=found.integration_issues,
+        destination_events=found.destination.events if found.destination else (),
     )
 
 
@@ -1293,7 +1325,7 @@ def reduction_view(due: Due, today: Due) -> ReductionView:
         headline=form_retention.deletion_sentence(reduction.due),
         today=(
             f"Com os prazos de hoje, seriam {_plural(today.requests, 'pedido', 'pedidos')} e "
-            f"{_plural(today.pdfs, 'arquivo de PDF', 'arquivos de PDF')}."
+            f"{_plural(today.pdfs, 'arquivo de PDF', 'arquivos de PDF')} e {_plural(today.captures, 'captura', 'capturas')}."
         ),
         seen=reduction.seen,
     )
@@ -1318,9 +1350,14 @@ UNREADABLE_PROBE = ProbeView(
 )
 
 
-def probe_view(probe: Probe) -> ProbeView:
+def probe_view(probe: Probe, *, event: str = "plano.concluido") -> ProbeView:
     """O que o receptor respondeu e o que uma entrega faria com essa resposta (as mesmas regras
     do `plano.concluido`, em `app.adapters.webhook.outcome`)."""
+    event_name = (
+        "evento de captura (submissao.persistida)"
+        if event == "submissao.persistida"
+        else "plano.concluido"
+    )
     if probe.status is None:
         return ProbeView(
             ok=False,
@@ -1328,8 +1365,10 @@ def probe_view(probe: Probe) -> ProbeView:
                 f"Não deu para falar com o receptor ({probe.error}) depois de "
                 f"{probe.elapsed_ms} ms."
             ),
-            note="Confira a URL, a porta e se o receptor está no ar. Um plano.concluido nessa "
-            "situação seria repetido por cerca de 3,5 h.",
+            note=(
+                "Confira a URL, a porta e se o receptor está no ar. Um plano.concluido nessa "
+                "situação seria repetido por cerca de 3,5 h."
+            ).replace("plano.concluido", event_name),
             body=None,
         )
     verdict = outcome(probe.status)
@@ -1353,7 +1392,12 @@ def probe_view(probe: Probe) -> ProbeView:
     return ProbeView(
         ok=verdict == "delivered",
         headline=f"O receptor respondeu HTTP {probe.status} em {probe.elapsed_ms} ms.",
-        note=note,
+        note=note.replace("plano.concluido", event_name)
+        + (
+            " A confirmação é do transporte, sem comprovar leitura."
+            if event == "submissao.persistida"
+            else ""
+        ),
         body=probe.body_start[:BODY_START_CHARS] or None,
     )
 
@@ -1367,6 +1411,7 @@ class DestinationPage:
     stored: DestinationView | None
     fallback: str | None  # sem destino próprio: o que vale para o formulário
     unreadable: bool  # o segredo guardado não abre com a chave atual
+    capture_counts: Counts = field(default_factory=Counts)
 
 
 def destination_page(
@@ -1411,4 +1456,5 @@ def destination_page(
         stored=_destination_view(own) if own else None,
         fallback=fallback,
         unreadable=found.unreadable,
+        capture_counts=found.capture_counts,
     )

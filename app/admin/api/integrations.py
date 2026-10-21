@@ -22,7 +22,7 @@ não é erro: é um resultado (`ok` falso).
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import Path
 from fastapi.concurrency import run_in_threadpool
@@ -98,8 +98,10 @@ NOT_FOUND = "Formulário não encontrado."
     returns="A integração, com a tabela lida agora, o mapeamento, o relatório e as sincronizações.",
     response_model=BaserowIntegration,
 )
-def get_form_integration(slug: FORM) -> BaserowIntegration:
-    detail = actions.read_detail(get_deps(), slug)
+def get_form_integration(
+    slug: FORM, profile: Literal["pdf", "capture"] | None = None
+) -> BaserowIntegration:
+    detail = actions.read_detail(get_deps(), slug, profile=profile)
     if detail is None:
         raise ApiError("not_found", NOT_FOUND)
     return BaserowIntegration.of(detail)
@@ -199,6 +201,7 @@ def connect_form_integration(
             get_deps(),
             slug,
             base_url=body.base_url,
+            purpose=body.purpose,
             table_id=body.table_id,
             token=body.token.get_secret_value() if body.token is not None else "",
             expected_version=actions.version_number(body.expected_version),
@@ -275,6 +278,7 @@ def save_form_integration_mapping(
             get_deps(),
             slug,
             chosen=body.chosen(),
+            profile=body.profile,
             expected_version=actions.version_number(body.expected_version),
             actor=key.actor,
         )
@@ -422,7 +426,7 @@ def deactivate_form_integration(
 
 REMOVE_TEXT = (
     "Remover a integração apaga o token do Baserow e o estado das sincronizações (as que falharam "
-    "deixam de poder ser reenviadas). As linhas que já estão na tabela ficam. Não tem volta: para "
+    "deixam de poder ser reenviadas) e as intenções de captura vinculadas. A resposta informa as contagens; capturas salvas e linhas já recebidas permanecem. Pendentes não serão enviadas. Não tem volta: para "
     "sincronizar de novo é preciso conectar, mapear e ativar outra vez."
 )
 
@@ -518,7 +522,7 @@ def send_form_integration_test(
 ) -> SentFormIntegrationTest:
     _ensure_form(slug)
     try:
-        result = actions.send_test(get_deps(), slug, actor=key.actor)
+        result = actions.send_test(get_deps(), slug, actor=key.actor, profile=body.profile)
     except actions.IntegrationMissing as missing:
         raise ApiError("state_conflict", str(missing)) from None
     except actions.TokenUnreadable as unreadable:

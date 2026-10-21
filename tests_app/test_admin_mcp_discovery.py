@@ -53,19 +53,22 @@ def test_a_total_key_starts_with_every_tool_but_the_lead_pdf() -> None:
     found = start(api)
 
     assert found.role == "total" and found.skipped == {}
-    assert {t.name for t in found.tools} == operation_ids(api.document) - {"download_job_pdf"}
+    assert {t.name for t in found.tools} == operation_ids(api.document) - {
+        "download_job_pdf",
+        "get_job_plan_projection",
+    }
 
 
 def test_a_leitura_key_starts_with_only_the_leitura_tools() -> None:
     found = start(FakeApi(new_key(), "leitura"))
 
-    assert found.role == "leitura" and len(found.tools) == 25
+    assert found.role == "leitura" and len(found.tools) == 38
     assert {t.role for t in found.tools} == {"leitura"}
 
 
 def test_the_lead_data_option_adds_the_lead_pdf_for_a_total_key_only() -> None:
-    assert len(start(FakeApi(new_key(), "total"), lead_data=True).tools) == 55
-    assert len(start(FakeApi(new_key(), "leitura"), lead_data=True).tools) == 25
+    assert len(start(FakeApi(new_key(), "total"), lead_data=True).tools) == 84
+    assert len(start(FakeApi(new_key(), "leitura"), lead_data=True).tools) == 38
 
 
 def test_the_startup_reads_the_live_contract_and_then_asks_who_the_key_is() -> None:
@@ -115,7 +118,7 @@ def test_an_operation_the_generator_cannot_build_is_warned_and_the_rest_still_st
     with caplog.at_level(logging.WARNING, logger="gerador_mcp"):
         found = start(FakeApi(new_key(), "leitura", document=document))
 
-    assert set(found.skipped) == {"strange"} and len(found.tools) == 25
+    assert set(found.skipped) == {"strange"} and len(found.tools) == 38
     assert "Sem ferramenta para 'strange'" in caplog.text
 
 
@@ -138,7 +141,7 @@ def test_a_hostile_document_registers_nothing_outside_the_formats_and_logs_escap
         found = start(FakeApi(new_key(), "leitura", document=document))
 
     names = {tool.name for tool in found.tools}
-    assert len(found.tools) == 25
+    assert len(found.tools) == 38
     assert names.isdisjoint({"../../escaped", "dotdot", "with_query"})
     assert not any("escaped" in name or "falso" in name for name in names)
     assert len(found.skipped) == 4

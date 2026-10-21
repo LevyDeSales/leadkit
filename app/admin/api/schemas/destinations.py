@@ -23,6 +23,7 @@ from app.adapters.webhook import Probe
 from app.adapters.webhook import outcome as verdict_of
 from app.admin.actions import destinations as actions
 from app.admin.api.common import ConfirmedInput, Page, VersionedInput, utc
+from app.admin.api.schemas.capture_deliveries import CaptureDeliveryCounts
 from app.admin.queries import destinations as queries
 
 Serving = Literal["form", "default", "none"]
@@ -49,11 +50,18 @@ def _scope(form_slug: str | None) -> str:
 
 
 class Destination(BaseModel):
+    purpose: Literal["internal", "participant"]
+    purpose_origin: Literal["legacy", "explicit", "default"]
+
     """Um destino do webhook guardado, como a API o mostra. **Nunca traz o segredo.**"""
 
+    events: list[Literal["plano.concluido", "submissao.persistida", "plano.liberado"]] = Field(
+        default_factory=lambda: ["plano.concluido"],
+        description="Eventos que a operadora declarou aceitos pelo receptor.",
+    )
     scope: str = Field(description=SCOPE_TEXT, examples=["default", "diagnostico-rapido"])
     url: str = Field(
-        description="O endereço do receptor, para onde vai o evento `plano.concluido`. **A chave "
+        description="O endereço do receptor, para onde vão os eventos declarados em `events`. **A chave "
         "`total` o recebe inteiro; a `leitura`, só com o esquema e o host** (`https://host`, e a porta "
         "se houver; `url_redacted` diz qual foi o caso), porque o caminho de uma URL de webhook costuma "
         "valer como senha.",
@@ -97,6 +105,9 @@ class Destination(BaseModel):
         host."""
         return cls(
             scope=_scope(stored.form_slug),
+            events=list(stored.events),
+            purpose=stored.purpose,
+            purpose_origin=stored.purpose_origin,
             url=stored.url if full_url else destinations.origin_of(stored.url),
             url_redacted=not full_url,
             host=stored.host,
@@ -190,8 +201,22 @@ class DestinationPage(Page[DestinationSummary]):
 
 
 class DestinationDetail(BaseModel):
+    serving_purpose: Literal["internal", "participant"] | None = Field(
+        default=None,
+        description="Finalidade efetiva, inclusive do destino padrão herdado. Nenhum documento ou dado pessoal acompanha este estado.",
+    )
+
     """O destino de um escopo e quem entrega os eventos dele."""
 
+    capture_delivery_counts: CaptureDeliveryCounts = Field(
+        default_factory=CaptureDeliveryCounts,
+        description="Intenções locais de captura por estado. Remover a configuração apaga esse histórico; pendentes não mudam de destino e não serão enviadas.",
+    )
+
+    serving_events: list[str] = Field(
+        default_factory=list,
+        description="Eventos aceitos pelo destino efetivo, inclusive quando herdado do padrão.",
+    )
     scope: str = Field(description=SCOPE_TEXT, examples=["default", "diagnostico-rapido"])
     title: str | None = Field(
         description="O título do formulário. Nulo no destino padrão e no de um formulário que saiu do "
@@ -213,6 +238,7 @@ class DestinationDetail(BaseModel):
     def of(cls, found: queries.Detail, *, full_url: bool) -> DestinationDetail:
         own = found.stored
         return cls(
+            capture_delivery_counts=CaptureDeliveryCounts.of(found.capture_counts),
             scope=_scope(found.form_slug),
             title=found.form_title,
             version=str(own.version) if own else "0",
@@ -221,6 +247,8 @@ class DestinationDetail(BaseModel):
             else None,
             serving=found.serving,  # type: ignore[arg-type]
             serving_host=found.serving_host,
+            serving_events=list(found.serving_events),
+            serving_purpose=found.serving_purpose,
         )
 
 
@@ -228,10 +256,22 @@ class DestinationDetail(BaseModel):
 
 
 class SaveDestinationRequest(ConfirmedInput, VersionedInput):
+    purpose: Literal["internal", "participant"] | None = Field(
+        default=None,
+        description="Finalidade do receptor. Interna inclui dados comerciais; participante recebe só plano público. Criação omitida nunca autoriza uso interno; mudar URL exige escolha explícita. Giro de segredo conserva a escolha.",
+    )
+
     """O endereço a gravar. Criar o destino (`expected_version` `"0"`) gera o segredo; mudar o endereço
     mantém o segredo. Como o endereço decide para onde vão os dados das leads, a operação exige
     `confirm: true` em toda chamada."""
 
+    events: list[Literal["plano.concluido", "submissao.persistida", "plano.liberado"]] | None = (
+        Field(
+            default=None,
+            min_length=1,
+            description="Na criação, omitido mantém PDF legado; na atualização, omitido conserva os eventos atuais. Captura exige autorização explícita para submissao.persistida.",
+        )
+    )
     url: str = Field(
         max_length=destinations.MAX_URL_LENGTH,
         description="A URL do receptor: `https` (ou `http`, que em produção pede `confirm_http`), com "
@@ -283,7 +323,8 @@ class RotatedDestination(Destination):
 
     secret: str = Field(
         description="O segredo novo do destino. **Só existe nesta resposta**: ponha-o no receptor "
-        "agora, porque o antigo já não vale e as entregas seguintes saem assinadas com este.",
+        "agora, porque o antigo já não vale. Novos envios usam este segredo; entregas PDF fixadas "
+        "exigem repetir explicitamente com a revisão atual.",
         examples=["<segredo-mostrado-uma-vez>"],
         repr=False,
     )
@@ -301,13 +342,18 @@ class RotatedDestination(Destination):
 class RemovedDestination(BaseModel):
     """O destino que saiu e quem entrega os eventos do escopo agora."""
 
+    capture_delivery_counts: CaptureDeliveryCounts = Field(
+        default_factory=CaptureDeliveryCounts,
+        description="Intenções locais de captura por estado. Remover a configuração apaga esse histórico; pendentes não mudam de destino e não serão enviadas.",
+    )
+
     scope: str = Field(description=SCOPE_TEXT, examples=["default", "diagnostico-rapido"])
     removed: Destination = Field(
         description="O destino que saiu, como estava antes de ser removido."
     )
     serving: Serving = Field(
         description="Quem entrega os eventos deste escopo depois da remoção: `default` (o formulário "
-        "passa a usar o destino padrão) ou `none` (**os planos deixam de ser entregues**). Nunca "
+        "passa a usar o destino padrão para novos envios) ou `none` (novos envios ficam sem entrega). Intenções PDF fixadas não são redirecionadas. Nunca "
         "`form`."
     )
     serving_host: str | None = Field(
@@ -318,6 +364,7 @@ class RemovedDestination(BaseModel):
     @classmethod
     def of_removed(cls, removed: actions.Removed) -> RemovedDestination:
         return cls(
+            capture_delivery_counts=CaptureDeliveryCounts.of(removed.capture_counts),
             scope=_scope(removed.destination.form_slug),
             removed=Destination.of(removed.destination, unreadable=False, full_url=True),
             serving=removed.serving,  # type: ignore[arg-type]
@@ -331,13 +378,18 @@ class RemovedDestination(BaseModel):
 class SendDestinationTestEventRequest(ConfirmedInput):
     """O envio do evento de teste. Sai para o receptor de verdade, por isso exige `confirm: true`."""
 
+    event: Literal["webhook.teste", "submissao.persistida"] = Field(
+        default="webhook.teste",
+        description="Teste sintético do contrato de captura exige que o destino aceite o evento. Não cria submissão.",
+    )
+
 
 class DestinationTestResult(BaseModel):
     """O que o receptor respondeu ao evento de teste."""
 
     scope: str = Field(description=SCOPE_TEXT, examples=["default", "diagnostico-rapido"])
     outcome: Outcome = Field(
-        description="O que um `plano.concluido` faria com essa resposta: `delivered` (2xx: conta como "
+        description="O que a entrega do evento selecionado faria com essa resposta: `delivered` (2xx: conta como "
         "entregue), `retry` (408, 425, 429 ou 5xx: seria repetido por cerca de 3,5 h e depois "
         "marcado como falho), `rejected` (outro status, 3xx inclusive: redirecionamentos não são "
         "seguidos; seria recusado de vez) ou `no_response` (o receptor não respondeu: `error` diz o "

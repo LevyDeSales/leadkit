@@ -84,10 +84,10 @@ class WebhookSender:
     def send(self, event: str, event_id: str, payload: dict[str, Any]) -> int:
         body, headers = self._signed(event, event_id, payload)
         try:
-            response = self.client.post(self.url, content=body, headers=headers)
+            with self.client.stream("POST", self.url, content=body, headers=headers) as response:
+                status = response.status_code
         except httpx.HTTPError as exc:
             raise RetryableError(FailureCode.DELIVERY_UNAVAILABLE, type(exc).__name__) from exc
-        status = response.status_code
         verdict = outcome(status)
         if verdict == "delivered":
             return status

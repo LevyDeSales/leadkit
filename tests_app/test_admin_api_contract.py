@@ -70,7 +70,14 @@ TOKEN_STATE = frozenset({"token_set", "token_unreadable", "token_changed_at"})
 # operações `total` que o geram (`SECRET_ONCE`: a criação e a troca), na raiz da resposta delas. Nenhum
 # corpo de entrada tem uma propriedade `secret*`.
 SECRET_STATE = frozenset({"secret_unreadable", "secret_created_at"})
-SECRET_ONCE = {"save_destination": "secret", "rotate_destination_secret": "secret"}
+SECRET_ONCE = {
+    "save_destination": "secret",
+    "rotate_destination_secret": "secret",
+    "create_integration_credential": "secret",
+    "rotate_integration_credential": "secret",
+    "create_event_credential": "secret",
+    "rotate_event_credential": "secret",
+}
 LEAD_FIELDS = frozenset(
     {
         "name",
@@ -111,12 +118,107 @@ _JOB_ITEM = (
     "syncs.integration",
     "syncs.status",
 )
+_CAPTURE_ITEM = (
+    "submission_id",
+    "status",
+    "form_slug",
+    "form_version",
+    "form_version_number",
+    "created_at",
+    "deliveries",
+    "deliveries.delivery_id",
+    "deliveries.submission_id",
+    "deliveries.destination_id",
+    "deliveries.kind",
+    "deliveries.event",
+    "deliveries.config_version",
+    "deliveries.current_config_version",
+    "deliveries.status",
+    "deliveries.attempts",
+    "deliveries.dispatch_no",
+    "deliveries.error_code",
+    "deliveries.response_status",
+    "deliveries.row_id",
+    "deliveries.outcome",
+    "deliveries.delivered_at",
+)
+_JOURNEY_EVENT_STATE = (
+    "id",
+    "origin",
+    "source_id",
+    "source_revision",
+    "type",
+    "entity_kind",
+    "entity_revision",
+    "occurred_at",
+    "received_at",
+    "state",
+    "status",
+    "starts_at",
+    "ends_at",
+    "timezone",
+    "meeting_revision",
+    "meeting_event_id",
+)
 LEAD_STATE: dict[str, frozenset[str]] = {
+    "get_submission_journey": frozenset(
+        {
+            "submission_id",
+            "reference_id",
+            "reference_version",
+            "journey_version",
+            "job",
+            "job.id",
+            "job.attempt",
+            "job.status",
+            "local_facts",
+            "local_facts.origin",
+            "local_facts.type",
+            "local_facts.state",
+            "local_facts.occurred_at",
+            "local_facts.attempt",
+            "external_declared",
+            *(f"external_declared.{field}" for field in _JOURNEY_EVENT_STATE),
+        }
+    ),
+    "list_submission_journey_events": frozenset(
+        {"items", "next_cursor", *(f"items.{field}" for field in _JOURNEY_EVENT_STATE)}
+    ),
+    "list_captures": frozenset(
+        {"items", "next_cursor", *(f"items.{field}" for field in _CAPTURE_ITEM)}
+    ),
+    "get_capture": frozenset(_CAPTURE_ITEM),
     "list_jobs": frozenset(
         {"items", "next_cursor", "total", *(f"items.{field}" for field in _JOB_ITEM)}
     ),
     "get_job": frozenset(
         {
+            "release",
+            "release.policy",
+            "release.form_version_number",
+            "release.state",
+            "release.release_version",
+            "release.release_id",
+            "release.released_at",
+            "release.attempt",
+            "release.artifact_id",
+            "deliveries.event",
+            "deliveries.release_id",
+            "deliveries.occurred_at",
+            "deliveries.blocked_reason",
+            "deliveries.audience",
+            "deliveries.authorization_origin",
+            "deliveries.config_version",
+            "deliveries.current_config_version",
+            "deliveries.dispatch_no",
+            "current_pdf",
+            "current_pdf.accessible",
+            "current_pdf.attempt",
+            "current_pdf.available",
+            "current_pdf.exists",
+            "current_pdf.state",
+            "current_pdf.valid",
+            "current_pdf.verified_at",
             "attempt",
             "completed_at",
             "created_at",
@@ -171,6 +273,9 @@ LEAD_STATE: dict[str, frozenset[str]] = {
         }
     ),
     "download_job_pdf": frozenset(),
+    "get_job_plan_projection": frozenset(
+        {"public_id", "form_slug", "form_version", "form_version_number", "attempt", "audience"}
+    ),
 }
 
 
@@ -445,7 +550,16 @@ def _errors(
     found = []
     responses = operation.get("responses", {})
     role = operation.get("x-required-role")
-    versioned = "expected_version" in _fields(document, operation)
+    versioned = bool(
+        {
+            "expected_version",
+            "expected_receiver_version",
+            "expected_source_version",
+            "expected_journey_version",
+            "expected_handoff_version",
+        }
+        & set(_fields(document, operation))
+    )
     takes_input = bool(operation.get("requestBody") or operation.get("parameters"))
     required = {"401": "toda operação", "429": "toda operação"}
     if role == "total":

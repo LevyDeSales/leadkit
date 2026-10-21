@@ -237,6 +237,15 @@ def import_definition(
     now = utc_now()
     version_id = uuid.uuid4()
     with deps.sessions.begin() as session:
+        from app.integration_readiness import configuration_lock
+        from app.integration_readiness import problems as integration_problems
+
+        configuration_lock(session)
+        from app.forms.continuation_contract import assert_definition_contract
+
+        assert_definition_contract(session, document)
+        if issues := integration_problems(session, spec):
+            raise DefinitionError(issues)
         form_id = session.scalar(
             insert(Form)
             .values(
@@ -303,7 +312,9 @@ def contact_in_prompt(spec: FormSpec, identity: Mapping[str, str | None]) -> lis
     """Os papéis da identidade da lead (`CONTACT_ROLES`) cujas perguntas o prompt cita. Quando o
     prompt usa `answers` de um jeito que não dá para seguir (inteiro, num `set`, com a chave
     calculada), qualquer resposta pode ir ao LLM: contam todos os papéis que o formulário tem."""
-    assert spec.templates is not None  # um formulário compilado tem os templates
+    if spec.generation == "none":
+        return []
+    assert spec.templates is not None  # um formulário PDF compilado tem os templates
     read = spec.templates.prompt.reads("answers")
     return [
         role
@@ -326,6 +337,8 @@ def publication_problems(
     exemplo, sai do adaptador do PDF (o WeasyPrint em produção), que confere o que a compilação não
     vê, inclusive o arquivo de cada imagem. A compilação já renderizou o prompt, a prévia e o HTML
     do PDF com os exemplos. `document` é a definição como o banco a guarda."""
+    if spec.generation == "none":
+        return []
     known = assets or {}
     pdf_texts = document["pdf"]
     outside = resource_problems(

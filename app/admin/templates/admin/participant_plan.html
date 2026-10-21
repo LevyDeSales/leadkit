@@ -1,0 +1,10 @@
+{% extends "admin/layout.html" %}
+{% set section = "jobs" %}
+{% block title %}Plano da participante{% endblock %}
+{% block content %}
+<h1>Plano da participante</h1>
+<p>Documento público do plano · tentativa {{ projection.attempt }} · {{ projection.form_slug }} · versão {{ projection.form_version_number }}.</p>
+<p>Esta visualização não concede acesso público nem envia o plano.</p>
+<pre class="json" tabindex="0" aria-label="Plano da participante em JSON">{{ projection.document | tojson(indent=2) }}</pre>
+<a class="btn" href="/admin/jobs/{{ projection.public_id }}">Voltar ao pedido interno</a>
+{% endblock %}

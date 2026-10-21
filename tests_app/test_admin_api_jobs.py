@@ -1031,6 +1031,7 @@ def test_list_jobs_the_form_version_filter_lists_the_same_orders_as_the_page(
 # --- get_job ------------------------------------------------------------------------------------
 
 STATE_FIELDS = {
+    "release",
     "public_id",
     "status",
     "stage",
@@ -1048,6 +1049,7 @@ STATE_FIELDS = {
     "syncs",
     "timeline",
     "lead_data",
+    "current_pdf",
 }
 RUN_URL = "https://hatchet.example.test/runs/{run_id}"
 
@@ -1156,6 +1158,15 @@ def test_get_job_lists_the_pdfs_the_deliveries_and_the_syncs_of_each_attempt(
     first = body["deliveries"][0]
     assert first["destination"] == "webhook" and first["attempts"] == 1
     assert set(first) == {
+        "audience",
+        "authorization_origin",
+        "config_version",
+        "current_config_version",
+        "dispatch_no",
+        "event",
+        "release_id",
+        "occurred_at",
+        "blocked_reason",
         "id",
         "destination",
         "status",

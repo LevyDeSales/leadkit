@@ -290,14 +290,14 @@ def test_admin_pages_redirect_to_login_without_a_session(client: TestClient) -> 
     assert 'name="username"' in page.text and 'type="password"' in page.text
 
 
-def test_login_opens_an_http_only_session_and_shows_the_job_list(
+def test_login_opens_an_http_only_session_and_keeps_the_legacy_job_list(
     client: TestClient, deps: Deps
 ) -> None:
     submit(deps, answers={**DEMO_ANSWERS, "nome": "Marina Alves", "email": "marina@example.test"})
 
     response = login(client)
 
-    assert response.status_code == 303 and response.headers["location"] == "/admin"
+    assert response.status_code == 303 and response.headers["location"] == "/admin/forms"
     cookie = response.headers["set-cookie"].lower()
     assert "httponly" in cookie and "samesite=lax" in cookie and "path=/admin" in cookie
     assert "secure" not in cookie  # o teste roda em http
@@ -305,7 +305,7 @@ def test_login_opens_an_http_only_session_and_shows_the_job_list(
     assert page.status_code == 200
     assert "Marina Alves" in page.text and "marina@example.test" in page.text
     assert page.headers["cache-control"] == "no-store"
-    assert client.get("/admin/login").headers["location"] == "/admin"  # já logada
+    assert client.get("/admin/login").headers["location"] == "/admin/forms"  # já logada
 
 
 def test_login_returns_to_the_requested_admin_page_only(client: TestClient) -> None:
@@ -315,9 +315,9 @@ def test_login_returns_to_the_requested_admin_page_only(client: TestClient) -> N
     )
     assert login(client, next="/admin/jobs/abc").headers["location"] == "/admin/jobs/abc"
     client.cookies.clear()
-    assert login(client, next="https://golpe.example/admin").headers["location"] == "/admin"
+    assert login(client, next="https://golpe.example/admin").headers["location"] == "/admin/forms"
     client.cookies.clear()
-    assert login(client, next="//golpe.example/admin").headers["location"] == "/admin"
+    assert login(client, next="//golpe.example/admin").headers["location"] == "/admin/forms"
 
 
 def test_failed_logins_get_one_generic_message_and_lock_out_progressively(
@@ -1079,7 +1079,7 @@ def launched(monkeypatch: pytest.MonkeyPatch) -> list[uuid.UUID]:
 def resend(client: TestClient, public_id: str, delivery_id: object, token: str) -> httpx.Response:
     return client.post(
         f"/admin/jobs/{public_id}/deliveries/{delivery_id}/resend",
-        data={"csrf_token": token},
+        data={"csrf_token": token, "expected_config_version": 1, "expected_attempt": 1},
         headers=ORIGIN,
     )
 
@@ -1110,9 +1110,7 @@ def test_resend_returns_a_failed_delivery_to_pending_and_launches_it(
 
     again = resend(client, job.public_id, delivery_id, token)  # já não está falha
     assert again.status_code == 303 and launched == [delivery_id]
-    assert (
-        "Só dá para reenviar uma entrega que falhou" in client.get(again.headers["location"]).text
-    )
+    assert "A entrega precisa ter falhado" in client.get(again.headers["location"]).text
 
 
 def test_resend_does_not_hold_the_operator_when_the_engine_does_not_answer(

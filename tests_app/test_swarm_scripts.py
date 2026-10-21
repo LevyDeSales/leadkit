@@ -15,42 +15,292 @@ import pytest
 
 SWARM_DIR = Path(__file__).resolve().parent.parent / "deploy" / "swarm"
 
-FAKE_DOCKER = r"""#!/usr/bin/env bash
-echo "$*" >> "$STUB_CALLS"
-case "$1 $2" in
-  "image inspect")
-    [[ "$*" == *--format* ]] && echo sha256:imagem
-    exit 0 ;;
-  "network inspect")
-    if [[ "$*" == *traefik-public* ]]; then  # a rede do Traefik: o servidor tem uma sub-rede (ou mais)
-      [[ -n "${STUB_NO_TRAEFIK_NETWORK:-}" ]] && exit 1
-      echo "${STUB_TRAEFIK_SUBNETS-10.0.1.0/24}"
-      exit 0
-    fi
-    [[ -n "${STUB_NETWORK:-}" ]] && exit 0
-    exit 1 ;;
-  "service inspect")
-    if [[ "$*" == *Spec.Labels* ]]; then  # a regra do router que está no ar
-      [[ -n "${STUB_LIVE_RULE:-}" ]] && { echo "$STUB_LIVE_RULE"; exit 0; }
-      exit 1
-    fi
-    echo "servico_api"  # o estado das atualizações: sem nenhuma em curso
-    exit 0 ;;
-  "stack services") echo servico; exit 0 ;;
-  "stack deploy")
-    echo "STACK=${STACK:-} DOMAIN=${DOMAIN:-}" >> "$STUB_CALLS"
-    # Os ajustes do stack.yaml que o deploy.sh exporta, para o teste conferir o que o Swarm recebe.
-    env | grep -E '^(RATE_LIMIT_|[A-Z]+_MEMORY_|FORWARDED_ALLOW_IPS=)' | sort >> "$STUB_CALLS.settings"
-    exit 0 ;;
-  "service ps") exit 0 ;;
-esac
-case "$1" in
-  ps)  # o contêiner do serviço do banco, só se o filtro pede o serviço que existe
-    [[ "$*" == *"service.name=${STUB_DB_SERVICE:-}"* ]] && echo contêiner
-    exit 0 ;;
-  exec) printf 'dump' ; exit 0 ;;
-esac
-exit 0
+FAKE_DOCKER = r"""#!/usr/bin/env python3
+import copy
+import hashlib
+import json
+import os
+from pathlib import Path
+import sys
+import time
+
+args = sys.argv[1:]
+calls = Path(os.environ['STUB_CALLS'])
+with calls.open('a') as file:
+    file.write(' '.join(args) + '\n')
+state_path = Path(str(calls) + '.state')
+a = 'sha256:' + 'a' * 64
+b = 'sha256:' + 'b' * 64
+c = 'sha256:' + 'c' * 64
+node = 'local-node'
+
+def spec(image, replicas):
+    return {'TaskTemplate':{'ContainerSpec':{'Image':image}}, 'Mode':{'Replicated':{'Replicas':replicas}}}
+
+def image_id(ref):
+    return b if ref in {b, 'leadkit:old'} else c if ref in {c, 'leadkit:one'} else a
+
+def apply(state, role, image, replicas):
+    svc = state['services'].setdefault(role, {'ID':role + '-service', 'Version':{'Index':0}, 'Spec':spec(image, 0)})
+    svc['PreviousSpec'] = copy.deepcopy(svc['Spec'])
+    svc['Spec'] = spec(image, replicas)
+    svc['Version']['Index'] += 1
+    svc['UpdateStatus'] = {'State':'completed'}
+    for task in state['tasks'].values():
+        if task['role'] == role and task['DesiredState'] == 'running':
+            task['DesiredState'] = 'shutdown'
+            task['Status']['State'] = 'shutdown'
+            cid = task['Status']['ContainerStatus']['ContainerID']
+            state['containers'][cid]['State']['Running'] = bool(os.getenv('STUB_OLD_RUNNING'))
+    if replicas:
+        tid = role + '-' + str(svc['Version']['Index'])
+        cid = hashlib.sha256(tid.encode()).hexdigest()
+        state['tasks'][tid] = {'ID':tid,'role':role,'NodeID':node, 'DesiredState':'running',
+                              'Status':{'State':'running','ContainerStatus':{'ContainerID':cid}}}
+        state['containers'][cid] = {'Image':image_id(image), 'State':{'Running':True,'Health':{'Status':'healthy'}}}
+
+def reap_during_observation(state, cid):
+    state['containers'].pop(cid, None)
+    state.setdefault('destroyed', []).append(cid)
+    state.setdefault('destroyed_at', {})[cid] = time.time_ns()
+    state['removed_during_observation'] = True
+    for tid, task in list(state['tasks'].items()):
+        if task['Status']['ContainerStatus']['ContainerID'] == cid:
+            state.setdefault('reaped_tasks', {})[cid] = copy.deepcopy(task)
+            outcome=os.getenv('STUB_RACE_OUTCOME','removed')
+            if outcome in {'active','terminal'}:
+                task['DesiredState']='remove'
+                task['Status']['State']='running' if outcome=='active' else 'shutdown'
+            else:
+                del state['tasks'][tid]
+            if outcome=='extra':
+                extra=copy.deepcopy(task)
+                extra['ID']=task['role']+'-refresh'
+                extra['DesiredState']='running'
+                extra['Status']['State']='running'
+                extra_cid=hashlib.sha256(extra['ID'].encode()).hexdigest()
+                extra['Status']['ContainerStatus']['ContainerID']=extra_cid
+                state['tasks'][extra['ID']]=extra
+                state['containers'][extra_cid]={'Image':b,'State':{'Running':True,'Health':{'Status':'healthy'}}}
+
+if state_path.exists():
+    state = json.loads(state_path.read_text())
+else:
+    floor = int(os.getenv('STUB_CONTRACT_FLOOR', '1' if os.getenv('STUB_NETWORK') else '0'))
+    state = {'floor':floor, 'network':bool(os.getenv('STUB_NETWORK')), 'services':{}, 'tasks':{}, 'containers':{}, 'epoch':None}
+    if state['network']:
+        for role in ('api','worker'):
+            apply(state, role, 'leadkit:old' if floor == 0 else 'leadkit:one' if int(os.getenv('STUB_INITIAL_CONTRACT', str(floor))) == 1 and os.getenv('STUB_TARGET_CONTRACT') == '2' else 'gerador-planos:abc123', 1)
+            state['services'][role]['PreviousSpec'] = copy.deepcopy(state['services'][role]['Spec'])
+
+code = 0
+out = ''
+head = args[:2]
+if head == ['image','inspect']:
+    if '--format' in args:
+        fmt = args[args.index('--format')+1]
+        out = '[]' if 'RepoDigests' in fmt else image_id(args[-1])
+    else:
+        out = json.dumps([{'Id': image_id(args[-1])}])
+elif head == ['image','tag']:
+    pass
+elif head == ['network','inspect']:
+    if 'traefik-public' in args:
+        code = 1 if os.getenv('STUB_NO_TRAEFIK_NETWORK') else 0
+        out = '' if code else os.getenv('STUB_TRAEFIK_SUBNETS','10.0.1.0/24')
+    else:
+        code = 0 if state['network'] else 1
+elif head == ['service','inspect']:
+    if any('Spec.Labels' in x for x in args):
+        out = os.getenv('STUB_LIVE_RULE','')
+        code = 0 if out else 1
+    else:
+        role = args[-1].rsplit('_',1)[-1]
+        svc = copy.deepcopy(state['services'].get(role))
+        if svc is None: code = 1
+        else:
+            if os.getenv('STUB_SPEC_DRIFT') and state.get('deployed'):
+                state['services'][role]['Version']['Index'] += 1
+                svc['Version']['Index'] += 1
+            if os.getenv('STUB_PREVIOUS_OLD') and state.get('deployed'):
+                svc['PreviousSpec'] = spec('leadkit:old',0)
+            if os.getenv('STUB_MISSING_REPLICA'):
+                svc['Spec']['Mode']['Replicated']['Replicas'] = 2
+            out = json.dumps([svc])
+elif head == ['service','ls']:
+    stack = os.getenv('STACK','gerador-planos')
+    out = '\n'.join(stack+'_'+r for r in state['services'])
+elif head == ['service','ps']:
+    role = args[-1].rsplit('_',1)[-1]
+    out = '\n'.join(t['ID'] for t in state['tasks'].values() if t['role']==role)
+    if state.get('removed_during_observation') and os.getenv('STUB_REFRESH_FAIL'): code=1
+    if state.get('removed_during_observation') and os.getenv('STUB_REFRESH_PARTIAL')=='requested_duplicate': out+='\n'+out
+elif head == ['service','scale']:
+    for setting in args[2:]:
+        if '=' in setting and not setting.startswith('--'):
+            name, replicas = setting.rsplit('=',1)
+            role = name.rsplit('_',1)[-1]
+            apply(state, role, state['services'][role]['Spec']['TaskTemplate']['ContainerSpec']['Image'],int(replicas))
+    if os.getenv('STUB_SCALE_FAIL'): code=1
+    state['scaled'] = True
+    if os.getenv('STUB_REAP_RACE'):
+        for task in state['tasks'].values():
+            if task['DesiredState'] == 'shutdown':
+                task['Status']['State'] = 'running'
+                state['containers'][task['Status']['ContainerStatus']['ContainerID']]['State']['Running'] = True
+    if os.getenv('STUB_REAP'):
+        for tid, task in list(state['tasks'].items()):
+            if task['DesiredState'] == 'shutdown':
+                cid = task['Status']['ContainerStatus']['ContainerID']
+                if os.getenv('STUB_REAP') != 'visible':
+                    state['containers'].pop(cid, None)
+                state.setdefault('destroyed', []).append(cid)
+                state.setdefault('destroyed_at', {})[cid] = time.time_ns()
+                if os.getenv('STUB_REAP_ACTIVE'):
+                    task['Status']['State']='running'
+                    task['DesiredState']='remove'
+                if os.getenv('STUB_REAP_REMOTE'): task['NodeID']='remote-node'
+                if os.getenv('STUB_REAP') == 'task':
+                    del state['tasks'][tid]
+elif head == ['service','update']:
+    role = args[-1].rsplit('_',1)[-1]
+    svc = state['services'][role]
+    apply(state, role, svc['Spec']['TaskTemplate']['ContainerSpec']['Image'],svc['Spec']['Mode']['Replicated']['Replicas'])
+    if os.getenv('STUB_FORCE_FAIL') and state['floor'] >= 1: code=1
+elif head == ['stack','deploy']:
+    state['network'] = True
+    state['deployed'] = True
+    with calls.open('a') as file:
+        file.write('STACK='+os.getenv('STACK','')+' DOMAIN='+os.getenv('DOMAIN','')+'\n')
+    settings = {k:v for k,v in os.environ.items() if k.startswith('RATE_LIMIT_') or '_MEMORY_' in k or k=='FORWARDED_ALLOW_IPS'}
+    Path(str(calls)+'.settings').write_text('\n'.join(k+'='+v for k,v in sorted(settings.items())))
+    if os.getenv('STUB_STACK_FAIL') and state['floor'] >= 1:
+        code=1
+    else:
+        replicas = 0 if args.count('-c') == 2 else 1
+        for role in ('api','worker'):
+            apply(state, role, os.environ['IMAGE'],replicas)
+        if os.getenv('STUB_AUTO_ROLLBACK') and replicas:
+            for role in ('api','worker'):
+                svc=state['services'][role]
+                old=copy.deepcopy(svc['PreviousSpec'])
+                apply(state,role,old['TaskTemplate']['ContainerSpec']['Image'],old['Mode']['Replicated']['Replicas'])
+                svc['UpdateStatus']={'State':'rollback_completed'}
+                svc.pop('PreviousSpec', None)
+elif args[:1] == ['info']:
+    out='different-node' if os.getenv('STUB_NODE_CHANGE') and state.get('destroyed') else node
+elif head == ['node','inspect']:
+    out=json.dumps([{'Status':{'State':'down' if os.getenv('STUB_NODE_DOWN') or (os.getenv('STUB_NODE_LOST') and state.get('destroyed')) else 'ready'},'ManagerStatus':{'Reachability':'reachable'}}])
+elif args[:1] == ['inspect']:
+    kind=args[args.index('--type')+1]
+    names=args[args.index('--type')+2:]
+    if os.getenv('STUB_LATE_TASK') and kind=='container' and state.get('scaled') and state['floor'] < int(os.getenv('STUB_TARGET_CONTRACT', '1')):
+        for old_cid in names:
+            prior=state.get('reaped_tasks',{}).get(old_cid)
+            if prior and prior['role']=='api':
+                count=state.get('missing_api_inspects',0)+1
+                state['missing_api_inspects']=count
+                if count==2:
+                    extra=copy.deepcopy(prior)
+                    extra['ID']='api-late-refresh'
+                    extra['DesiredState']='remove'
+                    extra['Status']['State']='running'
+                    cid=hashlib.sha256(extra['ID'].encode()).hexdigest()
+                    extra['Status']['ContainerStatus']['ContainerID']=cid
+                    state['tasks'][extra['ID']]=extra
+                    state['containers'][cid]={'Image':b,'State':{'Running':True,'Health':{'Status':'healthy'}}}
+                    state['late_live_cid']=cid
+    if kind=='task':
+        values=[copy.deepcopy(state['tasks'][x]) for x in names]
+        if os.getenv('STUB_REMOTE_NODE'):
+            for value in values: value['NodeID']='remote-node'
+        if os.getenv('STUB_MISSING_CONTAINER'):
+            for value in values: value['Status']['ContainerStatus']['ContainerID']=''
+        if state.get('removed_during_observation') and os.getenv('STUB_REFRESH_INSPECT_FAIL'): code=1
+        if state.get('removed_during_observation'):
+            fault=os.getenv('STUB_REFRESH_PARTIAL')
+            if fault=='omitted': values=[]
+            if fault=='duplicate': values=values*2
+            if fault=='wrong':
+                for value in values: value['ID']='different-task'
+    else:
+        if os.getenv('STUB_REAP_RACE') == 'inspect' and state.get('scaled') and state['floor'] == 0:
+            for cid in names:
+                if cid in state['containers']:
+                    reap_during_observation(state, cid)
+        if os.getenv('STUB_INITIAL_INSPECT_FAIL') or any(x not in state['containers'] for x in names) or (os.getenv('STUB_REAP')=='visible' and state.get('destroyed')):
+            code=1
+            values=[]
+        else:
+            values=[copy.deepcopy(state['containers'][x]) for x in names]
+            if os.getenv('STUB_OBSERVED_IMAGE_DRIFT') and state.get('scaled'):
+                for value in values: value['Image']=a if value['Image']==b else b
+    out=json.dumps(values)
+elif head == ['container','wait']:
+    out='0'
+    if os.getenv('STUB_REAP_RACE') == 'wait': reap_during_observation(state, args[-1])
+elif args[:1] == ['ps']:
+    if '-aq' in args:
+        if args[-1].startswith('id='):
+            cid=args[-1].split('=',1)[1]
+            out=cid if cid in state['containers'] else ''
+            if os.getenv('STUB_LOCAL_LIST_FAIL'): code=1
+        else:
+            role=args[-1].rsplit('_',1)[-1]
+            out='\n'.join(t['Status']['ContainerStatus']['ContainerID'] if '--no-trunc' in args else t['Status']['ContainerStatus']['ContainerID'][:12] for t in state['tasks'].values() if t['role']==role and t['Status']['ContainerStatus']['ContainerID'] in state['containers'])
+            if state.get('removed_during_observation') and os.getenv('STUB_REFRESH_LOCAL_FAIL'): code=1
+    elif 'service.name='+os.getenv('STUB_DB_SERVICE','never') in ' '.join(args):
+        out='container'
+elif args[:1] == ['events']:
+    if os.getenv('STUB_EVENTS_FAIL'): code=1
+    elif not os.getenv('STUB_NO_DESTROY'):
+        out='\n'.join(json.dumps({'Type':'container','Action':'destroy','Actor':{'ID':cid},'scope':'local','timeNano':state['destroyed_at'][cid]}) for cid in state.get('destroyed',[]))
+        fault=os.getenv('STUB_EVENT_FAULT')
+        if fault=='id': out=out.replace('"ID": "','"ID": "wrong-')
+        if fault=='action': out=out.replace('destroy','die')
+        if fault=='type': out=out.replace('container','image')
+        if fault=='json': out='SYNTHETIC_PRIVATE_ERROR'
+        if fault=='old': out='\n'.join(json.dumps({'Type':'container','Action':'destroy','Actor':{'ID':cid},'scope':'local','timeNano':0}) for cid in state.get('destroyed',[]))
+        if fault=='scope': out=out.replace('local','swarm')
+        if fault=='future': out='\n'.join(json.dumps({'Type':'container','Action':'destroy','Actor':{'ID':cid},'scope':'local','timeNano':time.time_ns()+10**12}) for cid in state.get('destroyed',[]))
+        if fault=='time_type': out='\n'.join(json.dumps({'Type':'container','Action':'destroy','Actor':{'ID':cid},'scope':'local','timeNano':str(state['destroyed_at'][cid])}) for cid in state.get('destroyed',[]))
+        if os.getenv('STUB_CONSUME_EVENTS'):
+            key=next(x for x in args if x.startswith('container='))
+            count=state.setdefault('event_reads',{}).get(key,0)
+            state['event_reads'][key]=count+1
+            if count: out=''
+elif args[:1] == ['exec']:
+    out='dump'
+elif args[:1] == ['run']:
+    if args[-1]=='migrate':
+        if os.getenv('STUB_LATE_TASK'):
+            late=state.get('late_live_cid')
+            state['late_running_at_ddl']=bool(late and state['containers'].get(late,{}).get('State',{}).get('Running'))
+        state['floor']=int(os.getenv('STUB_TARGET_CONTRACT', '1'))
+        state['epoch']=None
+        state['phase']='blocked'
+        if os.getenv('STUB_MIGRATE_FAIL'): code=1
+    elif 'app.deployment_contract' in args:
+        action=args[-1]
+        if action=='capability':
+            identity=args[args.index('python')-1]
+            out=json.dumps({'contract':0 if identity==b or os.getenv('STUB_TARGET_OLD') else 1 if identity==c else int(os.getenv('STUB_TARGET_CONTRACT', '1'))})
+        elif action=='status':
+            out=json.dumps({'minimum_contract':state['floor'],'phase':state.get('phase','blocked'),'epoch':state['epoch']})
+        else:
+            doc=json.loads(sys.stdin.read())
+            if action=='begin':
+                state['epoch']=doc['epoch']
+                state['phase']='blocked'
+            elif action=='attest':
+                if doc['epoch']!=state['epoch']: code=1
+                else:
+                    state['attested']=doc['evidence']
+                    state['phase']='verified'
+            out=json.dumps({'ok':True})
+state_path.write_text(json.dumps(state))
+if out: sys.stdout.write(out if args[:1] == ['exec'] else out + '\n')
+raise SystemExit(code)
 """
 
 DOMAIN = "planos.example.test"
@@ -119,7 +369,7 @@ class Server:
         self.staging = staging
         self.folder = root / "swarm"
         self.folder.mkdir()
-        for name in ("stack.yaml", "deploy.sh"):
+        for name in ("stack.yaml", "deploy.sh", "rollout.py"):
             self.install(name)
         (self.folder / "db.env").write_text("POSTGRES_PASSWORD=exemplo\n")
         self.write_app_env()
@@ -205,7 +455,9 @@ def stack_deploy_call(server: Server) -> str:
 
 
 def migrate_call(server: Server) -> str:
-    return next(call for call in server.calls if call.startswith("run "))
+    return next(
+        call for call in server.calls if call.startswith("run ") and call.endswith(" migrate")
+    )
 
 
 def deploy(server: Server, **env: str) -> subprocess.CompletedProcess[str]:
@@ -585,3 +837,323 @@ def test_the_backup_refuses_an_invalid_stack_name(server):
 
     assert result.returncode == 1
     assert "STACK" in result.stderr
+
+
+def test_first_adoption_stops_both_old_services_before_migration(server):
+    result = deploy(server, STUB_NETWORK="1", STUB_CONTRACT_FLOOR="0")
+    assert result.returncode == 0, result.stderr
+    scale = next(i for i, call in enumerate(server.calls) if call.startswith("service scale "))
+    migration = next(
+        i
+        for i, call in enumerate(server.calls)
+        if call.startswith("run ") and call.endswith(" migrate")
+    )
+    assert scale < migration
+    assert "gerador-planos_api=0" in server.calls[scale]
+    assert "gerador-planos_worker=0" in server.calls[scale]
+
+
+@pytest.mark.parametrize("reaped", ["container", "task"])
+def test_first_adoption_proves_exit_when_swarm_reaps_stopped_containers(server, reaped):
+    result = deploy(server, STUB_NETWORK="1", STUB_CONTRACT_FLOOR="0", STUB_REAP=reaped)
+    assert result.returncode == 0, result.stderr
+    assert rollout_state(server)["phase"] == "verified"
+    assert any(call.startswith("events ") for call in server.calls)
+    retired = rollout_state(server)["attested"]["services"]["api"]["retired"]
+    assert retired and all(not row["running"] for row in retired)
+
+
+@pytest.mark.parametrize("boundary", ["wait", "inspect"])
+@pytest.mark.parametrize("outcome", ["removed", "terminal"])
+def test_first_adoption_refreshes_inventory_when_container_disappears_during_observation(
+    server, boundary, outcome
+):
+    result = deploy(
+        server,
+        STUB_NETWORK="1",
+        STUB_CONTRACT_FLOOR="0",
+        STUB_REAP_RACE=boundary,
+        STUB_RACE_OUTCOME=outcome,
+    )
+    assert result.returncode == 0, result.stderr
+    state = rollout_state(server)
+    assert state["removed_during_observation"]
+    assert state["phase"] == "verified"
+    assert any(call.startswith("events ") for call in server.calls)
+
+
+def test_second_quiesce_collection_refuses_late_running_task_before_ddl(server):
+    result = deploy(
+        server, STUB_NETWORK="1", STUB_CONTRACT_FLOOR="0", STUB_REAP_RACE="wait", STUB_LATE_TASK="1"
+    )
+    state = rollout_state(server)
+    assert state["missing_api_inspects"] >= 2
+    assert not any(
+        call.startswith("run ") and call.endswith(" migrate") for call in server.calls
+    ), {"late_running_at_ddl": state.get("late_running_at_ddl")}
+    assert result.returncode == 1
+    assert state["containers"][state["late_live_cid"]]["State"]["Running"]
+    assert state["floor"] == 0 and "attested" not in state
+    assert "Traceback" not in result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("boundary", ["wait", "inspect"])
+@pytest.mark.parametrize(
+    "fault",
+    [
+        {"STUB_RACE_OUTCOME": "active"},
+        {"STUB_RACE_OUTCOME": "extra"},
+        {"STUB_REFRESH_FAIL": "1"},
+        {"STUB_REFRESH_INSPECT_FAIL": "1", "STUB_RACE_OUTCOME": "terminal"},
+        {"STUB_REFRESH_LOCAL_FAIL": "1"},
+    ],
+)
+def test_disappearance_race_with_active_or_unobserved_inventory_keeps_gate_closed(
+    server, boundary, fault
+):
+    result = deploy(
+        server, STUB_NETWORK="1", STUB_CONTRACT_FLOOR="0", STUB_REAP_RACE=boundary, **fault
+    )
+    assert result.returncode == 1
+    assert rollout_state(server)["removed_during_observation"]
+    assert not any(call.startswith("run ") and call.endswith(" migrate") for call in server.calls)
+    assert "attested" not in rollout_state(server)
+    assert "Traceback" not in result.stdout + result.stderr
+
+
+def test_first_adoption_refuses_changed_image_for_previously_observed_container(server):
+    result = deploy(
+        server, STUB_NETWORK="1", STUB_CONTRACT_FLOOR="0", STUB_OBSERVED_IMAGE_DRIFT="1"
+    )
+    assert result.returncode == 1
+    assert not any(call.startswith("run ") and call.endswith(" migrate") for call in server.calls)
+    assert "attested" not in rollout_state(server)
+
+
+@pytest.mark.parametrize("partial", ["omitted", "duplicate", "wrong", "requested_duplicate"])
+def test_disappearance_race_refuses_partial_task_inventory_even_with_zero_exit(server, partial):
+    result = deploy(
+        server,
+        STUB_NETWORK="1",
+        STUB_CONTRACT_FLOOR="0",
+        STUB_REAP_RACE="wait",
+        STUB_RACE_OUTCOME="terminal",
+        STUB_REFRESH_PARTIAL=partial,
+    )
+    assert result.returncode == 1
+    assert not any(call.startswith("run ") and call.endswith(" migrate") for call in server.calls)
+    assert "attested" not in rollout_state(server)
+
+
+def test_first_adoption_keeps_positive_proof_after_event_history_rotates(server):
+    result = deploy(
+        server, STUB_NETWORK="1", STUB_CONTRACT_FLOOR="0", STUB_REAP="task", STUB_CONSUME_EVENTS="1"
+    )
+    assert result.returncode == 0, result.stderr
+    assert rollout_state(server)["phase"] == "verified"
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        {"STUB_NO_DESTROY": "1"},
+        {"STUB_EVENTS_FAIL": "1"},
+        {"STUB_LOCAL_LIST_FAIL": "1"},
+        {"STUB_REAP_ACTIVE": "1"},
+        {"STUB_REAP_REMOTE": "1"},
+        {"STUB_REAP": "visible"},
+        {"STUB_INITIAL_INSPECT_FAIL": "1"},
+        {"STUB_NODE_CHANGE": "1"},
+        {"STUB_NODE_LOST": "1"},
+        *(
+            {"STUB_EVENT_FAULT": value}
+            for value in ("id", "action", "type", "json", "old", "scope", "future", "time_type")
+        ),
+    ],
+)
+def test_removed_container_with_incomplete_exit_proof_keeps_gate_closed(server, fault):
+    result = deploy(
+        server, STUB_NETWORK="1", STUB_CONTRACT_FLOOR="0", **{"STUB_REAP": "container", **fault}
+    )
+    assert result.returncode == 1
+    assert not any(call.startswith("run ") and call.endswith(" migrate") for call in server.calls)
+    assert "attested" not in rollout_state(server)
+    assert "SYNTHETIC_PRIVATE_ERROR" not in result.stdout + result.stderr
+
+
+def rollout_state(server):
+    import json
+
+    return json.loads(Path(str(server.calls_file) + ".state").read_text())
+
+
+@pytest.mark.parametrize(
+    "fault", ["STUB_OLD_RUNNING", "STUB_MISSING_CONTAINER", "STUB_REMOTE_NODE", "STUB_NODE_DOWN"]
+)
+def test_unobserved_or_live_old_processes_stop_bootstrap_before_ddl(server, fault):
+    result = deploy(server, STUB_NETWORK="1", STUB_CONTRACT_FLOOR="0", **{fault: "1"})
+    assert result.returncode == 1
+    assert not any(call.startswith("run ") and call.endswith(" migrate") for call in server.calls)
+    assert "attested" not in rollout_state(server)
+
+
+@pytest.mark.parametrize(
+    "fault", ["STUB_MIGRATE_FAIL", "STUB_STACK_FAIL", "STUB_AUTO_ROLLBACK", "STUB_FORCE_FAIL"]
+)
+def test_failed_initial_adoption_never_restores_old_active_replicas(server, fault):
+    result = deploy(server, STUB_NETWORK="1", STUB_CONTRACT_FLOOR="0", **{fault: "1"})
+    assert result.returncode == 1
+    state = rollout_state(server)
+    assert state["floor"] == 1
+    assert state.get("phase", "blocked") == "blocked"
+    assert "attested" not in state
+    for service in state["services"].values():
+        spec = service["Spec"]
+        if spec["TaskTemplate"]["ContainerSpec"]["Image"] == "leadkit:old":
+            assert spec["Mode"]["Replicated"]["Replicas"] == 0
+        previous = service.get("PreviousSpec")
+        if previous and previous["TaskTemplate"]["ContainerSpec"]["Image"] == "leadkit:old":
+            assert previous["Mode"]["Replicated"]["Replicas"] == 0
+
+
+@pytest.mark.parametrize("fault", ["STUB_PREVIOUS_OLD", "STUB_MISSING_REPLICA", "STUB_SPEC_DRIFT"])
+def test_incomplete_fleet_never_reaches_operational_attestation(server, fault):
+    result = deploy(server, STUB_NETWORK="1", **{fault: "1"})
+    assert result.returncode == 1
+    assert rollout_state(server).get("phase") == "blocked"
+    assert "attested" not in rollout_state(server)
+
+
+def test_old_target_is_refused_before_mutation_or_migration(server):
+    result = deploy(server, STUB_NETWORK="1", STUB_TARGET_OLD="1", ROLLBACK="1")
+    assert result.returncode == 1
+    assert not any(
+        call.startswith(("stack deploy", "service scale", "service update", "image tag"))
+        for call in server.calls
+    )
+    assert not any(call.endswith((" migrate", " begin", " attest")) for call in server.calls)
+
+
+def test_compatible_update_and_rollback_keep_rolling_and_preserve_floor(server):
+    for extra in ({}, {"ROLLBACK": "1"}):
+        result = deploy(server, STUB_NETWORK="1", **extra)
+        assert result.returncode == 0, result.stderr
+        assert rollout_state(server)["phase"] == "verified"
+        assert rollout_state(server)["floor"] == 1
+    assert not any(call.startswith("service scale ") for call in server.calls)
+    assert "sem migrations" in result.stdout
+
+
+def test_restart_resumes_quiescent_bootstrap_after_committed_migration(server):
+    failed = deploy(server, STUB_NETWORK="1", STUB_CONTRACT_FLOOR="0", STUB_STACK_FAIL="1")
+    assert failed.returncode == 1
+    state = rollout_state(server)
+    assert state["floor"] == 1
+    assert all(s["Spec"]["Mode"]["Replicated"]["Replicas"] == 0 for s in state["services"].values())
+    result = deploy(server, STUB_NETWORK="1")
+    assert result.returncode == 0, result.stderr
+    assert rollout_state(server)["phase"] == "verified"
+
+
+def test_rollout_correlates_full_ids_when_docker_ps_truncates_by_default(server):
+    result = deploy(server, STUB_NETWORK="1")
+    assert result.returncode == 0, result.stderr
+    state = rollout_state(server)
+    assert state["phase"] == "verified"
+    services = state["attested"]["services"]
+    assert all(
+        len(task["container_id"]) == 64
+        for service in services.values()
+        for task in service["tasks"]
+    )
+
+
+def test_contract_upgrade_quiesces_before_ddl_and_attests_composed_return_path(server):
+    result = deploy(server, STUB_NETWORK="1", STUB_TARGET_CONTRACT="2")
+    assert result.returncode == 0, result.stderr
+    calls = server.calls
+    scale = next(i for i, call in enumerate(calls) if call.startswith("service scale "))
+    migration = next(i for i, call in enumerate(calls) if call.endswith(" migrate"))
+    assert scale < migration
+    begins = [i for i, call in enumerate(calls) if call.endswith(" begin")]
+    assert begins[0] < scale < migration < begins[-1]
+    state = rollout_state(server)
+    assert state["floor"] == 2 and state["phase"] == "verified"
+    for service in state["attested"]["services"].values():
+        assert service["contract"] == service["previous_contract"] == 2
+
+
+def test_rollback_cannot_upgrade_contract_floor(server):
+    result = deploy(server, STUB_NETWORK="1", STUB_TARGET_CONTRACT="2", ROLLBACK="1")
+    assert result.returncode == 1
+    assert not any(
+        call.startswith(("image tag", "service scale", "stack deploy", "service update"))
+        for call in server.calls
+    )
+    assert not any(call.endswith((" migrate", " begin", " attest")) for call in server.calls)
+
+
+def test_contract_two_rolling_update_preserves_floor(server):
+    result = deploy(server, STUB_NETWORK="1", STUB_CONTRACT_FLOOR="2", STUB_TARGET_CONTRACT="2")
+    assert result.returncode == 0, result.stderr
+    assert not any(call.startswith("service scale ") for call in server.calls)
+    assert rollout_state(server)["floor"] == 2
+
+
+@pytest.mark.parametrize("fault", ["STUB_STACK_FAIL", "STUB_AUTO_ROLLBACK"])
+def test_upgrade_failure_after_ddl_keeps_old_return_paused_and_resumes(server, fault):
+    failed = deploy(server, STUB_NETWORK="1", STUB_TARGET_CONTRACT="2", **{fault: "1"})
+    assert failed.returncode == 1
+    state = rollout_state(server)
+    assert state["floor"] == 2 and state["phase"] == "blocked"
+    for service in state["services"].values():
+        for spec in (service["Spec"], service.get("PreviousSpec")):
+            if spec and spec["TaskTemplate"]["ContainerSpec"]["Image"] == "leadkit:one":
+                assert spec["Mode"]["Replicated"]["Replicas"] == 0
+    result = deploy(server, STUB_NETWORK="1", STUB_TARGET_CONTRACT="2")
+    assert result.returncode == 0, result.stderr
+    assert rollout_state(server)["floor"] == 2
+    assert rollout_state(server)["phase"] == "verified"
+
+
+def test_contract_one_rollback_is_refused_at_floor_two_before_mutation(server):
+    result = deploy(server, STUB_NETWORK="1", STUB_CONTRACT_FLOOR="2", ROLLBACK="1")
+    assert result.returncode == 1
+    assert not any(
+        call.startswith(("image tag", "service scale", "stack deploy", "service update"))
+        for call in server.calls
+    )
+    assert not any(call.endswith((" migrate", " begin", " attest")) for call in server.calls)
+
+
+def test_paused_old_return_requires_quiescence_even_after_floor_commit(server):
+    result = deploy(
+        server,
+        STUB_NETWORK="1",
+        STUB_CONTRACT_FLOOR="2",
+        STUB_INITIAL_CONTRACT="1",
+        STUB_TARGET_CONTRACT="2",
+    )
+    assert result.returncode == 0, result.stderr
+    assert any(call.startswith("service scale ") for call in server.calls)
+
+
+def test_contract_two_recovery_normalizes_return_consumed_by_automatic_rollback(server):
+    environment = {"STUB_NETWORK": "1", "STUB_CONTRACT_FLOOR": "2", "STUB_TARGET_CONTRACT": "2"}
+    failed = deploy(server, **environment, STUB_AUTO_ROLLBACK="1")
+    assert failed.returncode == 1
+    state = rollout_state(server)
+    assert state["floor"] == 2 and state["phase"] == "blocked"
+    assert all("PreviousSpec" not in service for service in state["services"].values())
+    checkpoint = len(server.calls)
+    recovered = deploy(server, **environment)
+    assert recovered.returncode == 0, recovered.stderr
+    calls = server.calls[checkpoint:]
+    assert next(i for i, call in enumerate(calls) if call.startswith("service scale ")) < next(
+        i for i, call in enumerate(calls) if call.endswith(" migrate")
+    )
+    state = rollout_state(server)
+    assert state["floor"] == 2 and state["phase"] == "verified"
+    for service in state["attested"]["services"].values():
+        assert service["contract"] == service["previous_contract"] == 2
+        assert service["retired"] and all(not row["running"] for row in service["retired"])

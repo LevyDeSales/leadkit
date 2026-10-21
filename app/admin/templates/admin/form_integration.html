@@ -1,8 +1,13 @@
 {% extends "admin/layout.html" %}
 {% import "admin/macros.html" as m %}
-{% set section = "forms" %}
+{% set section = "integrations" %}
 {% block title %}Integração com o Baserow · {{ page.form_title }}{% endblock %}
 {% block content %}
+<nav class="crumbs" aria-label="Central de integrações"><a href="/admin/integrations">Integrações</a></nav>
+<nav aria-label="Perfis de mapeamento"><a href="{{ page.url }}?profile=capture">Captura sem PDF</a> · <a href="{{ page.url }}?profile=pdf">Plano com PDF</a></nav>
+<p>Finalidade do perfil: <strong>{{ 'Captura sem PDF' if page.profile == 'capture' else 'Plano com PDF' }}</strong>. A ativação da conexão vale para a finalidade publicada. Perfil de captura: {{ page.capture_mapped }} campo(s); perfil PDF: {{ page.pdf_mapped }} campo(s).</p>
+{% if page.active and (not page.report or not page.report.ok) %}<p role="alert">Integração ativa com configuração incompatível ou não verificada para esta finalidade. Confira o relatório e corrija o perfil ou desative a conexão.</p>{% endif %}
+
 <nav class="crumbs" aria-label="Você está em"><a href="/admin/forms">Formulários</a><span aria-hidden="true">/</span><a href="{{ page.form_url }}">{{ page.form_title }}</a><span aria-hidden="true">/</span><span>Integração com o Baserow</span></nav>
 
 <div class="page-head">
@@ -28,6 +33,7 @@
   <h2 id="con-titulo">Conexão</h2>
   {% if page.stored %}
   <dl class="kv">
+    <dt>Finalidade</dt><dd>{{ "Interna — respostas e dados comerciais" if page.stored.purpose == "internal" else "Participante — incompatível com Baserow" }} · {{ {"legacy": "origem legada", "explicit": "escolha explícita", "default": "padrão seguro"}.get(page.stored.purpose_origin) }}</dd>
     <dt>Baserow</dt><dd class="mono">{{ page.stored.base_url }}</dd>
     <dt>Tabela</dt><dd>{{ page.stored.table_id }}</dd>
     <dt>Token</dt><dd>guardado, cifrado; não aparece de novo · trocado em {{ m.when(page.stored.token_changed) }}</dd>
@@ -41,11 +47,19 @@
   {% if errors.get("connect") %}
   <div class="alert alert--error" role="alert">{{ m.icon('alert-circle', 'icon--lg') }}<div><strong class="alert__title">A conexão não foi guardada</strong><p>{{ errors["connect"] }}</p></div></div>
   {% endif %}
+  {% if errors.get('purpose') %}<p role="alert"><a href="#baserow-purpose">Corrija a finalidade da conexão.</a></p>{% endif %}
   <form class="form-stack" method="post" action="{{ page.url }}/connect">
     <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
     <input type="hidden" name="version" value="{{ page.stored.version if page.stored else 0 }}">
     <p class="muted">O token é o <strong>token de banco de dados</strong> do Baserow (em Configurações › Tokens de banco de dados), com permissão de ler, criar e atualizar linhas desta tabela. Ao conectar, o app lê os campos da tabela com ele; se o Baserow recusar, nada é guardado.</p>
     <div class="field">
+      <label for="baserow-purpose">Finalidade da conexão</label>
+      <select id="baserow-purpose" name="purpose"{% if errors.get('purpose') %} autofocus{% endif %} aria-describedby="baserow-purpose-ajuda{% if errors.get('purpose') %} baserow-purpose-erro{% endif %}"{% if errors.get('purpose') %} aria-invalid="true"{% endif %}>
+        <option value="">Selecione a finalidade</option>
+        <option value="internal"{% if typed.get('purpose') == 'internal' %} selected{% endif %}>Interna — respostas e dados comerciais</option>
+      </select>
+      <p id="baserow-purpose-ajuda">Baserow recebe dados internos. Confirme esta finalidade ao conectar ou mudar a URL; finalidade participante não é compatível.</p>
+      {% if errors.get('purpose') %}<p class="error" id="baserow-purpose-erro" role="alert">{{ errors['purpose'] }}</p>{% endif %}
       <label for="base_url">Endereço do Baserow <span class="opt">(https, sem usuário e senha)</span></label>
       <input class="input mono" id="base_url" name="base_url" type="url" value="{{ typed.base_url }}" maxlength="{{ max_url_length }}" required autocomplete="off" spellcheck="false" placeholder="https://baserow.example.test"{% if errors.get("base_url") %} aria-invalid="true" aria-describedby="base_url-erro"{% endif %}>
       {% if errors.get("base_url") %}<p class="error" id="base_url-erro">{{ m.icon('alert-circle') }}{{ errors["base_url"] }}</p>{% endif %}
@@ -78,9 +92,10 @@
     <ul class="items">{% for problem in problems %}<li>{{ problem }}</li>{% endfor %}</ul>
   </div></div>
   {% endif %}
-  <form class="form-stack" method="post" action="{{ page.url }}/mapping">
+  <form class="form-stack" method="post" action="{{ page.url }}/mapping?profile={{ page.profile }}">
     <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
     <input type="hidden" name="version" value="{{ page.stored.version }}">
+    <input type="hidden" name="profile" value="{{ page.profile }}">
     <div class="tablewrap" role="region" aria-label="Campos da tabela" tabindex="0">
       <table class="table table--compact">
         <caption class="sr-only">Campos da tabela do Baserow e o que preenche cada um</caption>
@@ -162,7 +177,8 @@
 <section class="box" id="teste" aria-labelledby="teste-titulo">
   <h2 id="teste-titulo">Enviar teste</h2>
   <p>Manda para a tabela uma linha de mentira, pelo mesmo caminho de um pedido de verdade: a lead de exemplo, no domínio <span class="mono">exemplo</span>, com respostas inventadas e o código <span class="mono">teste-{{ page.form_slug }}</span>. Nenhum dado de lead sai. A linha <strong>fica na tabela</strong>, para você conferi-la; testar de novo atualiza a mesma, e o app não a apaga.</p>
-  <form method="post" action="{{ page.url }}/test" hx-post="{{ page.url }}/test" hx-target="#resultado-teste" hx-select="#resultado-teste" hx-swap="outerHTML" hx-sync="this:drop" hx-disabled-elt="find button">
+  <form method="post" action="{{ page.url }}/test?profile={{ page.profile }}" hx-post="{{ page.url }}/test?profile={{ page.profile }}" hx-target="#resultado-teste" hx-select="#resultado-teste" hx-swap="outerHTML" hx-sync="this:drop" hx-disabled-elt="find button">
+    <input type="hidden" name="profile" value="{{ page.profile }}">
     <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
     <button class="btn btn--secondary" type="submit">{{ m.icon('send') }}Enviar a linha de teste</button>
   </form>
@@ -193,6 +209,9 @@
   {% endif %}
 </section>
 
+<section class="box"><h2>Entregas de captura</h2>
+<p>As respostas são enviadas depois de salvas. Falha de integração não impede a conclusão. Sucesso confirma transporte, sem comprovar leitura.</p>
+<ul>{% for delivery in page.capture_deliveries %}<li><a href="/admin/captures/{{ delivery.submission_id }}">{{ delivery.submission_id }}</a> · {{ delivery.status }} · {{ delivery.attempts }} tentativa(s){% if delivery.error_code %} · {{ delivery.error_code }}{% endif %}</li>{% else %}<li>Nenhuma entrega de captura para esta conexão.</li>{% endfor %}</ul></section>
 <section class="box" id="sincronizacoes" aria-labelledby="sinc-titulo">
   <h2 id="sinc-titulo">Sincronizações</h2>
   <dl class="kv">
@@ -236,7 +255,8 @@
       <input type="hidden" name="version" value="{{ page.stored.version }}">
       <h3 id="rem-form-titulo">Remover esta integração</h3>
       <div class="note">{{ m.icon('alert-triangle') }}<p>O app para de sincronizar este formulário e apaga o token e o estado das sincronizações. As linhas que já estão no Baserow ficam lá: o app nunca apaga linhas da tabela.</p></div>
-      <label class="choice choice--check"><input type="checkbox" name="confirm" value="on" required{% if errors.get("remove") %} aria-invalid="true" aria-describedby="rem-erro"{% endif %}><span class="choice__body"><span class="choice__mark">{{ m.icon('check') }}</span><span>Entendo o que acontece com as linhas e com o estado das sincronizações.</span></span></label>
+      <p>Registros de entrega de respostas que serão apagados: {{ page.capture_counts.total }} no total ({{ page.capture_counts.pending }} pendentes, {{ page.capture_counts.succeeded }} com transporte confirmado e {{ page.capture_counts.failed }} com falha). As entregas pendentes não serão enviadas; as respostas salvas e as linhas já recebidas no Baserow permanecem.</p>
+      <label class="choice choice--check"><input type="checkbox" name="confirm" value="on" required{% if errors.get("remove") %} aria-invalid="true" aria-describedby="rem-erro"{% endif %}><span class="choice__body"><span class="choice__mark">{{ m.icon('check') }}</span><span>Entendo a exclusão dos registros de entrega de respostas e o que acontece com as linhas e sincronizações.</span></span></label>
       {% if errors.get("remove") %}<p class="error" id="rem-erro">{{ m.icon('alert-circle') }}{{ errors["remove"] }}</p>{% endif %}
       <div class="btns"><button class="btn btn--primary" type="submit">Remover a integração</button></div>
     </form>

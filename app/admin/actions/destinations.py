@@ -21,6 +21,8 @@ from sqlalchemy.orm import Session
 
 from app import destinations
 from app.admin.queries import forms as form_queries
+from app.capture_deliveries import Counts
+from app.capture_deliveries import counts as capture_counts
 from app.deps import Deps
 
 BODY_START_CHARS = 500  # do corpo da resposta ao evento de teste, o que a tela e a API mostram
@@ -75,6 +77,8 @@ def save(
     actor: str,
     expected_version: int,
     http_confirmed: bool,
+    events: list[str] | None = None,
+    purpose: str | None = None,
 ) -> destinations.SaveResult:
     """Cria o destino (com o segredo novo em `secret`, que só existe neste resultado) ou muda o
     endereço do que existe, que mantém o segredo. `expected_version` é a versão que a pessoa viu (0:
@@ -84,7 +88,7 @@ def save(
     `WEBHOOK_ENCRYPTION_KEY` não há onde guardar um segredo novo) e `Conflict` (o destino mudou:
     nada foi gravado)."""
     with deps.sessions.begin() as db:
-        return destinations.save(
+        result = destinations.save(
             db,
             deps.cipher,
             form_slug=form_slug,
@@ -93,7 +97,17 @@ def save(
             expected_version=expected_version,
             production=deps.settings.app_env == "production",
             http_confirmed=http_confirmed,
+            events=events,
+            purpose=purpose,
         )
+        db.flush()
+        from app.integration_readiness import webhook_problems
+
+        if issues := webhook_problems(db, form_slug):
+            if issues[0].path == "integrations.purpose":
+                raise destinations.InvalidPurpose(issues[0].message)
+            raise destinations.InvalidEvents(issues[0].message)
+        return result
 
 
 @dataclass(frozen=True)
@@ -124,22 +138,34 @@ class Removed:
     destination: destinations.StoredDestination
     serving: str
     serving_host: str | None
+    capture_counts: Counts = field(default_factory=Counts)
 
 
 def remove(deps: Deps, form_slug: str | None, *, actor: str, expected_version: int) -> Removed:
-    """Apaga o destino: o formulário passa a usar o destino padrão, se houver, e sem ele os planos
-    deixam de ser entregues. Devolve o destino como estava e quem entrega agora. Levanta
+    """Apaga o destino: novos envios usam o padrão, se houver. Intenções PDF fixadas não mudam
+    de receptor; fatos internos legados conservam somente a resolução interna legada. Devolve o destino como estava e quem entrega agora. Levanta
     `Conflict`."""
     with deps.sessions.begin() as db:
+        from app.integration_readiness import configuration_lock
+
+        configuration_lock(db)
+        current = destinations.listing(db).get(form_slug)
+        counts = capture_counts(db, webhook_destination_id=current.id) if current else Counts()
         removed = destinations.remove(
             db, form_slug=form_slug, actor=actor, expected_version=expected_version
         )
+        db.flush()
+        from app.integration_readiness import webhook_problems
+
+        if webhook_problems(db, form_slug):
+            raise destinations.Conflict()
         remaining = destinations.listing(db)
     serving = remaining.get(None) if form_slug is not None else None
     return Removed(
         destination=removed,
         serving="default" if serving else "none",
         serving_host=serving.host if serving else None,
+        capture_counts=counts,
     )
 
 

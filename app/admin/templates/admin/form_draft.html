@@ -82,11 +82,66 @@
 
       {% include "admin/_form_structure.html" %}
 
+      <section class="box" id="geracao" aria-labelledby="geracao-titulo">
+        <h2 id="geracao-titulo">Finalidade do formulário</h2>
+        <label for="{{ s.field_id('generation') }}">Geração</label>
+        <select class="select" name="generation" id="{{ s.field_id('generation') }}" aria-describedby="geracao-dica{% if s.errors.get('generation') %} {{ s.field_id('generation') }}-erro{% endif %}">
+          <option value="pdf"{% if s.edit.generation == 'pdf' %} selected{% endif %}>Gerar plano e PDF</option>
+          <option value="none"{% if s.edit.generation == 'none' %} selected{% endif %}>Somente salvar respostas</option>
+        </select>
+        <p id="geracao-dica">Somente captura dispensa IA, plano e PDF. Escolha uma confirmação, botão ou encaminhamento para concluir. Ao salvar como captura, a configuração de geração sai deste rascunho; versões publicadas são preservadas. Ao voltar para PDF, você começa pela configuração do modelo inicial e pode editá-la antes de publicar.</p>
+        {{ f.error_for('generation') }}
+        <label for="{{ s.field_id('release.mode') }}">Liberação do plano (somente PDF)</label>
+        <select class="select" name="release.mode" id="{{ s.field_id('release.mode') }}">
+          <option value="automatic"{% if s.edit.release_mode == 'automatic' %} selected{% endif %}>Automática</option>
+          <option value="manual"{% if s.edit.release_mode == 'manual' %} selected{% endif %}>Manual</option>
+        </select>
+        <p>A geração do PDF não libera o acesso no modo manual. Você pode liberar por outra jornada.</p>
+        {{ f.error_for('release') }}{{ f.error_for('release.mode') }}
+      </section>
+      <section class="box" id="conclusao" aria-labelledby="conclusao-titulo">
+        <h2 id="conclusao-titulo">Depois de salvar as respostas</h2>
+        <p class="muted">Esta escolha define o próximo passo da participante. A finalidade do formulário define se haverá geração; a conclusão não controla acesso ao PDF.</p>
+        <div class="form-stack">
+          <div class="field">
+            <label for="{{ s.field_id('completion.mode') }}">Conclusão</label>
+            <select class="input" id="{{ s.field_id('completion.mode') }}" name="completion.mode">
+              {% for value, label in [('result', 'Acompanhar o resultado do PDF (padrão)'), ('confirmation', 'Mostrar confirmação local'), ('button', 'Mostrar botão para outro destino'), ('redirect', 'Encaminhar para outro destino')] %}
+              <option value="{{ value }}"{% if s.edit.completion.mode == value %} selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+            {{ f.error_for('completion.mode') }}
+          </div>
+          {{ f.field('completion.message', 'Mensagem de confirmação', s.edit.completion.message, hint='Texto puro, até 2000 caracteres. Em branco: Recebemos suas respostas. Obrigada por participar.', area=True, rows=3, opt=True) }}
+          {{ f.field('completion.button_label', 'Rótulo do botão de continuidade', s.edit.completion.button_label, hint='Até 300 caracteres. Em branco: Continuar.', opt=True) }}
+          {{ f.field('completion.url', 'Destino do botão ou encaminhamento', s.edit.completion.url, hint='URL exata começando por https://, sem usuário ou senha. Sem opt-in, conserva a URL exata. Com encaminhamento, acrescenta somente a referência opaca autorizada. Deixe em branco nos modos locais.', opt=True, mono=True) }}
+          <label for="{{ s.field_id('completion.handoff.selection') }}">Referência opaca de encaminhamento</label>
+          <select class="select" id="{{ s.field_id('completion.handoff.selection') }}" name="completion.handoff.selection">
+            <option value=""{% if not s.edit.completion.receiver_id %} selected{% endif %}>Sem encaminhamento por referência</option>
+            {% if s.edit.completion.receiver_id %}<option value="saved" selected>Conservar vínculo salvo (revisão {{ s.edit.completion.receiver_revision }})</option>{% endif %}
+            {% if handoff_receiver %}<option value="current">Usar {{ handoff_receiver.name }} — revisão {{ handoff_receiver.revision }}{% if not handoff_receiver.enabled %} (pausado){% endif %}</option>{% endif %}
+          </select>
+          {% for key in ['receiver_id', 'receiver_revision'] %}
+          <input type="hidden" name="completion.handoff.{{ key }}" value="{{ s.edit.completion[key] }}">
+          {% endfor %}
+          {% if handoff_receiver %}
+          <input type="hidden" name="completion.handoff.current.entry_url" value="{{ handoff_receiver.entry_url }}">
+          <input type="hidden" name="completion.handoff.current.receiver_id" value="{{ handoff_receiver.id }}">
+          <input type="hidden" name="completion.handoff.current.receiver_revision" value="{{ handoff_receiver.revision }}">
+          <p>Destino observado: {{ handoff_receiver.entry_url }}. Ao optar por este receptor, o destino de conclusão passa a usar este endereço no salvamento. Salvar confirma o vínculo escolhido; nenhuma versão publicada muda.</p>
+          {% else %}<p>Nenhum receptor configurado. <a href="/admin/forms/{{ page.nav.slug }}/handoff">Configurar encaminhamento</a>.</p>{% endif %}
+          <p>Opcionalmente acrescenta somente uma referência opaca à URL, sem contato ou respostas. Não identifica a participante nem libera PDF.</p>
+          {{ f.error_for('completion.handoff.selection') }}
+          <a class="btn btn--secondary" href="/admin/forms/{{ page.nav.slug }}/draft/completion-preview">Conferir conclusão salva</a>
+          <p class="muted">A prévia usa o rascunho salvo e mantém o botão desativado, sem sair desta página nem enviar respostas.</p>
+        </div>
+      </section>
+
       <section class="box" id="consentimento" aria-labelledby="consentimento-titulo">
         <h2 id="consentimento-titulo">Consentimento</h2>
         <p class="muted">O que a lead lê e autoriza antes de enviar. A versão do texto sobe sozinha na publicação quando o texto muda, e cada envio guarda a versão que a lead leu.</p>
         <div class="form-stack">
-          {{ f.field("consent.processing", "Autorização do processamento", s.edit.consent.processing, hint="Obrigatória para gerar o plano.", area=True, rows=2) }}
+          {{ f.field("consent.processing", "Autorização do processamento", s.edit.consent.processing, hint="Obrigatória para processar suas respostas.", area=True, rows=2) }}
           {{ f.field("consent.notice", "Aviso sobre o uso dos dados", s.edit.consent.notice, area=True, rows=3) }}
           {%- for channel, offer, label in s.channels %}
           {%- set name = "consent.marketing." ~ channel %}
@@ -99,7 +154,7 @@
         </div>
       </section>
 
-      {% include "admin/_plan_editor.html" %}
+      {% if s.edit.generation == "pdf" %}{% include "admin/_plan_editor.html" %}{% endif %}
 
       {% include "admin/_data_editor.html" %}
 
@@ -108,8 +163,10 @@
       <section class="box" id="textos" aria-labelledby="textos-titulo">
         <h2 id="textos-titulo">Instruções, prompt e o resto</h2>
         <div class="form-stack">
+          {% if s.edit.generation == "pdf" %}
           {{ editor_field("instructions", "Instruções", "O papel e as regras fixas que o LLM recebe, iguais para toda lead. Template Jinja: lê os dados do formulário em data.", 12) }}
           {{ editor_field("prompt", "Prompt", "Montado a cada pedido com as respostas da lead. Template Jinja: answers, labels, today e data. Só as respostas que ele cita saem para o LLM.", 14) }}
+          {% endif %}
           {{ editor_field("definition", "O resto da definição (JSON)", "A versão do formato (format) e o plano de exemplo. O modelo do plano, os dados, a pontuação, as etapas, as perguntas, os pontos de cada opção, a identidade e o consentimento ficam nos campos acima; o PDF, a prévia da página de resultado e as notas do PDF, no editor do PDF.", 18) }}
         </div>
       </section>

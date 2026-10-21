@@ -93,6 +93,7 @@ def save_destination(deps: Deps, slug: str | None, host: str = SECRET_HOST) -> N
             expected_version=0,
             production=False,
             http_confirmed=False,
+            purpose="internal",
         )
 
 
@@ -108,6 +109,7 @@ def connect_integration(deps: Deps, slug: str) -> None:
             actor="testes",
             expected_version=0,
             production=False,
+            purpose="internal",
         )
 
 
@@ -254,12 +256,13 @@ def test_list_forms_shows_the_same_forms_and_states_as_the_page(
         version = item["published_version"]
         assert (f"Versão {version}" if version else "Nenhuma versão publicada") in shown, slug
         assert item["public_url"] in shown, slug
-        assert re.search(rf"\b{item['submissions']} envios?\b", shown), slug
+        assert re.search(rf"\b{item['submissions']} respostas?\b", shown), slug
 
 
 # --- get_form -----------------------------------------------------------------------------------
 
 DETAIL_FIELDS = {
+    "integration_issues",
     *SUMMARY_FIELDS,
     "version_label",
     "versions",
@@ -361,8 +364,16 @@ def test_get_form_says_which_destination_serves_it_and_only_the_host(
     own = client.get(form_url("demo"))
 
     assert none is None
-    assert default.json()["destination"] == {"scope": "default", "host": "padrao.example.test"}
-    assert own.json()["destination"] == {"scope": "form", "host": SECRET_HOST}
+    assert default.json()["destination"] == {
+        "scope": "default",
+        "host": "padrao.example.test",
+        "events": ["plano.concluido"],
+    }
+    assert own.json()["destination"] == {
+        "scope": "form",
+        "host": SECRET_HOST,
+        "events": ["plano.concluido"],
+    }
     for response in (default, own, client.get(url_of("list_forms"))):
         assert SECRET_PATH not in response.text and "https://" not in response.text
 
@@ -963,7 +974,7 @@ def test_a_confirmation_that_is_not_a_count_is_a_422_on_the_seen_field(
 ) -> None:
     client = api_client("total")
 
-    for seen in ("2", "a:b", "2:", ":3", "-1:0", "1:2:3", " ", "9" * 40):
+    for seen in ("2", "a:b", "2:", ":3", "-1:0", "1:2:3:4", " ", "9" * 40):
         refused = save(client, 50, 120, seen=seen)
 
         assert refused.status_code == 422, seen
@@ -1248,12 +1259,15 @@ def test_get_form_version_of_a_number_that_is_not_one_is_a_422_on_the_number(
 def test_the_contract_documents_the_definition_with_the_form_document() -> None:
     schemas = built_openapi()["components"]["schemas"]
 
-    assert schemas["FormVersion"]["properties"]["definition"]["$ref"].endswith("/FormDocument")
+    assert {
+        branch["$ref"].split("/")[-1]
+        for branch in schemas["FormVersion"]["properties"]["definition"]["anyOf"]
+    } == {"PdfFormDocument", "CaptureFormDocument"}
     assert "definition" in schemas["FormVersion"]["required"]
     required = schemas["QuestionDoc"]["properties"]["required"]["description"]
     assert "show_when" in required and "required_when_shown" in required
     assert "só é exigida quando a pergunta aparece" in required
-    assert schemas["FormDocument"]["description"]  # o modelo diz o que é
+    assert schemas["PdfFormDocument"]["properties"]["generation"]  # o modelo diz o que é
 
 
 # --- compare_form_versions ----------------------------------------------------------------------
@@ -1301,7 +1315,10 @@ def test_compare_form_versions_reads_two_versions_section_by_section(
     assert any(line["kind"] == "hunk" for line in page_section["lines"])
     unchanged = [s for s in body["sections"] if not s["changed"]]
     assert unchanged and all(section["lines"] == [] for section in unchanged)
-    assert len(body["sections"]) == 18 and body["sections"][-1]["key"] == "outras"
+    assert len(body["sections"]) == 20 and body["sections"][-1]["key"] == "outras"
+    completion = next(item for item in body["sections"] if item["key"] == "conclusao")
+    assert completion["title"] == "Conclusão após salvar as respostas"
+    assert completion["changed"] is False
 
 
 def test_compare_form_versions_compares_in_the_order_given(api_client: Client, world: None) -> None:

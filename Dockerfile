@@ -36,10 +36,12 @@ RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
     uv sync --locked --no-install-project
 COPY app ./app
 # Depois o pacote, instalado de verdade (não editável). O código fica também em /app/app: é dali
-# que o `migrate` lê app/alembic.ini e as migrations.
+# que o `migrate` lê app/alembic.ini e as migrations. O cache local do uv usa os metadados do
+# projeto; uma mudança só em Python/templates precisa reconstruir o wheel de leadkit, mesmo
+# com pyproject.toml e versão iguais. As dependências continuam no cache da primeira etapa.
 RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
     --mount=type=cache,target=/root/.cache/uv \
-    uv sync --locked --no-editable \
+    uv sync --locked --no-editable --reinstall-package leadkit \
     && rm -rf build ./*.egg-info
 
 COPY --chmod=755 deploy/entrypoint.sh /usr/local/bin/entrypoint

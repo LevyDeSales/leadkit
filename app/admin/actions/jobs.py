@@ -29,8 +29,20 @@ from sqlalchemy.orm import Session
 from app import jobs
 from app.admin import launching
 from app.deps import Deps
+from app.errors import FailureCode, RetryableError
+from app.integration_readiness import configuration_lock
 from app.integrations import syncs as integration_syncs
-from app.models import Artifact, Delivery, IntegrationSync, Job
+from app.internal_links import (
+    AdminPdfAccess,
+    InternalPdfAccess,
+    ParticipantPdfAccess,
+    PdfAccess,
+    validate_internal_access,
+)
+from app.models import Artifact, Delivery, IntegrationSync, Job, utcnow
+from app.pdf_availability import artifact_availability, verified_content, verify_completion
+from app.plan_release import ReleaseCommit, ReleasePdfCommand, require_participant_access
+from app.tokens import TokenError
 
 logger = logging.getLogger(__name__)
 
@@ -62,37 +74,83 @@ class PdfFile:
     content: bytes | None = None
 
 
-def pdf_file(deps: Deps, public_id: str, version: int | None, *, signed_url: bool) -> PdfFile:
-    """O PDF da tentativa `version` do pedido (a mais recente, sem `version`).
+def pdf_file(
+    deps: Deps,
+    public_id: str,
+    version: int | None,
+    *,
+    signed_url: bool,
+    filename: str | None = None,
+    access: PdfAccess,
+) -> PdfFile:
+    """O PDF da tentativa `version` do pedido (a atual, sem `version`).
 
     Com `signed_url`, e se o storage assina (o S3, e não o disco local), devolve a URL de 300 s em
     vez dos bytes: é o que a página faz. Sem ele, devolve sempre os bytes: a API entrega o arquivo, e
     uma URL assinada seria um segundo segredo, fora da chave e da auditoria.
 
     Levanta `NoPdf` (404) e `PdfRemoved` (410). Um storage que falha levanta o erro dele."""
-    statement = (
-        sa.select(Artifact.storage_key, Artifact.version, Artifact.purged_at)
-        .join(Job, Job.id == Artifact.job_id)
-        .where(Job.public_id == public_id, Artifact.kind == "pdf")
-        .order_by(Artifact.version.desc())
-        .limit(1)
-    )
-    if version is not None:
-        statement = statement.where(Artifact.version == version)
-    with deps.sessions() as session:
-        found = session.execute(statement).one_or_none()
-    if found is None:
-        raise NoPdf
-    if found.purged_at is not None:
-        raise PdfRemoved
-    filename = f"plano-{public_id}-v{found.version}.pdf"
-    if signed_url:
-        url = deps.storage.presigned_url(
-            found.storage_key, ttl_seconds=SIGNED_URL_TTL_SECONDS, filename=filename
+    with deps.sessions.begin() as session:
+        configuration_lock(session, shared=True)
+        if isinstance(access, InternalPdfAccess):
+            internal_job, _ = validate_internal_access(session, deps, access.claims)
+            if internal_job.public_id != public_id or version not in (None, access.claims.attempt):
+                raise NoPdf
+        job = session.scalar(sa.select(Job).where(Job.public_id == public_id).with_for_update())
+        if job is None or (version is None and job.status != "completed"):
+            raise NoPdf
+        if isinstance(access, ParticipantPdfAccess) and (
+            job.id != access.job_id
+            or job.attempt != access.attempt
+            or job.token_version != access.token_version
+            or job.expires_at <= utcnow()
+            or version not in (None, access.attempt)
+        ):
+            raise NoPdf
+        if not isinstance(access, (AdminPdfAccess, ParticipantPdfAccess, InternalPdfAccess)):
+            raise NoPdf
+        attempt = job.attempt if version is None else version
+        artifact = session.scalar(
+            sa.select(Artifact)
+            .where(Artifact.job_id == job.id, Artifact.kind == "pdf", Artifact.version == attempt)
+            .with_for_update()
         )
-        if url:
-            return PdfFile(filename, url=url)
-    return PdfFile(filename, content=deps.storage.get(found.storage_key))
+        if artifact is None:
+            raise NoPdf
+        if isinstance(access, ParticipantPdfAccess):
+            require_participant_access(session, job, artifact)
+        state = artifact_availability(deps.storage, artifact)
+        if state.state == "removed":
+            raise PdfRemoved
+        if state.state == "unknown" and state.exists is True:
+            # Históricos só ganham prova depois de ler e validar os bytes, nunca por backfill.
+            content = verify_completion(session, deps.storage, job, attempt, artifact.id)
+        elif state.available:
+            content, _ = verified_content(deps.storage, artifact)
+        else:
+            raise RetryableError(FailureCode.STORAGE_FAILED, "PDF indisponível ou não verificado")
+        filename = filename or f"plano-{public_id}-v{artifact.version}.pdf"
+        if signed_url:
+            ttl_seconds = SIGNED_URL_TTL_SECONDS
+            if not isinstance(access, AdminPdfAccess):
+                now = utcnow().timestamp()
+                deadline = job.expires_at.timestamp()
+                if isinstance(access, InternalPdfAccess):
+                    deadline = min(deadline, access.claims.expires_at)
+                ttl_seconds = min(ttl_seconds, int(deadline - now))
+                if ttl_seconds < 1:
+                    raise TokenError("expired")
+            try:
+                url = deps.storage.presigned_url(
+                    artifact.storage_key, ttl_seconds=ttl_seconds, filename=filename
+                )
+            except Exception:  # noqa: BLE001 — fronteira de storage com erro seguro
+                raise RetryableError(
+                    FailureCode.STORAGE_FAILED, "PDF indisponível no storage"
+                ) from None
+            if url:
+                return PdfFile(filename, url=url)
+        return PdfFile(filename, content=content)
 
 
 # --- reprocessar e reenviar ---------------------------------------------------------------------
@@ -123,7 +181,11 @@ class ResendRefused(Exception):
     Nada foi feito."""
 
     def __init__(self, *, missing: bool) -> None:
-        super().__init__("não existe neste pedido" if missing else "não está em failed")
+        super().__init__(
+            "não existe neste pedido"
+            if missing
+            else "estado, revisão, audiência ou tentativa não autorizados"
+        )
         self.missing = missing
 
 
@@ -204,7 +266,13 @@ async def reprocess(
 
 
 async def resend_delivery(
-    deps: Deps, public_id: str, delivery_id: uuid.UUID, *, actor: str
+    deps: Deps,
+    public_id: str,
+    delivery_id: uuid.UUID,
+    *,
+    actor: str,
+    expected_config_version: int | None = None,
+    expected_attempt: int | None = None,
 ) -> Resent:
     """Uma entrega que falhou volta para pendente (auditado em nome de `actor`) e o `deliver` é
     disparado de novo. Sem engine, o SDK insiste por minutos: a espera é limitada
@@ -216,7 +284,15 @@ async def resend_delivery(
         public_id,
         Delivery,
         delivery_id,
-        lambda session, job_id: jobs.resend_delivery(session, job_id, delivery_id, actor=actor),
+        lambda session, job_id: jobs.resend_delivery(
+            session,
+            job_id,
+            delivery_id,
+            actor=actor,
+            expected_config_version=expected_config_version,
+            expected_attempt=expected_attempt,
+            retention_days=deps.settings.retention_days,
+        ),
     )
     logger.info("admin: reenvio delivery=%s por=%s", delivery_id, actor)
     return Resent(launched=await launching.launch_delivery(deps, delivery_id))
@@ -265,3 +341,43 @@ async def _requeue(
         raise JobNotFound
     if outcome != "requeued":
         raise ResendRefused(missing=outcome == "missing")
+
+
+@dataclass(frozen=True)
+class ReleasedPdf:
+    commit: ReleaseCommit
+    notifications: tuple[dict, ...]
+    launched: bool
+
+
+async def release_pdf(
+    deps: Deps, trigger, public_id: str, *, actor: str, command: ReleasePdfCommand
+) -> ReleasedPdf:
+    """Autoriza uma vez e dispara somente novas intenções depois do commit."""
+    from app.plan_release import release_pdf as commit_release
+
+    def create():
+        with deps.sessions.begin() as session:
+            return commit_release(session, deps, public_id, actor=actor, command=command)
+
+    committed = await run_in_threadpool(create)
+    launched = False
+    if not committed.replay:
+        for delivery_id in committed.delivery_ids:
+            launched = await launching.launch_delivery(deps, delivery_id) or launched
+
+    def read():
+        with deps.sessions() as session:
+            return tuple(
+                {"id": row.id, "event": row.event, "status": row.status}
+                for row in session.scalars(
+                    sa.select(Delivery).where(
+                        sa.or_(
+                            Delivery.release_id == committed.release_id,
+                            Delivery.id.in_(committed.delivery_ids),
+                        )
+                    )
+                )
+            )
+
+    return ReleasedPdf(committed, await run_in_threadpool(read), launched)

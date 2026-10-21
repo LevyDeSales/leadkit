@@ -31,16 +31,16 @@ from datetime import datetime
 from types import SimpleNamespace
 from typing import Any
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
 from app.branding import installation_brand
+from app.forms import PlanProjectionError
 from app.forms.dates import local_date, long_date
 from app.forms.definition.components import COMPONENT_NAMES
 from app.forms.definition.data import template_data
 from app.forms.definition.document import DefinitionError, FormDocument, Problem
 from app.forms.definition.images import AssetRef, rewrite
 from app.forms.definition.phases import Calendar, PhaseStatus
-from app.forms.definition.plan import lead_view
 from app.forms.definition.questions import CHOICE_KINDS, labels_of, questions_of
 from app.forms.definition.scoring import Scoring, ScoringFailure
 from app.forms.sandbox import SandboxTemplate, TemplateProblem
@@ -60,7 +60,6 @@ class FormTemplates:
     pdf_css: str
     preview: SandboxTemplate
     plan_model: type[BaseModel]
-    plan_view: Callable[[Mapping[str, Any]], SimpleNamespace]
     labels: Callable[[BaseModel], SimpleNamespace]
     data: Mapping[str, Any]
     clock: Callable[[], datetime]
@@ -73,6 +72,7 @@ class FormTemplates:
     # fixado de cada uma. Vazio na compilação: quem monta o contrato as põe com `with_assets`
     # (a versão publicada, com o que fixou na publicação; o rascunho, com as imagens de agora).
     assets: Mapping[str, AssetRef] = dataclass_field(default_factory=dict)
+    project_plan: Callable[[Mapping[str, Any], str], dict[str, Any]] | None = None
 
     def phases(self) -> list[PhaseStatus]:
         """As fases do plano que o prompt recebe agora (a data de hoje em São Paulo, pelo relógio
@@ -112,7 +112,16 @@ class FormTemplates:
         generated_date: str,
     ) -> str:
         """O HTML do PDF do plano validado. Levanta `TemplateProblem`."""
-        return self.pdf.render(self._page(plan, lead, form, scores, generated_date))
+        return self.pdf.render(
+            self._page(
+                plan.model_dump(mode="python", warnings=False),
+                lead,
+                form,
+                scores,
+                generated_date,
+                name=self.pdf.name,
+            )
+        )
 
     def render_preview(
         self,
@@ -125,34 +134,49 @@ class FormTemplates:
     ) -> str:
         """O HTML da prévia do plano gravado, validado de novo pelo modelo da mesma versão.
         Levanta `TemplateProblem`, também se o plano não valida (sem os valores dele)."""
-        try:
-            plan = self.plan_model.model_validate(document)
-        except ValidationError:
-            raise TemplateProblem(
-                self.preview.name, None, "o plano gravado não valida com o modelo do plano"
-            ) from None
-        html = self.preview.render(self._page(plan, lead, form, scores, generated_date))
+        html = self.preview.render(
+            self._page(document, lead, form, scores, generated_date, name=self.preview.name)
+        )
         return rewrite(html, self.assets)  # a página roda no navegador da lead: imagem é uma rota
 
     def _page(
         self,
-        plan: BaseModel,
+        document: Mapping[str, Any],
         lead: Mapping[str, Any],
         form: Mapping[str, Any],
         scores: Mapping[str, Any],
         generated_date: str,
+        *,
+        name: str,
     ) -> dict[str, Any]:
         """O contexto do PDF e da prévia: o plano sem os campos internos, da lead e do
         formulário só o que o contrato do template promete e, da pontuação, só as notas liberadas
         para o PDF."""
+        try:
+            if self.project_plan is None:
+                raise PlanProjectionError("plan_projection_unavailable")
+            projected = self.project_plan(document, "participant")
+        except PlanProjectionError:
+            raise TemplateProblem(
+                name, None, "o plano gravado não valida com o modelo do plano"
+            ) from None
         return {
-            "plan": self.plan_view(plan.model_dump(mode="json")),
+            "plan": _namespace(projected),
             "lead": SimpleNamespace(name=lead.get("name")),
             "form": SimpleNamespace(slug=form.get("slug"), title=form.get("title")),
             "scores": {name: value for name, value in scores.items() if name in self.released},
             "generated_date": generated_date,
             "brand": installation_brand().components(),
         }
+
+
+def _namespace(value: Any) -> Any:
+    """Adapta somente a cópia projetada ao acesso por atributo dos templates existentes."""
+    if isinstance(value, dict):
+        return SimpleNamespace(**{name: _namespace(item) for name, item in value.items()})
+    if isinstance(value, list):
+        return [_namespace(item) for item in value]
+    return value
 
 
 # --- compilação -----------------------------------------------------------------------------
@@ -261,6 +285,7 @@ def compile_templates(
     definition: FormDocument,
     *,
     plan_model: type[BaseModel],
+    project_plan: Callable[[Mapping[str, Any], str], dict[str, Any]],
     example_answers: BaseModel,
     example_plan: BaseModel,
     lead_name: str | None,
@@ -307,7 +332,7 @@ def compile_templates(
         pdf_css=definition.pdf.css,
         preview=compiled["preview"],
         plan_model=plan_model,
-        plan_view=lead_view(definition.plan),
+        project_plan=project_plan,
         labels=labels_of(definition.steps),
         data=data,
         clock=clock,

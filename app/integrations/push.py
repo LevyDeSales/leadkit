@@ -28,6 +28,7 @@ códigos do Baserow e os nomes de campos e perguntas, que são configuração.
 from __future__ import annotations
 
 import uuid
+from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Any
 
@@ -35,13 +36,16 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 from app import pipeline
+from app.deployment_contract import DeploymentContractError, assert_contract
 from app.deps import Deps
 from app.destinations import UnreadableSecret
 from app.errors import FailureCode, RetryableError, TerminalError
+from app.integration_readiness import configuration_lock
 from app.integrations import config, mapping
 from app.integrations.baserow import Connection
-from app.integrations.mapping import Entry, RowData
-from app.models import Integration, IntegrationSync, Job, Submission, utcnow
+from app.integrations.mapping import CaptureRowData, Entry, MappingProfile, RowData
+from app.internal_links import internal_links
+from app.models import Artifact, Integration, IntegrationSync, Job, Submission, utcnow
 from app.submission_identity import identity_from_answers, submission_form
 
 SAMPLE_PREFIX = (
@@ -67,49 +71,78 @@ class _Loaded:
 
 
 def push(deps: Deps, sync_id: uuid.UUID) -> str:
-    """Sincroniza um pedido com a planilha. Devolve "succeeded" ou "already_succeeded" (a
-    sincronização já estava feita, ou saiu com o pedido pela retenção). Levanta o erro traduzido,
-    depois de registrá-lo na sincronização."""
-    try:
-        loaded = _load(deps, sync_id)
-        if loaded is None:
-            return "already_succeeded"
-        written = upsert(
-            deps,
-            loaded.connection,
-            integration_id=loaded.integration_id,
-            key_field_id=loaded.key_field_id,
-            entries=loaded.entries,
-            data=loaded.data,
-        )
-    except Exception as exc:
-        _record_error(deps, sync_id, exc)
-        raise
+    """Mantém configuração, tentativa e artefato protegidos até o transporte limitado."""
+    failure = None
     with deps.sessions.begin() as session:
-        session.execute(
-            sa.update(IntegrationSync)
-            .where(IntegrationSync.id == sync_id)
-            .values(
-                status="succeeded",
-                outcome=written.outcome,
-                row_id=written.row_id,
-                synced_at=utcnow(),
-                last_error=None,
+        metadata = session.get(IntegrationSync, sync_id)
+        if metadata is None or metadata.status == "succeeded":
+            return "already_succeeded"
+        job_id = metadata.job_id
+        configuration_lock(session, shared=True)
+        job = session.scalar(sa.select(Job).where(Job.id == job_id).with_for_update())
+        artifact = session.scalar(
+            sa.select(Artifact)
+            .where(
+                Artifact.job_id == job_id, Artifact.version == job.attempt, Artifact.kind == "pdf"
             )
+            .with_for_update()
         )
+        sync = session.scalar(
+            sa.select(IntegrationSync)
+            .where(IntegrationSync.id == sync_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        if sync is None or sync.status == "succeeded":
+            return "already_succeeded"
+        sync.attempts += 1
+        try:
+            from app.jobs import delivery_retention_expired
+
+            if (
+                job is None
+                or artifact is None
+                or artifact.job_id != job.id
+                or artifact.version != job.attempt
+                or artifact.purged_at is not None
+                or job.status != "completed"
+                or job.expires_at <= utcnow()
+                or delivery_retention_expired(session, job, deps.settings.retention_days)
+            ):
+                raise TerminalError(
+                    FailureCode.INTEGRATION_REJECTED, "tentativa ou prazo não autorizados"
+                )
+            loaded = _load(deps, session, sync)
+            written = upsert(
+                deps,
+                loaded.connection,
+                integration_id=loaded.integration_id,
+                key_field_id=loaded.key_field_id,
+                entries=loaded.entries,
+                data=loaded.data,
+                session=session,
+            )
+            sync.status, sync.outcome, sync.row_id = "succeeded", written.outcome, written.row_id
+            sync.synced_at, sync.last_error = utcnow(), None
+        except Exception as exc:  # noqa: BLE001 — persiste erro seguro na mesma sessão protegida
+            sync.last_error = (
+                str(exc) if isinstance(exc, (RetryableError, TerminalError)) else type(exc).__name__
+            )[:300]
+            failure = exc
+    if failure is not None:
+        raise failure
     return "succeeded"
 
 
-def _load(deps: Deps, sync_id: uuid.UUID) -> _Loaded | None:
-    """O que a sincronização precisa, lido do banco; None se não há o que sincronizar. Conta a tentativa antes de
-    qualquer recusa, para o admin mostrar quantas vezes foi tentado."""
-    with deps.sessions.begin() as session:
-        sync = session.get(IntegrationSync, sync_id)
-        if sync is None or sync.status == "succeeded":
-            return None
-        sync.attempts += 1
-        integration = session.get_one(Integration, sync.integration_id)
-        data = _row_data(deps, session, sync)
+def _load(deps: Deps, session: Session, sync: IntegrationSync) -> _Loaded:
+    integration = session.scalar(
+        sa.select(Integration).where(Integration.id == sync.integration_id).with_for_update()
+    )
+    if integration is None or integration.purpose != "internal":
+        raise TerminalError(
+            FailureCode.INTEGRATION_UNCONFIGURED,
+            "O Baserow exige finalidade interna; corrija a conexão antes de repetir.",
+        )
     if not integration.active:
         raise RetryableError(
             FailureCode.INTEGRATION_UNCONFIGURED,
@@ -120,6 +153,7 @@ def _load(deps: Deps, sync_id: uuid.UUID) -> _Loaded | None:
         raise TerminalError(
             FailureCode.INTEGRATION_MAPPING, "o mapeamento está vazio ou sem o código do pedido"
         )
+    data = _row_data(deps, session, sync)
     try:
         connection = config.open_connection(deps.cipher, integration)
     except UnreadableSecret:
@@ -137,7 +171,30 @@ def _row_data(deps: Deps, session: Session, sync: IntegrationSync) -> RowData:
     submission = session.get_one(Submission, job.submission_id)
     spec = submission_form(deps.forms, submission)
     lead = identity_from_answers(submission, spec)
-    links = pipeline.lead_links(deps, job)
+    # O mapeamento é do pedido/submissão, sem documento ou hash de uma tentativa antiga.
+    # O link fixa a tentativa observada; se ficar obsoleto, o endpoint recusa outro PDF.
+    links = pipeline.lead_links(deps, job, pdf_attempt=job.attempt)
+    try:
+        assert_contract(session, required=2)
+    except DeploymentContractError:
+        if spec.release_mode == "manual":
+            raise
+    else:
+        artifact = session.scalar(
+            sa.select(Artifact).where(
+                Artifact.job_id == job.id, Artifact.version == job.attempt, Artifact.kind == "pdf"
+            )
+        )
+        integration = session.get_one(Integration, sync.integration_id)
+        links = internal_links(
+            session,
+            deps,
+            job,
+            artifact,
+            receiver_kind="integration",
+            receiver_id=integration.id,
+            receiver_version=integration.version,
+        )
     return RowData(
         public_id=job.public_id,
         form_version=submission.form_version,
@@ -163,22 +220,59 @@ def upsert(
     integration_id: uuid.UUID,
     key_field_id: int,
     entries: list[Entry],
-    data: RowData,
+    data: RowData | CaptureRowData,
+    record_key: str | None = None,
+    profile: MappingProfile = "pdf",
+    session: Session | None = None,
 ) -> Written:
     """Monta a linha com os campos da tabela como estão agora e a grava: atualiza a que tem o
-    código do pedido, ou cria. Levanta `RetryableError` ou `TerminalError`."""
+    registro, ou cria. Captura exige `record_key` igual ao id da submissão; PDF conserva
+    a chave e a trava antigas quando a chave explícita é omitida.
+    Com `session`, a chamadora controla a transação: deve mantê-la aberta durante o envio
+    e encerrá-la para liberar a trava. Esta função não confirma, desfaz ou fecha a sessão
+    recebida; rollback local não desfaz a escrita remota. Sem sessão, mantém a transação própria.
+    Levanta `RetryableError` ou `TerminalError`."""
     live = deps.baserow.fields(connection)
     try:
-        row = mapping.build_row(entries, live, data)
-    except mapping.MappingError as exc:
+        row = mapping.build_row(entries, live, data, profile=profile)
+        if record_key is None:
+            if not isinstance(data, RowData) or profile != "pdf":
+                raise mapping.MappingError("A captura exige a chave explícita da submissão.")
+            record_key = data.public_id
+        key_source = mapping.CAPTURE_KEY_SOURCE if profile == "capture" else mapping.KEY_SOURCE
+        if not record_key or record_key != mapping.raw_value(key_source, data, profile=profile):
+            raise mapping.MappingError("A chave explícita não corresponde ao registro enviado.")
+        if profile == "capture":
+            mapping.check_entries(
+                entries,
+                live,
+                {
+                    **{source.key: source for source in mapping.CAPTURE_SOURCES},
+                    **{
+                        f"answer:{name}": mapping.answer_source(question)
+                        for name, question in data.questions.items()
+                    },
+                },
+                profile=profile,
+            )
+            key = mapping.key_entry(entries, profile=profile)
+            if (
+                key is None
+                or key.field_id != key_field_id
+                or row.get(f"field_{key_field_id}") != record_key
+            ):
+                raise mapping.MappingError(
+                    "O campo-chave não corresponde ao mapeamento da captura."
+                )
+    except (mapping.MappingError, mapping.InvalidMapping) as exc:
         raise TerminalError(FailureCode.INTEGRATION_MAPPING, str(exc)) from None
-    lock = f"integration:{integration_id}:{data.public_id}"
+    lock = f"integration:{integration_id}:{record_key}"
     # A transação segura a trava até o fim do achar-e-escrever; sem tabela mexida, ela só espera.
-    with deps.sessions.begin() as session:
-        session.execute(
+    with nullcontext(session) if session is not None else deps.sessions.begin() as write_session:
+        write_session.execute(
             sa.text("select pg_advisory_xact_lock(hashtextextended(:key, 0))"), {"key": lock}
         )
-        found = deps.baserow.find_rows(connection, key_field_id, data.public_id)
+        found = deps.baserow.find_rows(connection, key_field_id, record_key)
         if found:
             return Written("updated", deps.baserow.update_row(connection, found[0], row))
         return Written("created", deps.baserow.create_row(connection, row))
@@ -215,7 +309,9 @@ def sample_id(form_slug: str) -> str:
     return f"{SAMPLE_PREFIX}{form_slug}"
 
 
-def send_sample(deps: Deps, form_slug: str, *, actor: str) -> SampleResult | None:
+def send_sample(
+    deps: Deps, form_slug: str, *, actor: str, profile: MappingProfile | None = None
+) -> SampleResult | None:
     """Manda para a tabela uma linha sintética do formulário (a lead de exemplo, no domínio
     `exemplo`, com respostas inventadas), pelo mesmo caminho de um pedido de verdade, e devolve o
     que aconteceu; None se o formulário não tem integração. A linha fica na tabela, para a operadora
@@ -228,11 +324,16 @@ def send_sample(deps: Deps, form_slug: str, *, actor: str) -> SampleResult | Non
         return None
     public_id = sample_id(form_slug)
     spec = config.form_spec(deps, form_slug)
+    from app.integration_readiness import profile_for
+
+    profile = profile or profile_for(spec)
+    entries = stored.capture_entries if profile == "capture" else stored.entries
+    key_field_id = stored.capture_key_field_id if profile == "capture" else stored.key_field_id
     written: Written | None = None
     error: str | None = None
     if spec is None:
         error = "o formulário não tem versão publicada para montar a linha de teste"
-    elif stored.key_field_id is None or mapping.key_entry(list(stored.entries)) is None:
+    elif key_field_id is None or mapping.key_entry(list(entries), profile=profile) is None:
         error = "o mapeamento está vazio ou sem o código do pedido"
     else:
         try:
@@ -240,9 +341,11 @@ def send_sample(deps: Deps, form_slug: str, *, actor: str) -> SampleResult | Non
                 deps,
                 connection,
                 integration_id=stored.id,
-                key_field_id=stored.key_field_id,
-                entries=list(stored.entries),
-                data=mapping.sample_data(spec, public_id),
+                key_field_id=key_field_id,
+                entries=list(entries),
+                data=mapping.sample_data(spec, public_id, profile=profile),
+                profile=profile,
+                record_key=public_id,
             )
         except (RetryableError, TerminalError) as exc:
             error = str(exc)[:300]

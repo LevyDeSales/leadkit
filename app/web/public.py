@@ -24,14 +24,21 @@ from fastapi.routing import APIRoute
 from markupsafe import Markup
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
+from starlette.datastructures import FormData
 
+from app.admin.actions.jobs import NoPdf, PdfRemoved, pdf_file
+from app.admin.auth import instant
+from app.deployment_contract import DeploymentContractError
 from app.deps import Deps, get_deps
-from app.errors import TerminalError
+from app.destinations import SecretCipher
+from app.errors import RetryableError, TerminalError
 from app.forms import FormSpec, InactiveForm, Notices, Screen, UnknownForm
 from app.forms.dates import long_date
 from app.forms.sandbox import TemplateProblem
+from app.handoffs import completion_view
 from app.intake import (
     Accepted,
+    CaptureAccepted,
     ConsentIn,
     ConsentTextMismatch,
     IdempotencyConflict,
@@ -40,10 +47,16 @@ from app.intake import (
     SubmissionLimitExceeded,
     accept_submission,
     clean_tracking,
+    submission_spec,
 )
+from app.internal_links import ParticipantPdfAccess
 from app.models import Artifact, Job, Plan, Submission, utcnow
+from app.pdf_availability import PdfAvailability, current_pdf
+from app.plan_release import PlanHeld, ReleaseRefused, require_participant_access
 from app.submission_identity import resolve_identity
+from app.submission_launch import launch_after_commit, launch_capture_after_commit
 from app.tokens import TokenError
+from app.web.completion import render_completion
 from app.web.formview import (
     PRIVACY,
     FormPost,
@@ -72,8 +85,8 @@ CONSENT_UPDATED = (
     "continuar."
 )
 ALREADY_SENT = (
-    "Você já enviou este formulário com outras respostas. Se quiser um plano com estas "
-    "respostas, envie de novo."
+    "Você já enviou este formulário com outras respostas. Para salvar estas respostas como "
+    "um novo envio, envie de novo."
 )
 
 CSP = (
@@ -140,12 +153,21 @@ def _page(request: Request, name: str, status_code: int = 200, **context: object
 # --- formulário -------------------------------------------------------------------------------
 
 
-def _screen_form(request: Request, slug: str) -> tuple[FormSpec, Screen] | Response:
+def _screen_form(
+    request: Request, slug: str, key: str | None = None, session: Session | None = None
+) -> tuple[FormSpec, Screen] | Response:
     """A versão atual do formulário, se ele tem página pública e recebe envios: um envio novo usa
     sempre ela. Senão, a página que diz por quê. Inativo, ele está indisponível (410): a lead sabe
     que o problema não é com ela, e quem enviou sabe que as respostas não foram."""
     try:
-        spec = get_deps().forms.current(slug)
+        deps = get_deps()
+        if key is None:
+            spec = deps.forms.current(slug)
+        elif session is not None:
+            spec = submission_spec(session, deps.forms, slug, key)
+        else:
+            with deps.sessions() as lookup:
+                spec = submission_spec(lookup, deps.forms, slug, key)
     except InactiveForm:
         return _page(request, "unavailable", 410, submitted=request.method == "POST")
     except UnknownForm:
@@ -222,11 +244,30 @@ def _grant_access(response: Response, request: Request, job: Job, token: str) ->
 
 @router.post("/p/{slug}")
 async def submit_form(slug: str, request: Request) -> Response:
-    found = await run_in_threadpool(_screen_form, request, slug)
-    if isinstance(found, Response):
-        return found
-    spec, screen = found
-    post = read_post(screen, await request.form(), spec.conditions)
+    raw = await request.form()
+    accepted = await run_in_threadpool(_submit_form, slug, request, raw)
+    if isinstance(accepted, Response):
+        return accepted
+    if isinstance(accepted, CaptureAccepted):
+        if not accepted.replay:
+            launch_capture_after_commit(request.app, accepted.submission.id)
+        response = RedirectResponse(f"/s/{accepted.receipt.public_id}/conclusao", status_code=303)
+        _grant_capture_access(response, request, accepted.receipt, accepted.token)
+        return response
+    job = accepted.job
+    if not accepted.replay:
+        # Falha no disparo não perde o pedido: o reconciliador dispara depois.
+        launch_after_commit(request.app, job.id, job.attempt)
+    suffix = "/conclusao" if accepted.form.completion.mode != "result" else ""
+    response = RedirectResponse(f"/d/{job.public_id}{suffix}", status_code=303)
+    _grant_access(response, request, job, accepted.token)
+    return response
+
+
+def _prepare_form_submission(
+    request: Request, spec: FormSpec, screen: Screen, post: FormPost, session: Session
+) -> Accepted | CaptureAccepted | Response:
+    """Valida e recebe a página sob a mesma trava usada para resolver sua versão."""
     if post.honeypot:
         return _form_page(request, spec, screen, post, banner=SEND_FAILED, status_code=400)
     errors = form_errors(spec, screen, post)
@@ -245,20 +286,18 @@ async def submit_form(slug: str, request: Request) -> Response:
     body = SubmissionIn(answers=post.answers, consent=consent, tracking=post.tracking)
     deps = get_deps()
 
-    def _accept() -> Accepted:
-        with deps.sessions.begin() as session:
-            return accept_submission(
-                session,
-                spec,
-                body,
-                idempotency_key=f"web:{post.idempotency_key}",
-                signer=deps.signer,
-                link_ttl=deps.link_ttl,
-                limits=deps.submission_limits,
-            )
-
     try:
-        accepted = await run_in_threadpool(_accept)
+        accepted = accept_submission(
+            session,
+            spec,
+            body,
+            idempotency_key=f"web:{post.idempotency_key}",
+            signer=deps.signer,
+            link_ttl=deps.link_ttl,
+            limits=deps.submission_limits,
+            forms=deps.forms,
+            cipher=SecretCipher.from_settings(deps.settings),
+        )
     except ValidationError as exc:
         # As respostas já passaram por `form_errors`: sobra o canal de marketing que a página não
         # pede (página velha ou envio forjado). O erro vai no campo do consentimento.
@@ -282,13 +321,34 @@ async def submit_form(slug: str, request: Request) -> Response:
         )
         response.headers["Retry-After"] = str(exc.retry_after)
         return response
-    job = accepted.job
-    if not accepted.replay:
-        # Falha no disparo não perde o pedido: o reconciliador dispara depois.
-        await request.app.state.trigger(job.id, job.attempt)
-    response = RedirectResponse(f"/d/{job.public_id}", status_code=303)
-    _grant_access(response, request, job, accepted.token)
-    return response
+    return accepted
+
+
+def _submit_form(
+    slug: str, request: Request, raw: FormData
+) -> Accepted | CaptureAccepted | Response:
+    deps = get_deps()
+    spec: FormSpec | None = None
+    screen: Screen | None = None
+    post: FormPost | None = None
+    try:
+        with deps.sessions.begin() as session:
+            found = _screen_form(request, slug, f"web:{raw.get('_idem', '')}", session)
+            if isinstance(found, Response):
+                return found
+            spec, screen = found
+            post = read_post(screen, raw, spec.conditions)
+            accepted = _prepare_form_submission(request, spec, screen, post, session)
+    except sa.exc.SQLAlchemyError:
+        # Também cobre falha no commit: nenhum recibo ou disparo antecede sua confirmação.
+        # Não consulta o banco indisponível de novo nem repete respostas ainda não validadas.
+        if spec is None or screen is None or post is None:
+            response = _page(request, "submission_unavailable", 503, slug=slug)
+        else:
+            response = _form_page(request, spec, screen, post, banner=SEND_FAILED, status_code=503)
+        response.headers["Retry-After"] = "5"
+        return response
+    return accepted
 
 
 # --- página do pedido -------------------------------------------------------------------------
@@ -327,10 +387,12 @@ def _lead_job(request: Request, deps: Deps, public_id: str) -> Job | Response:
     return access.job
 
 
-def _exchange(request: Request, deps: Deps, public_id: str, token: str) -> Response:
+def _exchange(
+    request: Request, deps: Deps, public_id: str, token: str, *, suffix: str = ""
+) -> Response:
     """Link com `?t=`: troca o token pelo cookie e volta para a URL limpa, para o token não
     ficar na barra, no histórico nem no Referer. Token errado não ganha nada."""
-    response = RedirectResponse(f"/d/{public_id}", status_code=303)
+    response = RedirectResponse(f"/d/{public_id}{suffix}", status_code=303)
     access = _access(deps, public_id, token)
     if access.job is not None:  # válido ou vencido: a página certa vem depois do redirect
         _grant_access(response, request, access.job, token)
@@ -355,17 +417,35 @@ class JobDetails:
     # O que a prévia de uma definição compilada recebe, como o PDF.
     lead_name: str | None = None
     scores: dict[str, Any] = field(default_factory=dict)
+    availability: PdfAvailability | None = None
+    held: bool = False
 
 
 def _details(deps: Deps, job: Job) -> JobDetails:
-    with deps.sessions() as session:
+    with deps.sessions.begin() as session:
+        from app.integration_readiness import configuration_lock
+
+        configuration_lock(session, shared=True)
+        observed = session.scalar(sa.select(Job).where(Job.id == job.id).with_for_update())
+        if (
+            observed is None
+            or observed.attempt != job.attempt
+            or observed.token_version != job.token_version
+        ):
+            raise NoPdf
         submission = session.get_one(Submission, job.submission_id)
         try:
             lead_name = resolve_identity(deps.forms, submission).name
         except TerminalError:  # a página segue acessível, sem nome presumido de outro envio
             lead_name = None
         plan = pdf = None
-        if job.status == "completed":
+        availability = current_pdf(session, deps.storage, job)
+        try:
+            access = require_participant_access(session, job, _current_pdf(session, job))
+            held = not access.allowed
+        except (ReleaseRefused, DeploymentContractError):
+            held = True
+        if availability.available and not held:
             plan = session.scalar(
                 sa.select(Plan.document).where(Plan.job_id == job.id, Plan.version == job.attempt)
             )
@@ -380,6 +460,8 @@ def _details(deps: Deps, job: Job) -> JobDetails:
         pdf,
         lead_name=lead_name,
         scores=submission.scores or {},
+        availability=availability,
+        held=held,
     )
 
 
@@ -419,6 +501,35 @@ def _preview(deps: Deps, details: JobDetails) -> Markup | None:
     return Markup(html)
 
 
+@router.get("/d/{public_id}/conclusao")
+def completion_page(public_id: str, request: Request) -> Response:
+    deps = get_deps()
+    token = request.query_params.get("t")
+    if token is not None:
+        return _exchange(request, deps, public_id, token, suffix="/conclusao")
+    job = _lead_job(request, deps, public_id)
+    if isinstance(job, Response):
+        return job
+    with deps.sessions() as session:
+        submission = session.get_one(Submission, job.submission_id)
+        try:
+            spec = deps.forms.get(submission.form_slug, submission.form_version_number)
+        except UnknownForm:
+            return _page(request, "unknown", 404)
+        completion = completion_view(
+            session,
+            submission,
+            spec,
+            cipher=SecretCipher.from_settings(deps.settings),
+            now=instant(request.app.state.admin_clock),
+        )
+    if spec.completion.mode == "result":
+        return RedirectResponse(f"/d/{job.public_id}", status_code=303)
+    from fastapi.responses import HTMLResponse
+
+    return HTMLResponse(render_completion(spec, completion=completion))
+
+
 @router.get("/d/{public_id}")
 def job_page(public_id: str, request: Request) -> Response:
     deps = get_deps()
@@ -428,7 +539,10 @@ def job_page(public_id: str, request: Request) -> Response:
     job = _lead_job(request, deps, public_id)
     if isinstance(job, Response):
         return job
-    details = _details(deps, job)
+    try:
+        details = _details(deps, job)
+    except NoPdf:
+        return _page(request, "plan_held", 409, job=job)
     if job.status == "failed":
         return _page(
             request, "failed", job=job, details=details, notice=_notices(deps, details).failed
@@ -441,6 +555,15 @@ def job_page(public_id: str, request: Request) -> Response:
             details=details,
             progress=progress(job, utcnow()),
             notice=_notices(deps, details).waiting,
+        )
+    if details.held:
+        return _page(request, "plan_held", job=job)
+    if details.pdf is None:
+        return _page(
+            request,
+            "pdf_unavailable",
+            job=job,
+            can_verify=details.availability is not None and details.availability.state == "unknown",
         )
     return _page(
         request,
@@ -463,20 +586,33 @@ def download_pdf(public_id: str, request: Request) -> Response:
         return job
     if job.status != "completed":
         return RedirectResponse(f"/d/{job.public_id}", status_code=303)
-    with deps.sessions() as session:
-        pdf = _current_pdf(session, job)
-    if pdf is None:
-        return _page(request, "unknown", 404)
-    filename = f"plano-{job.public_id}.pdf"
-    url = deps.storage.presigned_url(
-        pdf.storage_key, ttl_seconds=DOWNLOAD_TTL_SECONDS, filename=filename
-    )
-    if url:
-        return RedirectResponse(url, status_code=302)
+    try:
+        pdf = pdf_file(
+            deps,
+            public_id,
+            None,
+            signed_url=True,
+            filename=f"plano-{job.public_id}.pdf",
+            access=ParticipantPdfAccess(job.id, job.attempt, job.token_version),
+        )
+    except TokenError:
+        return _page(request, "expired", 410, job=job, days=deps.settings.link_ttl_days)
+    except PlanHeld:
+        return _page(request, "plan_held", 403, job=job)
+    except (ReleaseRefused, DeploymentContractError):
+        return _page(request, "plan_held", 503, job=job)
+    except NoPdf:
+        return _page(request, "pdf_unavailable", 404, job=job)
+    except PdfRemoved:
+        return _page(request, "pdf_unavailable", 410, job=job)
+    except (RetryableError, TerminalError, OSError):
+        return _page(request, "pdf_unavailable", 502, job=job)
+    if pdf.url:
+        return RedirectResponse(pdf.url, status_code=302)
     return Response(
-        deps.storage.get(pdf.storage_key),
+        pdf.content,
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": f'attachment; filename="plano-{job.public_id}.pdf"'},
     )
 
 
@@ -497,3 +633,59 @@ def job_progress(public_id: str, request: Request) -> Response:
         progress=progress(job, utcnow()),
         announce=request.query_params.get("etapa") != job.stage,
     )
+
+
+CAPTURE_COOKIE = "leadkit_capture"
+
+
+def _grant_capture_access(response, request, receipt, token):
+    response.set_cookie(
+        CAPTURE_COOKIE,
+        token,
+        max_age=max(0, int((receipt.expires_at - utcnow()).total_seconds())),
+        path=f"/s/{receipt.public_id}",
+        secure=_https(request),
+        httponly=True,
+        samesite="lax",
+    )
+
+
+@router.get("/s/{public_id}/conclusao")
+def capture_completion_page(public_id: str, request: Request) -> Response:
+    """Recibo histórico sem respostas, contato ou acesso a PDF; troca token por cookie local."""
+    from fastapi.responses import HTMLResponse
+
+    from app.models import CaptureReceipt
+    from app.tokens import CaptureSigner, TokenError
+
+    deps = get_deps()
+    token = request.query_params.get("t")
+    supplied = token if token is not None else request.cookies.get(CAPTURE_COOKIE, "")
+    with deps.sessions() as session:
+        receipt = session.scalar(
+            sa.select(CaptureReceipt).where(CaptureReceipt.public_id == public_id)
+        )
+        if receipt is None:
+            return _page(request, "capture_unknown", 404)
+        try:
+            CaptureSigner(deps.signer.secrets_).verify(supplied, receipt)
+        except TokenError:
+            return _page(request, "capture_unknown", 404)
+        submission = session.get_one(Submission, receipt.submission_id)
+        try:
+            spec = deps.forms.get(submission.form_slug, submission.form_version_number)
+        except UnknownForm:
+            return _page(request, "capture_unknown", 404)
+        completion = completion_view(
+            session,
+            submission,
+            spec,
+            cipher=SecretCipher.from_settings(deps.settings),
+            now=instant(request.app.state.admin_clock),
+        )
+    headers = {"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"}
+    if token is not None:
+        response = RedirectResponse(f"/s/{public_id}/conclusao", status_code=303, headers=headers)
+        _grant_capture_access(response, request, receipt, token)
+        return response
+    return HTMLResponse(render_completion(spec, completion=completion), headers=headers)

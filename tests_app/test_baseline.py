@@ -19,6 +19,7 @@ from conftest import reset_test_schema
 from app.db import make_engine
 from app.deps import build_deps
 from app.forms.stored import import_definition
+from app.internal_links import AdminPdfAccess
 from app.models import Base, Form
 from app.settings import Settings
 
@@ -77,7 +78,7 @@ def assert_read_only(statements: list[str]) -> None:
 
 def test_public_revision_graph_has_one_seedless_baseline() -> None:
     scripts = ScriptDirectory.from_config(config())
-    assert scripts.get_heads() == ["0012"]
+    assert scripts.get_heads() == ["0018_journey_events"]
     assert scripts.get_bases() == ["0012"]
     assert scripts.get_revision("0012").down_revision is None
     assert not (MIGRATIONS / "legacy_forms").exists()
@@ -91,10 +92,11 @@ def test_empty_database_gets_all_tables_and_no_business_rows(fresh: sa.Engine) -
         }
         assert connection.exec_driver_sql(
             "SELECT version_num FROM alembic_version"
-        ).scalars().all() == ["0012"]
+        ).scalars().all() == ["0018_journey_events"]
         assert all(
             connection.exec_driver_sql(f'SELECT count(*) FROM "{table}"').scalar_one() == 0
             for table in Base.metadata.tables
+            if table != "deployment_contract"
         )
     command.check(config())
 
@@ -190,20 +192,26 @@ def test_future_contract_can_be_prepared_from_public_sources(
 
     command.upgrade(config(), "head")
     with fresh.begin() as connection:
-        assert validate_database(connection, load_contracts(MIGRATIONS)) == "0012"
+        assert validate_database(connection, load_contracts(MIGRATIONS)) == "0018_journey_events"
         with Operations.context(MigrationContext.configure(connection)) as operations:
             operations.add_column(
                 "jobs", sa.Column("contract_example", sa.Integer(), nullable=True)
             )
         signature = schema_signature(connection)
     contracts = load_contracts(MIGRATIONS)
-    contracts["0013"] = signature
+    contracts["0019_example"] = signature
     directory = tmp_path / "public-reference"
     for relative in (
         "env.py",
         "compatibility.py",
         "script.py.mako",
         "versions/0012_leadkit_baseline.py",
+        "versions/0013_artifact_availability.py",
+        "versions/0014_capture_receipts.py",
+        "versions/0015_capture_delivery.py",
+        "versions/0016_plan_audiences.py",
+        "versions/0017_continuation_release.py",
+        "versions/0018_journey_events.py",
     ):
         target = directory / relative
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -211,8 +219,8 @@ def test_future_contract_can_be_prepared_from_public_sources(
     (directory / "contracts.py").write_text(
         "SIGNATURES = " + pprint.pformat(contracts, sort_dicts=True)
     )
-    (directory / "versions" / "0013_example.py").write_text(
-        'from alembic import op\nimport sqlalchemy as sa\nrevision = "0013"\ndown_revision = "0012"\n'
+    (directory / "versions" / "0019_example.py").write_text(
+        'from alembic import op\nimport sqlalchemy as sa\nrevision = "0019_example"\ndown_revision = "0018_journey_events"\n'
         'def upgrade():\n    op.add_column("jobs", sa.Column("contract_example", sa.Integer(), nullable=True))\n'
     )
     reset_test_schema(fresh.url.render_as_string(hide_password=False))
@@ -222,7 +230,161 @@ def test_future_contract_can_be_prepared_from_public_sources(
     with fresh.connect() as connection:
         assert (
             connection.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one()
-            == "0013"
+            == "0019_example"
         )
-        assert validate_database(connection, contracts) == "0013"
+        assert validate_database(connection, contracts) == "0019_example"
     assert_read_only(statements_during(lambda: command.upgrade(proposed, "head")))
+
+
+def test_artifact_migration_preserves_old_writes_and_verifies_history_only_on_download(
+    fresh: sa.Engine, database_url: str, tmp_path: Path
+) -> None:
+    import hashlib
+    import uuid
+    from datetime import timedelta
+
+    from app.adapters.pdf import minimal_pdf
+    from app.admin.actions.jobs import pdf_file
+    from app.models import Job, utcnow
+    from app.pdf_availability import current_pdf
+
+    command.upgrade(config(), "0012")
+    old = sa.MetaData()
+    old.reflect(fresh)
+    content = minimal_pdf("Plano sintético anterior")
+    now = utcnow()
+
+    def old_write(public_id: str) -> uuid.UUID:
+        lead, submission, job, plan, artifact = [uuid.uuid4() for _ in range(5)]
+        with fresh.begin() as connection:
+            connection.execute(
+                old.tables["leads"]
+                .insert()
+                .values(
+                    id=lead,
+                    email=f"{public_id}@example.test",
+                    first_touch={},
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            connection.execute(
+                old.tables["submissions"]
+                .insert()
+                .values(
+                    id=submission,
+                    lead_id=lead,
+                    form_slug="synthetic",
+                    form_version="synthetic-v1",
+                    idempotency_key=public_id,
+                    answers={},
+                    consent={},
+                    tracking={},
+                    scores={},
+                    created_at=now,
+                )
+            )
+            connection.execute(
+                old.tables["jobs"]
+                .insert()
+                .values(
+                    id=job,
+                    submission_id=submission,
+                    public_id=public_id,
+                    status="completed",
+                    stage="completed",
+                    attempt=1,
+                    token_version=1,
+                    expires_at=now + timedelta(days=1),
+                    completed_at=now,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            connection.execute(
+                old.tables["plans"]
+                .insert()
+                .values(
+                    id=plan,
+                    job_id=job,
+                    version=1,
+                    document={},
+                    model="synthetic",
+                    prompt_version="v1",
+                    usage={},
+                    created_at=now,
+                )
+            )
+            connection.execute(
+                old.tables["artifacts"]
+                .insert()
+                .values(
+                    id=artifact,
+                    job_id=job,
+                    plan_id=plan,
+                    kind="pdf",
+                    version=1,
+                    storage_key=f"{public_id}.pdf",
+                    sha256=hashlib.sha256(content).hexdigest(),
+                    byte_size=len(content),
+                    renderer="synthetic",
+                    created_at=now,
+                )
+            )
+        return job
+
+    before = old_write("historical-before")
+    with fresh.connect() as connection:
+        legacy = {
+            name: [
+                tuple(row)
+                for row in connection.execute(table.select().order_by(*table.primary_key.columns))
+            ]
+            for name, table in old.tables.items()
+            if name != "alembic_version"
+        }
+    for revision in (
+        "0013",
+        "0014_capture",
+        "0015_capture_delivery",
+        "0016_plan_audiences",
+        "0017_continuation_release",
+        "0018_journey_events",
+    ):
+        command.upgrade(config(), revision)
+        with fresh.connect() as connection:
+            assert (
+                connection.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one()
+                == revision
+            )
+            for name, rows in legacy.items():
+                assert [
+                    tuple(row)
+                    for row in connection.execute(
+                        old.tables[name].select().order_by(*old.tables[name].primary_key.columns)
+                    )
+                ] == rows
+    assert_read_only(statements_during(lambda: command.upgrade(config(), "head")))
+    after = old_write("historical-after")
+    deps = build_deps(
+        Settings(
+            _env_file=None, DATABASE_URL=database_url, LOCAL_STORAGE_DIR=str(tmp_path / "storage")
+        )
+    )
+    try:
+        for job_id, public_id in ((before, "historical-before"), (after, "historical-after")):
+            deps.storage.put(f"{public_id}.pdf", content, "application/pdf")
+            with deps.sessions() as session:
+                job = session.get_one(Job, job_id)
+                assert job.status == "completed"
+                state = current_pdf(session, deps.storage, job)
+                assert state.state == "unknown" and state.verified_at is None
+            assert (
+                pdf_file(deps, public_id, None, access=AdminPdfAccess(), signed_url=False).content
+                == content
+            )
+            with deps.sessions() as session:
+                state = current_pdf(session, deps.storage, session.get_one(Job, job_id))
+                assert state.available and state.verified_at is not None
+    finally:
+        deps.sessions.kw["bind"].dispose()

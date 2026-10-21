@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
+from uuid import UUID
 
 from pydantic import (
     AfterValidator,
@@ -509,9 +510,41 @@ class ScoringDoc(_Strict):
     persona: list[RuleDoc] = Field(default=[], max_length=MAX_RULES)
 
 
+class HandoffDoc(_Strict):
+    receiver_id: UUID
+    receiver_revision: Annotated[int, Field(ge=1)]
+
+
+class ReleaseDoc(_Strict):
+    mode: Literal["automatic", "manual"] = "automatic"
+
+
+class CompletionDoc(_Strict):
+    """Conclusão após persistência. Texto puro, sem HTML nem interpretação de template."""
+
+    handoff: HandoffDoc | None = None
+    mode: Literal["result", "confirmation", "button", "redirect"] = Field(
+        default="result",
+        description="Próximo passo após commit: resultado PDF (padrão legado), confirmação local, botão ou encaminhamento com recibo de continuidade. Não altera geração nem autorização de PDF.",
+    )
+    message: Text = Field(
+        default="Recebemos suas respostas. Obrigada por participar.",
+        description="Mensagem de confirmação em texto puro, de 1 a 2000 caracteres. HTML é escapado; não aceita interpolação de respostas.",
+    )
+    button_label: Label = Field(
+        default="Continuar",
+        description="Rótulo do botão de continuidade, em texto puro, de 1 a 300 caracteres. Não é o rótulo de envio do formulário.",
+    )
+    url: HttpsUrl | None = Field(
+        default=None,
+        description="URL HTTPS exata autorizada pela configuração autenticada. Obrigatória em button/redirect e ausente em result/confirmation; sem usuário/senha ou override público. Sem handoff conserva o endereço exato; com opt-in acrescenta somente a referência opaca, sem contato, respostas ou bearer PDF.",
+        examples=["https://example.test/proximo-passo"],
+    )
+
+
 class ExamplesDoc(_Strict):
     answers: dict[str, Any]
-    plan: dict[str, Any]
+    plan: dict[str, Any] | None = None
 
 
 class FormDocument(_Strict):
@@ -530,15 +563,51 @@ class FormDocument(_Strict):
     identity: IdentityDoc
     consent: ConsentDoc
     scoring: ScoringDoc | None = None
+    generation: Literal["pdf", "none"] = "pdf"
+    release: ReleaseDoc | None = None
+    instructions: str | None = None
+    prompt: str | None = None
+    plan: PlanDoc | None = None
+    pdf: PdfDoc | None = None
+    preview: str | None = None
+    data: dict[Name, DataBlockDoc] = {}
+    phases: PhasesDoc | None = None
+    notices: NoticesDoc | None = None
+    completion: CompletionDoc = Field(default_factory=CompletionDoc)
+    examples: ExamplesDoc
+
+
+class PdfExamplesDoc(ExamplesDoc):
+    plan: dict[str, Any]
+
+
+class PdfFormDocument(FormDocument):
+    generation: Literal["pdf"] = "pdf"
     instructions: str
     prompt: str
     plan: PlanDoc
     pdf: PdfDoc
     preview: str
-    data: dict[Name, DataBlockDoc] = {}
-    phases: PhasesDoc | None = None
-    notices: NoticesDoc | None = None
-    examples: ExamplesDoc
+    examples: PdfExamplesDoc
+
+
+class CaptureExamplesDoc(ExamplesDoc):
+    plan: None = None
+
+
+class CaptureFormDocument(FormDocument):
+    release: None = None
+    examples: CaptureExamplesDoc
+    generation: Literal["none"]
+    instructions: None = None
+    prompt: None = None
+    plan: None = None
+    pdf: None = None
+    preview: None = None
+    phases: None = None
+
+
+DefinitionDocument = PdfFormDocument | CaptureFormDocument
 
 
 # --- problemas ------------------------------------------------------------------------------
@@ -720,10 +789,12 @@ def parse(document: Mapping[str, Any] | str | bytes) -> FormDocument:
     if problems:
         raise DefinitionError(problems)
     problems = [Problem(key, message) for key, message in RESERVED.items() if key in document]
+    if document.get("generation") == "none" and "release" in document:
+        problems.append(Problem("release", "captura não usa política de liberação de PDF"))
     try:
-        parsed = FormDocument.model_validate(
-            {key: value for key, value in document.items() if key not in RESERVED}
-        )
+        parsed = (
+            CaptureFormDocument if document.get("generation") == "none" else PdfFormDocument
+        ).model_validate({key: value for key, value in document.items() if key not in RESERVED})
     except ValidationError as exc:
         raise DefinitionError([*problems, *validation_problems(exc)]) from None
     if problems:

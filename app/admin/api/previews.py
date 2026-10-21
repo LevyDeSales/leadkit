@@ -340,3 +340,29 @@ def render_form_draft_public_page(slug: FORM, step: STEP = 1) -> Response:
         raise ApiError.invalid(PAGE_NOT_BUILT, refused.problems) from None
     html = previews.render_public_page(page, **_frame(deps, scripts=True))
     return _page(html, policy=PUBLIC_PAGE_POLICY, filename="previa-pagina-publica.html")
+
+
+@router.operation(
+    "GET",
+    "/forms/{slug}/draft/completion-preview",
+    operation_id="render_form_draft_completion_preview",
+    role="leitura",
+    errors={
+        404: "O formulário não existe (`not_found`).",
+        422: "O rascunho não compila (`validation_failed`); `errors` informa o campo, sem repetir os valores recebidos.",
+    },
+    summary="Pré-visualizar a conclusão do rascunho",
+    description="Mostra a conclusão do rascunho salvo em HTML, com mensagem e rótulo escapados e botão externo desativado. Não salva respostas, não navega, não gera PDF, não chama LLM nem envia eventos. O destino é apenas texto. Sem rascunho editado, usa a versão publicada. Para editar a conclusão, use `save_form_draft` ou `patch_form_draft` com `completion` no documento; para publicar, `publish_form_draft`.",
+    returns="Recibo de exemplo em HTML, com navegação desativada.",
+    response_model=None,
+    response_class=HtmlResponse,
+)
+def render_form_draft_completion_preview(slug: FORM) -> Response:
+    deps = get_deps()
+    try:
+        html = previews.completion_preview(deps, slug, **_frame(deps, scripts=False))
+    except UnknownForm:
+        raise ApiError("not_found", NOT_FOUND) from None
+    except DefinitionError as refused:
+        raise ApiError.invalid(PAGE_NOT_BUILT, refused.problems) from None
+    return _page(html, policy=RESULT_PAGE_POLICY, filename="previa-conclusao.html")

@@ -398,6 +398,78 @@ CHANNEL_DEFAULTS = {
 
 
 @dataclass(eq=False)
+class CompletionEdit:
+    """Conclusão como texto de formulário; a validação final pertence ao compilador."""
+
+    mode: str = "result"
+    message: str = ""
+    button_label: str = ""
+    url: str = ""
+    receiver_id: str = ""
+    receiver_revision: str = ""
+
+    @classmethod
+    def of_document(cls, value: Any) -> CompletionEdit:
+        found = value if isinstance(value, Mapping) else {}
+        return cls(
+            **{key: _text(found.get(key)) for key in ("message", "button_label", "url")},
+            mode=_text(found.get("mode")) or "result",
+            receiver_id=_text((found.get("handoff") or {}).get("receiver_id")),
+            receiver_revision=_text((found.get("handoff") or {}).get("receiver_revision")),
+        )
+
+    @classmethod
+    def of_form(cls, form: FormFields) -> CompletionEdit:
+        selected = (form.getlist("completion.handoff.selection") or [""])[0]
+        prefix = "completion.handoff.current" if selected == "current" else "completion.handoff"
+        return cls.of_document(
+            {
+                key: (
+                    (form.getlist("completion.handoff.current.entry_url") or [""])[0]
+                    if key == "url" and selected == "current"
+                    else form.getlist(f"completion.{key}")[0]
+                )
+                for key in ("mode", "message", "button_label", "url")
+                if form.getlist(f"completion.{key}")
+            }
+            | {
+                "handoff": {
+                    key: (form.getlist(f"{prefix}.{key}") or [""])[0]
+                    if selected in ("saved", "current")
+                    else ""
+                    for key in ("receiver_id", "receiver_revision")
+                }
+            }
+        )
+
+    def document(self) -> dict[str, Any]:
+        return {
+            "mode": self.mode.strip(),
+            **(
+                {
+                    "handoff": {
+                        "receiver_id": self.receiver_id.strip(),
+                        "receiver_revision": int(self.receiver_revision)
+                        if self.receiver_revision.isdecimal()
+                        else self.receiver_revision,
+                    }
+                }
+                if self.receiver_id.strip() or self.receiver_revision.strip()
+                else {}
+            ),
+            **{
+                key: _lines(value).strip()
+                for key, value in (
+                    ("message", self.message),
+                    ("button_label", self.button_label),
+                    ("url", self.url),
+                )
+                if value.strip()
+            },
+        }
+
+
+@dataclass(eq=False)
 class FormEdit:
     """O que o editor estruturado cobre de uma definição, como a operadora o edita."""
 
@@ -407,6 +479,8 @@ class FormEdit:
     # `data-` e `scoring-` são dos editores delas.
     OPERATIONS: ClassVar[tuple[str, ...]] = ()
 
+    generation: str = "pdf"
+    release_mode: str = "automatic"
     title: str = ""
     intro: str = ""
     minutes: str = ""
@@ -417,6 +491,7 @@ class FormEdit:
     data: DataEdit = field(default_factory=DataEdit)
     scoring: ScoringEdit = field(default_factory=ScoringEdit)
     notices: NoticesEdit = field(default_factory=NoticesEdit)
+    completion: CompletionEdit = field(default_factory=CompletionEdit)
 
     # --- leitura ------------------------------------------------------------------------------
 
@@ -441,6 +516,7 @@ class FormEdit:
         consent = document.get("consent") or {}
         marketing = consent.get("marketing") or {}
         return cls(
+            generation=_text(document.get("generation", "pdf")),
             title=_text(document.get("title")),
             intro=_text(document.get("intro")),
             minutes=_text(document.get("minutes")),
@@ -456,6 +532,8 @@ class FormEdit:
             data=DataEdit.of_document(document.get("data")),
             scoring=ScoringEdit.of_document(document.get("scoring")),
             notices=NoticesEdit.of_document(document.get("notices")),
+            completion=CompletionEdit.of_document(document.get("completion")),
+            release_mode=(document.get("release") or {}).get("mode", "automatic"),
         )
 
     @classmethod
@@ -508,6 +586,7 @@ class FormEdit:
         for (i, _), question in sorted(questions.items(), key=lambda item: item[0]):
             steps[i].questions.append(question)
         edit = cls(
+            generation=first("generation") or "pdf",
             title=first("title"),
             intro=first("intro"),
             minutes=first("minutes"),
@@ -525,6 +604,8 @@ class FormEdit:
             data=DataEdit.of_form(form),
             scoring=ScoringEdit.of_form(form),
             notices=NoticesEdit.of_form(form),
+            completion=CompletionEdit.of_form(form),
+            release_mode=first("release.mode") or "automatic",
         )
         for role in IDENTITY_ROLES:
             position = _POSITION.fullmatch(first(f"identity.{role}"))
@@ -601,18 +682,26 @@ class FormEdit:
             "plan": self.plan.document(),
             "data": self.data.document(),
         }
-        phases = self.plan.phases.document()
+        if self.generation != "pdf":
+            found["generation"] = self.generation
+            found.pop("plan")
+        phases = self.plan.phases.document() if self.generation == "pdf" else None
         if phases is not None:
             found["phases"] = phases
         if (scoring := self.scoring.document()) is not None:
             found["scoring"] = scoring
         if (notices := self.notices.document()) is not None:
             found["notices"] = notices
+        if self.release_mode != "automatic":
+            found["release"] = {"mode": self.release_mode}
+        completion = self.completion.document()
+        if completion != {"mode": "result"}:
+            found["completion"] = completion
         return found
 
     def problems(self) -> list[Problem]:
         """O que o editor não consegue escrever na definição: salvar para aqui, antes de compilar."""
-        found = self.data.problems() + self.plan.problems()
+        found = self.data.problems() + (self.plan.problems() if self.generation == "pdf" else [])
         for i, step in enumerate(self.steps):
             for j, question in enumerate(step.questions):
                 for place, condition in owners_of(question, i, j):

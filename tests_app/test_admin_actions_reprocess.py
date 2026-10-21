@@ -225,7 +225,20 @@ def failed_ids(deps: Deps, model: type[Delivery | IntegrationSync]) -> list[uuid
 
 
 def resend_delivery(deps: Deps, public_id: str, delivery_id: uuid.UUID) -> actions.Resent:
-    return asyncio.run(actions.resend_delivery(deps, public_id, delivery_id, actor=ACTOR))
+    with deps.sessions() as session:
+        row = session.get(Delivery, delivery_id)
+        version = row.config_version if row else None
+        attempt = row.authorized_attempt if row else None
+    return asyncio.run(
+        actions.resend_delivery(
+            deps,
+            public_id,
+            delivery_id,
+            actor=ACTOR,
+            expected_config_version=version,
+            expected_attempt=attempt,
+        )
+    )
 
 
 def resend_sync(deps: Deps, public_id: str, sync_id: uuid.UUID) -> actions.Resent:
@@ -250,30 +263,49 @@ def test_resending_a_failed_delivery_returns_it_to_pending_audited_and_launches_
     deps: Deps, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     world = build_jobs_world(deps)
-    (delivery_id,) = failed_ids(deps, Delivery)
+    with deps.sessions.begin() as session:
+        current = session.scalar(
+            sa.select(Delivery).where(
+                Delivery.job_id == world.beatriz.id, Delivery.status == "pending"
+            )
+        )
+        current.status = "failed"
+        delivery_id = current.id
     calls = launches(monkeypatch, "delivery")
 
     result = resend_delivery(deps, world.beatriz.public_id, delivery_id)
 
     assert result == actions.Resent(launched=True)
     assert calls == [delivery_id]
-    assert failed_ids(deps, Delivery) == []
+    assert delivery_id not in failed_ids(deps, Delivery)
     (entry,) = audits(deps, "delivery.resend")
     assert (entry.actor, entry.target_id) == (ACTOR, str(delivery_id))
-    assert entry.details == {"job_id": str(world.beatriz.id)}
+    assert entry.details == {
+        "job_id": str(world.beatriz.id),
+        "config_version": 1,
+        "audience": "internal",
+        "dispatch_no": 2,
+    }
 
 
 def test_a_resent_delivery_the_engine_did_not_receive_stays_pending_for_the_reconciler(
     deps: Deps, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     world = build_jobs_world(deps)
-    (delivery_id,) = failed_ids(deps, Delivery)
+    with deps.sessions.begin() as session:
+        current = session.scalar(
+            sa.select(Delivery).where(
+                Delivery.job_id == world.beatriz.id, Delivery.status == "pending"
+            )
+        )
+        current.status = "failed"
+        delivery_id = current.id
     launches(monkeypatch, "delivery", run_id=None)
 
     result = resend_delivery(deps, world.beatriz.public_id, delivery_id)
 
     assert result == actions.Resent(launched=False)
-    assert failed_ids(deps, Delivery) == []  # voltou para pendente, sem run id
+    assert delivery_id not in failed_ids(deps, Delivery)  # voltou para pendente, sem run id
     with deps.sessions.begin() as session:
         unlaunched = jobs.unlaunched_deliveries(session, older_than=timedelta(0), limit=10)
     assert delivery_id in [delivery.id for delivery in unlaunched]

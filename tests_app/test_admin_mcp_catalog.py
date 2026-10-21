@@ -48,7 +48,7 @@ def selected(role: str, lead_data: bool = False) -> dict[str, ToolSpec]:
 def test_the_catalog_has_exactly_the_operation_ids_of_the_file() -> None:
     assert LOADED.skipped == {}
     assert set(TOOLS) == operation_ids(DOCUMENT)
-    assert len(TOOLS) == 55
+    assert len(TOOLS) == len(OPERATIONS)
 
 
 def test_the_list_of_exceptions_starts_empty() -> None:
@@ -116,7 +116,7 @@ def test_a_leitura_key_registers_only_the_leitura_tools() -> None:
     found = selected("leitura")
 
     assert set(found) == LEITURA
-    assert len(found) == 25
+    assert len(found) == len(LEITURA)
     assert all(tool.role == "leitura" for tool in found.values())
     assert {"publish_form_draft", "upload_asset", "download_job_pdf"}.isdisjoint(found)
 
@@ -124,15 +124,15 @@ def test_a_leitura_key_registers_only_the_leitura_tools() -> None:
 def test_a_total_key_registers_all_but_the_lead_pdf_while_the_option_is_off() -> None:
     found = selected("total")
 
-    assert set(found) == operation_ids(DOCUMENT) - {"download_job_pdf"}
-    assert len(found) == 54
+    assert set(found) == operation_ids(DOCUMENT) - {"download_job_pdf", "get_job_plan_projection"}
+    assert len(found) == len(OPERATIONS) - 2
 
 
 def test_the_lead_data_option_registers_the_lead_pdf_for_a_total_key() -> None:
     found = selected("total", lead_data=True)
 
     assert set(found) == operation_ids(DOCUMENT)
-    assert len(found) == 55
+    assert len(found) == len(OPERATIONS)
 
 
 def test_the_option_does_nothing_for_a_leitura_key() -> None:
@@ -205,7 +205,16 @@ def test_every_lead_data_operation_is_either_flagged_or_withheld_without_the_opt
     """Uma operação `x-lead-data` nova, com ou sem `include_lead_data`, nunca vaza por omissão: ou a
     ferramenta fixa o argumento em falso, ou ela não é registrada."""
     marked = {name for name, (_, _, op) in OPERATIONS.items() if op.get("x-lead-data")}
-    assert marked == {"list_jobs", "get_job", "download_job_pdf"}
+    assert marked == {
+        "list_jobs",
+        "get_job",
+        "download_job_pdf",
+        "get_job_plan_projection",
+        "list_captures",
+        "get_capture",
+        "get_submission_journey",
+        "list_submission_journey_events",
+    }
 
     found = selected("total")
     for name in marked:
@@ -235,7 +244,15 @@ def test_the_marked_tools_are_exactly_the_destructive_or_external_operations() -
     }
 
     assert {name for name, tool in TOOLS.items() if tool.marked} == expected
-    assert len(expected) == 22
+    assert expected >= {
+        "create_event_source",
+        "update_event_source",
+        "set_event_source_enabled",
+        "create_event_credential",
+        "rotate_event_credential",
+        "revoke_event_credential",
+        "erase_submission_journey",
+    }
 
 
 def test_every_marked_tool_offers_confirm_as_an_optional_boolean_and_says_what_it_does() -> None:
@@ -356,6 +373,7 @@ def test_the_responses_that_are_not_json_are_the_downloads_and_the_previews() ->
         "render_form_draft_pdf_preview": ("application/pdf",),
         "render_form_draft_public_page": ("text/html",),
         "render_form_draft_result_preview": ("text/html",),
+        "render_form_draft_completion_preview": ("text/html",),
     }
     for name in non_json:
         assert "salva num arquivo" in TOOLS[name].description
@@ -375,10 +393,13 @@ def test_the_input_schemas_are_valid_and_self_contained() -> None:
 def test_the_form_document_comes_with_its_closure_and_the_recursion_survives() -> None:
     schema = TOOLS["save_form_draft"].input_schema
 
-    assert "FormDocument" in schema["$defs"]
+    assert {"PdfFormDocument", "CaptureFormDocument"} <= schema["$defs"].keys()
     assert len(schema["$defs"]) >= 20  # o fecho do documento (29 hoje)
-    assert "#/$defs/FormDocument" in set(_refs(schema))
-    assert TOOLS["import_form"].input_schema["$defs"].keys() >= {"FormDocument"}
+    assert {"#/$defs/PdfFormDocument", "#/$defs/CaptureFormDocument"} <= set(_refs(schema))
+    assert TOOLS["import_form"].input_schema["$defs"].keys() >= {
+        "PdfFormDocument",
+        "CaptureFormDocument",
+    }
     # O plano é recursivo (um nó guarda nós): o `$defs` o descreve sem expandir para sempre.
     assert "#/$defs/PlanNodeDoc" in set(_refs(schema["$defs"]["PlanNodeDoc"]))
 

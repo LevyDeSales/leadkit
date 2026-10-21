@@ -70,3 +70,13 @@ class TokenSigner:
             raise TokenError("invalid")
         if (now or datetime.now(UTC)) > job.expires_at:
             raise TokenError("expired")
+
+
+class CaptureSigner(TokenSigner):
+    """Mesmo chaveiro, domínio HMAC exclusivo: um recibo nunca autoriza um PDF."""
+
+    @staticmethod
+    def _sig(secret: str, public_id: str, version: int) -> str:
+        message = f"leadkit-capture:{public_id}:{version}".encode()
+        mac = hmac.new(secret.encode(), message, hashlib.sha256).digest()[:18]
+        return base64.urlsafe_b64encode(mac).decode().rstrip("=")

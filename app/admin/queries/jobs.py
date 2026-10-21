@@ -25,6 +25,7 @@ from urllib.parse import quote, urlencode
 import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
+from app.adapters.storage import ArtifactStorage
 from app.admin.localtime import local_midnight
 from app.errors import TerminalError
 from app.forms import FormRegistry, LeadIdentity
@@ -42,7 +43,10 @@ from app.models import (
     Job,
     Plan,
     Submission,
+    WebhookDestination,
 )
+from app.pdf_availability import PdfAvailability, current_pdf
+from app.plan_release import release_snapshot
 from app.submission_identity import resolve_identity
 
 
@@ -534,6 +538,16 @@ class DeliveryState:
     scope: str | None  # form | default: qual destino do webhook o último envio usou
     host: str | None  # o host dele (nunca o caminho da URL, que vale como senha)
 
+    audience: str = "internal"
+    authorization_origin: str = "legacy"
+    config_version: int | None = None
+    current_config_version: int | None = None
+    dispatch_no: int = 1
+    event: str = "plano.concluido"
+    release_id: uuid.UUID | None = None
+    occurred_at: datetime | None = None
+    blocked_reason: str | None = None
+
 
 @dataclass(frozen=True)
 class SyncState:
@@ -605,6 +619,8 @@ class JobState:
     link_expires_at: datetime
     link_expired: bool  # o link da lead já passou do prazo, no instante pedido
     hatchet_run_id: str | None
+    current_pdf: PdfAvailability
+    release: dict[str, Any]
     pdfs: tuple[PdfState, ...]  # o mais novo primeiro
     deliveries: tuple[DeliveryState, ...]  # do mais antigo ao mais novo
     syncs: tuple[SyncState, ...]  # o mais novo primeiro
@@ -683,7 +699,13 @@ def run_url(template: str | None, run_id: str | None) -> str | None:
 
 
 def read_job(
-    session: Session, public_id: str, *, forms: FormRegistry, now: datetime, with_lead: bool
+    session: Session,
+    public_id: str,
+    *,
+    forms: FormRegistry,
+    now: datetime,
+    with_lead: bool,
+    storage: ArtifactStorage | None = None,
 ) -> JobDetail | None:
     """O pedido de código `public_id`, ou nada. `now` é o instante contra o qual se diz que o link da
     lead venceu. Com `with_lead=False` o dado da lead nem é lido do banco; o parâmetro não tem valor
@@ -734,6 +756,21 @@ def read_job(
             job_attempt=version_of.get(d.artifact_id, 0),
             delivered_at=d.delivered_at,
             hatchet_run_id=d.hatchet_run_id,
+            audience=d.audience,
+            authorization_origin=d.authorization_origin,
+            config_version=d.config_version,
+            current_config_version=session.scalar(
+                sa.select(WebhookDestination.version).where(
+                    WebhookDestination.id == d.webhook_destination_id
+                )
+            )
+            if d.webhook_destination_id
+            else None,
+            dispatch_no=d.dispatch_no,
+            event=d.event,
+            release_id=d.release_id,
+            occurred_at=d.occurred_at or d.created_at,
+            blocked_reason=d.blocked_reason,
             scope=d.destination_scope,
             host=d.destination_host,
         )
@@ -754,6 +791,8 @@ def read_job(
         link_expires_at=job.expires_at,
         link_expired=now > job.expires_at,
         hatchet_run_id=job.hatchet_run_id,
+        current_pdf=current_pdf(session, storage, job),
+        release=release_snapshot(session, job),
         pdfs=tuple(
             PdfState(a.version, a.byte_size, a.created_at, a.purged_at)
             for a in sorted(artifacts.values(), key=lambda a: a.version, reverse=True)
@@ -926,3 +965,50 @@ def _delivery_event(delivery: DeliveryState) -> TimelineEvent:
         delivery.status, "delivery_pending"
     )
     return TimelineEvent(kind, at=delivery.delivered_at, delivery_id=delivery.id)
+
+
+class ProjectionUnavailable(ValueError):
+    """A versão histórica não permite obter uma projeção verificável."""
+
+
+@dataclass(frozen=True)
+class PlanProjection:
+    public_id: str
+    form_slug: str
+    form_version: str
+    form_version_number: int
+    attempt: int
+    audience: str
+    document: dict[str, Any]
+
+
+def get_job_plan_projection(
+    session: Session, public_id: str, *, forms: FormRegistry, audience: str = "participant"
+) -> PlanProjection | None:
+    """Consulta somente a tentativa atual e a versão histórica, sem contato nem respostas."""
+    from app.forms import PlanProjectionError
+    from app.submission_identity import submission_form
+
+    job = session.scalar(sa.select(Job).where(Job.public_id == public_id))
+    if job is None:
+        return None
+    plan = session.scalar(sa.select(Plan).where(Plan.job_id == job.id, Plan.version == job.attempt))
+    if plan is None:
+        raise ProjectionUnavailable("O plano da tentativa atual ainda não foi gerado.")
+    submission = session.get_one(Submission, job.submission_id)
+    try:
+        spec = submission_form(forms, submission)
+        document = spec.project_plan(plan.document, audience=audience)
+    except (PlanProjectionError, TerminalError):
+        raise ProjectionUnavailable(
+            "A projeção não está disponível para a versão histórica deste plano. Consulte a configuração do formulário."
+        ) from None
+    return PlanProjection(
+        job.public_id,
+        submission.form_slug,
+        submission.form_version,
+        submission.form_version_number,
+        plan.version,
+        audience,
+        document,
+    )

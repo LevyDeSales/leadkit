@@ -176,7 +176,7 @@ def _field_errors(problems: tuple[Problem, ...]) -> list[ErrorItem]:
     description=(
         "Cria um formulário novo **sem versão publicada**: só o rascunho dele, que parte do modelo "
         "inicial do sistema ou, com `source`, da cópia de outro formulário (a versão publicada "
-        "dele, ou o rascunho, se ele ainda não foi publicado). O formulário só vai ao ar na "
+        "dele, ou o rascunho, se ele ainda não foi publicado). A cópia preserva a política de liberação, mas remove o vínculo de encaminhamento: configure um receptor próprio no novo formulário. O formulário só vai ao ar na "
         "primeira publicação (`publish_form_draft`), que cria a versão 1: até lá a página pública "
         "dele não existe e nenhuma lead o vê. `title` é o nome do formulário; `slug`, o endereço "
         "(sai do título se faltar; antes da primeira publicação ele ainda muda, com "
@@ -199,6 +199,7 @@ def create_form(body: CreateFormRequest, key: CurrentKey, request: Request) -> F
             slug=body.slug or "",
             actor=key.actor,
             source=body.source or "",
+            generation=body.generation,
         )
     except DefinitionError as refused:
         raise ApiError(

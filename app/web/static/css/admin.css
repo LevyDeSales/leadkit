@@ -176,6 +176,9 @@ textarea.input { min-height: 88px; resize: vertical; }
 .main { padding: 24px; max-width: 1440px; }
 .footer { padding: 4px 24px 24px; color: var(--ink-600); font-size: var(--t-xs); }
 
+/* Os links de recuperação e o Tab mantêm os controles abaixo do cabeçalho fixo. */
+.event-sources :is(input, select, button, [tabindex]) { scroll-margin-top: 224px; }
+
 /* ---- login e erro ---- */
 .login { min-height: 100vh; display: grid; place-items: center; padding: 24px 16px; }
 .login__card {
@@ -427,6 +430,7 @@ pre.diff {
 .edit-names__q { margin-top: 6px; overflow-wrap: anywhere; }
 .edit-names .items { font-size: var(--t-xs); overflow-wrap: anywhere; }
 @media (min-width: 1280px) {
+  .event-sources :is(input, select, button, [tabindex]) { scroll-margin-top: 96px; }
   .edit-aside { grid-template-columns: minmax(0, 1fr) minmax(14rem, 18rem); }
   .edit-aside > .edit-names { grid-column: 2; grid-row: 1; position: sticky; top: 12px; max-height: calc(100vh - 24px); overflow: auto; }
   .edit-aside > .edit-aside__main { grid-column: 1; grid-row: 1; }
@@ -467,6 +471,7 @@ pre.diff {
 }
 @media (max-width: 860px) {
   .topbar { padding: 10px 12px; }
+  .event-sources :is(input, select, button, [tabindex]) { scroll-margin-top: 288px; }
   .main { padding: 16px 12px; }
   .footer { padding: 4px 12px 16px; }
   .filters .field, .filters .field--grow { flex: 1 1 100%; max-width: none; }
@@ -542,3 +547,16 @@ fieldset.field { border: 0; margin: 0; padding: 0; min-width: 0; }
 #nova-chave .copy { margin-top: 6px; }
 #nova-chave code { padding: 2px 6px; border-radius: 6px; background: var(--paper-0); color: var(--ink-900); border: 1px solid #B6DDC2; }
 #conferir-resultado:empty { display: none; }
+
+/* A central conserva a leitura por formulário também no cartão estreito. */
+.hub-table { min-width: 0; }
+.hub-table td, .hub-table th { vertical-align: top; overflow-wrap: anywhere; }
+.hub-table td:first-child { white-space: nowrap; overflow-wrap: normal; }
+.hub-table caption { padding: 12px; text-align: left; }
+.hub-table p { margin: 6px 0; font-weight: 400; }
+@media (max-width: 860px) {
+  .hub-table caption { display: block; width: 100%; }
+  .hub-table th[scope="row"] { display: block; width: 100%; border: 0; padding: 3px 0; }
+  .hub-table td:not(.who) { display: block; }
+  .hub-table td:not(.who)::before { display: block; margin-top: 8px; }
+}

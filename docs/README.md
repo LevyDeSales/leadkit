@@ -1,5 +1,6 @@
 # Documentação Leadkit
 
+- [Guia da operadora: começar, configurar e acompanhar](guia-da-operadora/README.md)
 - [Instalação](../README.md)
 - [Referência técnica](../app/README.md)
 - [Marca privada](branding.md)

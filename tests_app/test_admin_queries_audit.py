@@ -54,6 +54,7 @@ def entries(
 
 # As chaves públicas que têm cara de sensível e foram revisadas: o nome engana, o valor não é.
 REVIEWED = {
+    "reason_code": "código de enumeração fechado da liberação; nunca o motivo livre digitado pela operadora",
     "token_changed": "um booleano: o token do Baserow mudou nesta conexão (o token nunca vai ao banco em claro)",
     "consent_version": "a versão do texto de consentimento que a publicação conferiu, e não a resposta da lead",
 }
@@ -188,9 +189,19 @@ def test_the_hand_written_list_of_the_keys_the_services_write_matches_the_public
     acima não vê, as chaves montadas por outro caminho (os campos que `report.model_dump()` espalha na
     retenção, o `**details` repassado). Uma chave nova desse tipo só entra se alguém editar as duas."""
     written = {
-        "app/destinations.py": {"form_slug", "host", "previous_host", "http_confirmed", "source"},
+        "app/destinations.py": {
+            "purpose",
+            "purpose_origin",
+            "form_slug",
+            "host",
+            "previous_host",
+            "http_confirmed",
+            "source",
+            "events",
+        },
+        "app/admin/actions/captures.py": {"submission_id", "config_version", "dispatch_no"},
         "app/destinations.py (teste)": {"status", "elapsed_ms", "error"},
-        "app/jobs.py": {"attempt", "previous_status", "failure_code", "job_id"},
+        "app/jobs.py": {"attempt", "previous_status", "failure_code", "job_id", "audience"},
         "app/retention.py": {
             "requests_deleted",
             "leads_deleted",
@@ -225,6 +236,7 @@ def test_the_hand_written_list_of_the_keys_the_services_write_matches_the_public
         },
         "app/forms/assets.py": {"name", "sha256", "previous_sha256", "bytes", "source_bytes"},
         "app/integrations/": {
+            "profile",
             "kind",
             "table_id",
             "token_changed",
@@ -239,6 +251,19 @@ def test_the_hand_written_list_of_the_keys_the_services_write_matches_the_public
         },
         "app/admin/api/keys.py": {"role", "expires_at"},
         "app/jobs.py (motivo)": {"reason"},
+        "app/plan_release.py": {
+            "release_id",
+            "artifact_id",
+            "attempt",
+            "version",
+            "occurred_at",
+            "mode",
+            "reason_code",
+            "notification_decision",
+        },
+        "app/handoff_receivers.py": {"revision", "enabled"},
+        "app/integration_credentials.py": {"receiver_id", "revision"},
+        "app/handoffs.py": {"credential_id", "projection"},
     }
     every = set().union(*written.values())
 

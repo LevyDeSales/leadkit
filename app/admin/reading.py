@@ -205,6 +205,7 @@ class PlanField:
     internal: bool  # o campo não chega ao PDF nem à prévia
     optional: bool
     fields: tuple[PlanField, ...]  # os campos do grupo, ou dos itens de uma lista de grupos
+    inherited_internal: bool = False
 
 
 def _resolved(node: Mapping[str, Any], defs: Mapping[str, Any]) -> dict[str, Any]:
@@ -277,6 +278,7 @@ def _plan_field(
         limits=tuple(limit for limit in limits if limit and limit not in description),
         values=values,
         internal=path in internal,
+        inherited_internal=any(path[:size] in internal for size in range(1, len(path))),
         optional=not required,
         fields=fields,
     )
@@ -507,31 +509,34 @@ def _scoring(definition: FormDocument) -> ScoringReading | None:
 
 @dataclass(frozen=True)
 class FormReading:
-    title: str  # o da versão: o que a lead vê na página e no PDF
+    generation: str
+    title: str  # o da versão: o que a lead vê na página e, se aplicável, no PDF
     intro: str | None
     minutes: int | None
     steps: tuple[StepReading, ...]
     identity: list[tuple[str, str | None]]  # (papel, pergunta); None: não coletado
     consent: list[tuple[str, str]]
-    instructions: str  # como vão ao LLM
-    prompt: str  # o template
+    instructions: str | None  # como vão ao LLM
+    prompt: str | None  # o template
     prompt_version: str
     scoring: ScoringReading | None  # a pontuação declarada; None: sem pontuação
     plan_description: str | None
-    plan: tuple[PlanField, ...]
+    plan: tuple[PlanField, ...] | None
     plan_checks: tuple[str, ...]  # o que o servidor confere no plano, além do schema
     data: tuple[Source, ...]
     templates: tuple[Source, ...]
     example_answers: str
-    example_plan: str
+    example_plan: str | None
     notices: tuple[tuple[str, Notice], ...] = ()  # os avisos da espera e da falha, com a página
 
 
 def reading_of(spec: FormSpec, definition: FormDocument) -> FormReading:
     """A leitura da versão do contrato `spec`. `definition` é a definição guardada da mesma
     versão, já lida pelo compilador (`parse`)."""
-    description, plan = _plan(spec, definition)
+    generates = spec.generation == "pdf"
+    description, plan = _plan(spec, definition) if generates else (None, None)
     return FormReading(
+        generation=spec.generation,
         title=spec.title,
         intro=spec.screen.intro if spec.screen is not None else None,
         minutes=spec.screen.minutes if spec.screen is not None else None,
@@ -544,10 +549,10 @@ def reading_of(spec: FormSpec, definition: FormDocument) -> FormReading:
         scoring=_scoring(definition),
         plan_description=description,
         plan=plan,
-        plan_checks=_plan_checks(definition),
+        plan_checks=_plan_checks(definition) if generates else (),
         data=_data(definition),
-        templates=_templates(definition),
+        templates=_templates(definition) if generates else (),
         example_answers=_json(definition.examples.answers),
-        example_plan=_json(spec.example_plan),
+        example_plan=_json(spec.example_plan) if generates else None,
         notices=_notices(spec),
     )

@@ -8,8 +8,9 @@
 {%- set p = page.structure.plan -%}
 
 {#- O corpo de um campo, ou dos itens de uma lista: o tipo, a descrição e o que o tipo pede. -#}
-{% macro body(n, at, item) %}
+{% macro body(n, at, item, inherited_internal=False) %}
   {{ f.error_for(at) }}
+  {% if inherited_internal %}<p class="muted">Uso interno herdado do grupo ou lista: este conteúdo fica fora da projeção participante, mesmo com a opção própria desmarcada.</p>{% endif %}
   <div class="edit-grid">
     {%- if not item %}
     {{ f.field(at ~ ".name", "Nome do campo", n.name, hint="A chave do campo no plano gravado e no webhook. Letras minúsculas sem acento, números e _.", mono=True) }}
@@ -22,7 +23,7 @@
   {{ f.field(at ~ ".description", "Descrição para o LLM", n.description, opt=True, area=True, rows=2, hint="O que o LLM deve escrever aqui. Os limites abaixo entram sozinhos no fim da descrição.") }}
   {%- if not item %}
   <div class="edit-checks">
-    {{ f.check(at ~ ".internal", "Campo interno: o LLM escreve, mas a lead nunca vê (fica fora do PDF e da prévia)", n.internal) }}
+    {{ f.check(at ~ ".internal", "Campo interno: fica fora da projeção participante, do PDF e da prévia", n.internal) }}
   </div>
   {%- endif %}
   {%- if n.kind == "text" %}
@@ -44,7 +45,7 @@
     <legend>Itens da lista</legend>
     <p class="muted field__hint">Como é cada item: um texto, um grupo de campos ou uma opção fixa.</p>
     {{ f.error_for(at ~ ".items") }}
-    {{ body(n.items, at ~ ".items", True) }}
+    {{ body(n.items, at ~ ".items", True, inherited_internal or n.internal) }}
   </fieldset>
   {%- elif n.kind == "group" %}
   {{ f.field(at ~ ".model", "Nome do grupo no schema", n.model, hint="Em branco, sai do nome do campo.", opt=True, mono=True) }}
@@ -53,7 +54,7 @@
     {{ f.error_for(at ~ ".fields") }}
     <ol class="edit-questions">
       {%- for child in n.fields %}
-      <li>{{ node(child, at ~ ".fields." ~ loop.index0) }}</li>
+      <li>{{ node(child, at ~ ".fields." ~ loop.index0, inherited_internal or n.internal) }}</li>
       {%- endfor %}
     </ol>
     <p class="btns">{{ o.op("plan-add-field:" ~ at, "Adicionar campo", "plus", name="Adicionar um campo ao grupo", id="op-" ~ at|replace(".", "-") ~ "-add-field") }}</p>
@@ -81,12 +82,12 @@
 {% endmacro %}
 
 {#- Um campo da árvore: uma caixa que abre, com o corpo e os botões de subir, descer e remover. -#}
-{% macro node(n, at) %}
+{% macro node(n, at, inherited_internal=False) %}
 {%- set label = n.name or "Campo novo" %}
 <details class="edit-q" id="{{ p.field_id(at) }}"{% if at in p.opened %} open{% endif %}>
-  <summary><span class="edit-q__head"><b>{{ label }}</b><span class="muted">{{ p.kind_label(n.kind) }}{% if n.internal %} · interno{% endif %}</span></span>{% if at in p.troubled %}<span class="badge badge--err">{{ m.icon('alert-circle') }}com problema</span>{% endif %}{{ m.icon('chevron-down') }}</summary>
+  <summary><span class="edit-q__head"><b>{{ label }}</b><span class="muted">{{ p.kind_label(n.kind) }}{% if n.internal %} · interno{% elif inherited_internal %} · interno por herança{% endif %}</span></span>{% if at in p.troubled %}<span class="badge badge--err">{{ m.icon('alert-circle') }}com problema</span>{% endif %}{{ m.icon('chevron-down') }}</summary>
   <div class="edit-q__body">
-    {{ body(n, at, False) }}
+    {{ body(n, at, False, inherited_internal) }}
     <p class="btns edit-actions">{{ o.op("plan-up:" ~ at, "Subir", "arrow-up", name="Subir o campo " ~ label) }}{{ o.op("plan-down:" ~ at, "Descer", "arrow-down", name="Descer o campo " ~ label) }}{{ o.op("plan-remove:" ~ at, "Remover o campo", "trash", name="Remover o campo " ~ label ~ " e o que ele tem dentro") }}</p>
   </div>
 </details>

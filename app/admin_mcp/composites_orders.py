@@ -412,7 +412,8 @@ def diagnose_order(tools: Mapping[str, ToolSpec]) -> Composite | None:
         summary="Diagnosticar um pedido e dizer o que fazer",
         details=(
             "Lê o pedido (`get_job`) e diz, em português: em que pé está, por que falhou, a situação de "
-            "cada entrega ao webhook e de cada sincronização com a planilha, a linha do tempo da "
+            "a disponibilidade técnica do PDF atual (sem conceder acesso), cada entrega ao webhook "
+            "e cada sincronização com a planilha, a linha do tempo da "
             "tentativa atual e o que fazer. **O conserto ela só sugere**, com os argumentos prontos "
             "(`reprocess_job`, `resend_job_delivery`, `resend_job_sync`): não os chama, e cada um é uma "
             "ação marcada que pede a confirmação da pessoa quando você a chamar. Não traz nome, e-mail "
@@ -452,6 +453,13 @@ async def _diagnose_order(steps: Steps, arguments: dict[str, Any]) -> ToolOutput
     return ToolOutput(
         lines_of(
             _order_header(job),
+            [
+                (
+                    f"PDF atual: tentativa {plain(attempt)} · "
+                    f"{plain((job.get('current_pdf') or {}).get('state') or 'unknown')}; "
+                    "disponibilidade técnica não concede acesso."
+                )
+            ],
             [
                 "Entregas ao webhook (tentativa atual):",
                 *listed([_delivery(d) for d in deliveries] or ["nenhuma"]),
@@ -597,6 +605,14 @@ def _what_to_do(
         )
     elif status == "completed":
         todo.append("O pedido está concluído.")
+    pdf = job.get("current_pdf")
+    pdf_unavailable = isinstance(pdf, dict) and pdf.get("available") is not True
+    if status == "completed" and pdf_unavailable:
+        todo.append(
+            "O PDF atual não está disponível. Consulte o storage; atualizar o estado não inicia "
+            "uma geração. Se faltar verificação, uma operadora autorizada pode verificar e baixar "
+            "o arquivo existente, sem IA."
+        )
     quiet = True
     for delivery in deliveries:
         if delivery.get("status") == "failed":
@@ -629,7 +645,7 @@ def _what_to_do(
         elif sync.get("status") == "pending":
             quiet = False
             todo.append(f"A sincronização `{plain(sync.get('id'))}` está pendente: espere.")
-    if quiet and status == "completed":
+    if quiet and status == "completed" and not pdf_unavailable:
         todo.append(
             "Nada a fazer: as entregas e as sincronizações da tentativa atual estão em ordem."
         )

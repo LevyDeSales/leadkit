@@ -1,0 +1,35 @@
+{% extends "admin/layout.html" %}
+{% set section = "captures" %}
+{% block title %}Capturas{% endblock %}
+{% block content %}
+<nav aria-label="Caminho"><a href="/admin/responses">Respostas</a> / Somente respostas</nav>
+<h1>Capturas confirmadas</h1>
+<p>Respostas salvas sem geração de plano ou PDF.</p>
+{% if detail %}
+<section class="box"><h2>{{ detail.form_slug }} · versão {{ detail.form_version_number }}</h2>
+<p>Capturada em {{ detail.created_at }} · {{ detail.submission_id }}</p>
+<a class="btn btn--secondary" href="/admin/submissions/{{ detail.submission_id }}/journey">Jornada</a>
+<a class="btn btn--secondary" href="/admin/forms/{{ detail.form_slug }}/handoff?submission_id={{ detail.submission_id }}">Consultar encaminhamento</a>
+<dl>{% for key, value in detail.lead_data.identity.items() %}<dt>{{ key }}</dt><dd>{{ value or '—' }}</dd>{% endfor %}</dl>
+<h3>Entregas às integrações</h3>
+<p>Sucesso confirma o transporte, sem comprovar leitura pela participante. O reenvio mantém o mesmo evento e destino.</p>
+<ul>{% for delivery in detail.deliveries %}<li>{{ delivery.kind }} · {{ delivery.destination_id }} · {{ delivery.status }} · {{ delivery.attempts }} tentativa(s)
+{% if delivery.error_code %}<span>{{ delivery.error_code }}</span>{% endif %}
+{% if delivery.status == 'failed' and delivery.current_config_version %}
+<form method="post" action="/admin/captures/{{ detail.submission_id }}/deliveries/{{ delivery.delivery_id }}/retry">
+<input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+<input type="hidden" name="expected_dispatch" value="{{ delivery.dispatch_no }}">
+<input type="hidden" name="expected_config_version" value="{{ delivery.current_config_version }}">
+<label><input type="checkbox" name="confirm" required>Confirmo repetir o envio externo ao mesmo destino na revisão {{ delivery.current_config_version }}.</label>
+<button class="btn" type="submit">Repetir entrega</button></form>{% endif %}</li>{% else %}<li>Sem destinos configurados no momento do envio.</li>{% endfor %}</ul>
+<h3>Respostas, consentimento e pontuação</h3><pre>{{ detail.lead_data | tojson(indent=2) }}</pre></section>
+{% else %}
+<form method="get" action="/admin/captures" class="form-stack">
+<label for="capture-form">Formulário</label><input class="input" id="capture-form" name="form" value="{{ form or '' }}">
+<label for="capture-version">Número da versão</label><input class="input" id="capture-version" name="form_version" type="number" min="1" value="{{ form_version or '' }}">
+<button class="btn btn--secondary" type="submit">Filtrar capturas</button>
+</form>
+<ul>{% for item in items %}<li><a href="/admin/captures/{{ item.submission_id }}">{{ item.form_slug }} · versão {{ item.form_version_number }} · {{ item.created_at }}</a> — Capturada</li>{% else %}<li>Nenhuma captura encontrada.</li>{% endfor %}</ul>
+{% if next_url %}<a class="btn btn--secondary" href="{{ next_url }}">Próxima página</a>{% endif %}
+{% endif %}
+{% endblock %}

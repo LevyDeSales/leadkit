@@ -123,6 +123,10 @@ def test_get_form_integration_of_a_form_without_integration_offers_to_connect_it
         "report": None,
         "sync_counts": {"pending": 0, "succeeded": 0, "failed": 0},
         "failed_syncs": [],
+        "capture_deliveries": [],
+        "capture_delivery_counts": {"pending": 0, "succeeded": 0, "failed": 0},
+        "capture_mapping": [],
+        "profile": "pdf",
     }
     assert baserow.calls == []  # sem conexão, nada a ler
 
@@ -352,6 +356,7 @@ WRONG_TOKEN = "token-errado-do-teste"
 
 def connect_body(**changes: Any) -> dict[str, Any]:
     body: dict[str, Any] = {
+        "purpose": "internal",
         "base_url": BASEROW_URL,
         "table_id": BASEROW_TABLE,
         "token": BASEROW_TOKEN,
@@ -796,7 +801,7 @@ def page_connect(client: ApiClient, **form: str) -> Callable[[], httpx.Response]
 
     def call() -> httpx.Response:
         assert login(client, PAGE_USER).status_code == 303
-        data = {"csrf_token": csrf_token(client), **form}
+        data = {"csrf_token": csrf_token(client), "purpose": "internal", **form}
         return client.post(f"{PAGE}/forms/{SLUG}/baserow/connect", data=data, headers=ORIGIN)
 
     return call

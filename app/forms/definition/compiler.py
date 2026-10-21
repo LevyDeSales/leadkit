@@ -15,7 +15,7 @@ from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
-from app.forms import FIRST_VERSION, FormSpec
+from app.forms import FIRST_VERSION, Completion, FormSpec, Handoff
 from app.forms.definition import plan as plan_tree
 from app.forms.definition import questions
 from app.forms.definition.conditions import Conditions, condition_problems
@@ -45,14 +45,29 @@ def _stop_on(problems: list[Problem]) -> None:
 
 
 def _rule_problems(definition: FormDocument) -> list[Problem]:
-    return (
+    completion_problems = []
+    if definition.completion.mode in ("button", "redirect") and not definition.completion.url:
+        completion_problems.append(Problem("completion.url", "informe o endereço HTTPS do destino"))
+    if definition.completion.mode in ("result", "confirmation") and definition.completion.url:
+        completion_problems.append(Problem("completion.url", "este modo não usa destino externo"))
+    if definition.generation == "none" and definition.completion.mode == "result":
+        completion_problems.append(Problem("completion.mode", "resultado PDF exige geração de PDF"))
+    if definition.completion.handoff and definition.completion.mode not in ("button", "redirect"):
+        completion_problems.append(
+            Problem("completion.handoff", "encaminhamento exige botão ou redirecionamento")
+        )
+    return completion_problems + (
         questions.question_problems(definition)
         + condition_problems(definition)
-        + plan_tree.plan_problems(definition.plan, definition.data)
+        + (
+            plan_tree.plan_problems(definition.plan, definition.data)
+            if definition.generation == "pdf"
+            else []
+        )
         + data_problems(definition.data)
-        + phases_problems(definition)
+        + (phases_problems(definition) if definition.generation == "pdf" else [])
         + scoring_problems(definition)
-        + released_problems(definition)
+        + (released_problems(definition) if definition.generation == "pdf" else [])
     )
 
 
@@ -79,28 +94,40 @@ def compile_definition(
     _stop_on(_rule_problems(definition))
     conditions = Conditions(definition.steps)
     answers = questions.answers_model(definition.steps, conditions)
-    plan = plan_tree.plan_model(definition.plan, definition.data)
+    plan = (
+        plan_tree.plan_model(definition.plan, definition.data)
+        if definition.generation == "pdf"
+        else None
+    )
+    projector = plan_tree.plan_projector(definition.plan, plan) if plan is not None else None
     problems: list[Problem] = []
     example_answers = _example(answers, definition.examples.answers, "examples.answers", problems)
-    example_plan = _example(plan, definition.examples.plan, "examples.plan", problems)
+    example_plan = (
+        _example(plan, definition.examples.plan, "examples.plan", problems) if plan else None
+    )
     _stop_on(problems)
-    assert example_answers is not None and example_plan is not None
+    assert example_answers is not None
     label = f"{definition.slug}-v{version_number}"
     scoring = compile_scoring(definition, label=label)
     _stop_on(example_problems(scoring, example_answers))
     identity = questions.identity_of(definition.identity)
-    calendar = build_calendar(definition)
-    templates, instructions = compile_templates(
-        definition,
-        plan_model=plan,
-        example_answers=example_answers,
-        example_plan=example_plan,
-        lead_name=identity(example_answers).name,
-        clock=clock,
-        scoring=scoring,
-        calendar=calendar,
-    )
+    calendar = None
+    templates = instructions = None
+    if definition.generation == "pdf":
+        calendar = build_calendar(definition)
+        templates, instructions = compile_templates(
+            definition,
+            plan_model=plan,
+            project_plan=projector,
+            example_answers=example_answers,
+            example_plan=example_plan,
+            lead_name=identity(example_answers).name,
+            clock=clock,
+            scoring=scoring,
+            calendar=calendar,
+        )
     return FormSpec(
+        generation=definition.generation,
         slug=definition.slug,
         version=label,
         title=definition.title,
@@ -108,12 +135,13 @@ def compile_definition(
         answers_model=answers,
         conditions=conditions,
         plan_model=plan,
-        plan_labels=plan_tree.plan_labels(definition.plan.fields),
+        plan_projector=projector,
+        plan_labels=plan_tree.plan_labels(definition.plan.fields) if definition.plan else {},
         identity=identity,
         instructions=instructions,
         prompt_template=definition.prompt,
         prompt_version=label,
-        example_plan=example_plan.model_dump(mode="json"),
+        example_plan=example_plan.model_dump(mode="json") if example_plan else None,
         version_number=version_number,
         score=scoring.score if scoring is not None else None,
         scoring=scoring,
@@ -129,4 +157,11 @@ def compile_definition(
             notices=notices_of(definition.notices),  # os avisos da espera e da falha
         ),
         templates=templates,
+        completion=Completion(
+            **definition.completion.model_dump(exclude={"handoff"}),
+            handoff=Handoff(**definition.completion.handoff.model_dump())
+            if definition.completion.handoff
+            else None,
+        ),
+        release_mode=definition.release.mode if definition.release else "automatic",
     )

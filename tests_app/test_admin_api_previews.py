@@ -36,7 +36,7 @@ from test_admin_forms import DEFINITION, SLUG
 from test_admin_scoring import DEFINITION as SCORED_DEFINITION
 from test_admin_scoring import SLUG as SCORED
 from test_public import text
-from test_weasyprint_pdf import squash, text_of
+from test_weasyprint_pdf import fonts_of, squash, text_of
 
 from app.adapters import weasyprint_pdf
 from app.adapters.assets import AssetStore
@@ -463,7 +463,9 @@ def test_a_pdf_that_takes_too_long_is_a_422_and_the_next_preview_still_works(
 
     assert fields_of(slow) == {"pdf": "O PDF não foi gerado: o PDF passou do prazo de 1 s."}
     monkeypatch.setattr(weasyprint_pdf, "PDF_SECONDS", 30.0)
-    assert squash(EXAMPLE_TITLE) in pdf_text(pdf(writer))
+    following = pdf(writer)
+    assert squash(EXAMPLE_TITLE) in pdf_text(following)
+    assert fonts_of(following.content) and all(fonts_of(following.content).values())
 
 
 def test_a_template_that_never_ends_is_a_422_on_its_field_with_the_line(

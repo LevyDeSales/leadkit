@@ -116,6 +116,9 @@ class Settings(BaseSettings):
     # WEBHOOK_SECRET só valem na primeira subida depois da migration 0004: viram o destino padrão,
     # se ainda não houver um, e depois são ignoradas. WEBHOOK_ENCRYPTION_KEY cifra o segredo de
     # cada destino: uma ou mais chaves Fernet separadas por vírgula; a primeira cifra, todas abrem.
+    webhook_purpose: Literal["internal", "participant"] | None = Field(
+        default=None, alias="WEBHOOK_PURPOSE"
+    )
     webhook_url: str | None = Field(default=None, alias="WEBHOOK_URL")
     webhook_secret: str | None = Field(default=None, alias="WEBHOOK_SECRET")
     webhook_encryption_key: SecretStr | None = Field(default=None, alias="WEBHOOK_ENCRYPTION_KEY")
@@ -169,6 +172,7 @@ class Settings(BaseSettings):
         "openai_model",
         "openai_fallback_model",
         "webhook_url",
+        "webhook_purpose",
         "webhook_secret",
         "webhook_encryption_key",
         "app_version",

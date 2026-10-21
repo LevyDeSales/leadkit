@@ -19,7 +19,7 @@ from app.admin.queries import forms as queries
 from app.forms import drafts
 from app.forms import retention as form_retention
 from app.forms.definition.changes import SectionChange
-from app.forms.definition.document import FormDocument
+from app.forms.definition.document import DefinitionDocument as FormDocument
 from app.forms.stored import StoredVersion, VersionEntry
 
 # --- a lista e o detalhe ------------------------------------------------------------------------
@@ -159,6 +159,10 @@ class DraftState(BaseModel):
 class FormDestination(BaseModel):
     """Qual destino do webhook serve o formulário. Nunca a URL: o caminho costuma valer como senha."""
 
+    events: list[str] = Field(
+        default_factory=list,
+        description="Eventos aceitos pelo destino efetivo, inclusive padrão herdado.",
+    )
     scope: Literal["form", "default"] = Field(
         description="`form`: o destino é do próprio formulário. `default`: o formulário usa o "
         "destino padrão."
@@ -243,6 +247,10 @@ class FormDetail(FormSummary):
     """Um formulário: tudo o que a página dele junta, sem a leitura da versão (a definição se lê com
     `get_form_version`)."""
 
+    integration_issues: list[str] = Field(
+        default_factory=list,
+        description="Pendências locais das integrações para a finalidade publicada; sem consulta ao provedor.",
+    )
     version_label: str | None = Field(
         description="O rótulo da versão atual que vai no envio e no webhook (por exemplo, "
         "`diagnostico-rapido-v2`). Nulo: sem versão, ou ela não compila.",
@@ -265,6 +273,7 @@ class FormDetail(FormSummary):
         integration = found.integration
         return cls(
             slug=found.slug,
+            integration_issues=list(found.integration_issues),
             title=found.title,
             active=found.active,
             public_url=found.public_url,
@@ -283,6 +292,7 @@ class FormDetail(FormSummary):
             destination=FormDestination(
                 scope=found.destination.scope,  # type: ignore[arg-type]
                 host=found.destination.host,
+                events=list(found.destination.events),
             )
             if found.destination
             else None,
@@ -312,7 +322,9 @@ class DeactivateFormRequest(ConfirmedInput):
 
 # --- a retenção ---------------------------------------------------------------------------------
 
-SEEN_FORMAT = "o formato «pedidos:PDFs», como 3:5"
+SEEN_FORMAT = (
+    "o formato «pedidos:PDFs:capturas», como 3:5:2 (legado «pedidos:PDFs» equivale a zero capturas)"
+)
 
 
 class FormRetention(RetentionState):
@@ -364,7 +376,7 @@ class SaveFormRetentionRequest(ConfirmedInput, VersionedInput):
         default=None,
         max_length=32,
         description="A contagem do que a próxima retenção apagaria com os prazos novos, "
-        f"{SEEN_FORMAT} (pedidos inteiros e arquivos de PDF), do jeito que a recusa "
+        f"{SEEN_FORMAT} (pedidos inteiros, arquivos de PDF e capturas), do jeito que a recusa "
         "`confirmation_required` a devolveu. Só uma **redução** de prazo (o que vale diminui, "
         "inclusive voltar a um padrão menor) precisa dela: sem ela, ou se a contagem cresceu desde "
         "que foi lida, a resposta é `422 confirmation_required` com a contagem de agora e nada é "

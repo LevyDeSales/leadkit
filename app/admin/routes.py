@@ -13,7 +13,7 @@ import math
 import uuid
 from collections.abc import Callable, Coroutine, Sequence
 from datetime import datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from urllib.parse import urlencode, urlsplit
 
 from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile
@@ -35,16 +35,19 @@ from app.admin.auth import COOKIE_NAME, COOKIE_PATH, AdminAuth, AdminSession, in
 from app.admin.form_editor import FormEdit
 from app.admin.queries import forms as form_queries
 from app.admin.queries import jobs as job_queries
+from app.deployment_contract import DeploymentContractError
 from app.deps import get_deps
-from app.forms import UnknownForm, draft_previews, draft_tests, drafts
+from app.errors import RetryableError, TerminalError
+from app.forms import GenerationUnavailable, UnknownForm, draft_previews, draft_tests, drafts
 from app.forms import assets as form_assets
 from app.forms import retention as form_retention
 from app.forms import stored as stored_forms
 from app.forms.definition import DefinitionError, Problem
 from app.integrations import config as integration_config
 from app.integrations import mapping as integration_mapping
+from app.internal_links import AdminPdfAccess
 from app.models import utcnow
-from app.version import describe
+from app.version import describe, operator_guide_url
 from app.web.origin import origin_of
 from app.web.templating import templates
 
@@ -91,7 +94,7 @@ RESEND_LAUNCHED = "Reenvio disparado. Acompanhe o estado da entrega abaixo."
 RESEND_DEFERRED = (
     "A entrega voltou para a fila; o envio será disparado automaticamente em instantes."
 )
-RESEND_REFUSED = "Só dá para reenviar uma entrega que falhou. Confira o estado atual abaixo."
+RESEND_REFUSED = "A entrega precisa ter falhado e manter a mesma audiência e tentativa. Confira o destino, a revisão atual e o prazo de retenção antes de confirmar o reenvio."
 PDF_REMOVED = "Este PDF já foi apagado do armazenamento pelo prazo de retenção (LGPD)."
 ENV_LABELS = {"development": "Desenvolvimento", "test": "Teste"}
 STOP_POLLING = 286  # código do HTMX para parar o `hx-trigger="every ..."`
@@ -136,6 +139,19 @@ class AdminRoute(APIRoute):
                     "Não deu para confirmar que o pedido saiu deste painel. "
                     "Recarregue a página e tente de novo.",
                 )
+            except DeploymentContractError:
+                response = _error(
+                    request,
+                    503,
+                    "A atualização ainda não habilitou esta operação. Aguarde a conclusão.",
+                )
+            except GenerationUnavailable:
+                response = _error(
+                    request,
+                    409,
+                    "Esta operação não está disponível para a finalidade atual do formulário. "
+                    "Recarregue o rascunho e escolha o teste correspondente.",
+                )
             except NotFound as exc:
                 response = _error(request, 404, str(exc))
             session = getattr(request.state, "admin_session", None)
@@ -169,8 +185,10 @@ def _safe_next(value: str) -> str:
     """Só caminhos do próprio admin, sem query string (evita redirecionamento aberto)."""
     parts = urlsplit(value)
     if parts.scheme or parts.netloc or value.startswith("//") or "\\" in value:
-        return "/admin"
-    return parts.path if parts.path.startswith("/admin") else "/admin"
+        return "/admin/forms"
+    return (
+        parts.path if parts.path == "/admin" or parts.path.startswith("/admin/") else "/admin/forms"
+    )
 
 
 def require_same_origin(request: Request) -> None:
@@ -238,6 +256,15 @@ def _page(
     session: AdminSession = request.state.admin_session
     flash, session.flash = session.flash, None
     settings = get_deps().settings
+    if name == "admin/form_draft.html":
+        from app.handoff_receivers import get_receiver
+        from app.handoff_types import HandoffError
+
+        try:
+            with get_deps().sessions() as db:
+                context["handoff_receiver"] = get_receiver(db, context["page"].nav.slug)
+        except HandoffError:
+            context["handoff_receiver"] = None
     return templates.TemplateResponse(
         request,
         name,
@@ -247,6 +274,7 @@ def _page(
             "flash": flash,
             "env_label": ENV_LABELS.get(settings.app_env),
             "version_label": describe(settings.app_version, settings.app_build_date),
+            "operator_guide_url": operator_guide_url(settings.app_version),
         },
         status_code=status_code,
     )
@@ -264,7 +292,7 @@ protected = APIRouter(
 @open_routes.get("/login")
 def login_page(request: Request, next: str = "") -> Response:
     if _auth(request).read(request.cookies.get(COOKIE_NAME)) is not None:
-        return RedirectResponse("/admin", status_code=303)
+        return RedirectResponse(_safe_next(next), status_code=303)
     return templates.TemplateResponse(
         request, "admin/login.html", {"error": None, "next": _safe_next(next)}
     )
@@ -315,6 +343,32 @@ def logout(request: Request) -> Response:
     response = RedirectResponse("/admin/login", status_code=303)
     response.delete_cookie(COOKIE_NAME, path=COOKIE_PATH)
     return response
+
+
+@protected.get("/responses")
+def responses_page(request: Request, form: str = "") -> Response:
+    """Orienta os dois históricos sem consultar respostas nem inferir a finalidade atual."""
+    form = job_queries.JobFilters(form=form).form
+    title = None
+    if form:
+        with get_deps().sessions() as session:
+            title = form_queries.form_title(session, form)
+    return _page(
+        request,
+        "admin/responses.html",
+        {
+            "form": form,
+            "form_title": title,
+            "pdf_url": job_queries.JobFilters(form=form).url(),
+            "captures_url": "/admin/captures" + ("?" + urlencode({"form": form}) if form else ""),
+        },
+    )
+
+
+@protected.get("/advanced")
+def advanced_page(request: Request) -> Response:
+    """Agrupa ferramentas existentes, preservando sua autenticação e permissões."""
+    return _page(request, "admin/advanced.html", {})
 
 
 @protected.get("")
@@ -377,6 +431,7 @@ def _detail_page(
     errors: dict[str, str] | None = None,
     reason: str = "",
     status_code: int = 200,
+    release_form: dict | None = None,
 ) -> Response:
     deps = get_deps()
     with deps.sessions() as session:
@@ -386,13 +441,46 @@ def _detail_page(
             forms=deps.forms,
             run_url_template=deps.settings.hatchet_run_url_template,
             now=utcnow(),
+            storage=deps.storage,
         )
     if detail is None:
         return _error(request, 404, JOB_NOT_FOUND)
+    from urllib.parse import quote, urlencode
+
+    import sqlalchemy as sa
+
+    from app.models import Job, Submission
+
+    with deps.sessions() as db:
+        source = db.execute(
+            sa.select(Submission.id, Submission.form_slug)
+            .join(Job, Job.submission_id == Submission.id)
+            .where(Job.public_id == public_id)
+        ).first()
+    if source is None:
+        return _error(request, 404, JOB_NOT_FOUND)
+    handoff_url = (
+        "/admin/forms/"
+        + quote(source.form_slug, safe="")
+        + "/handoff?"
+        + urlencode({"submission_id": str(source.id)})
+    )
     return _page(
         request,
         "admin/job.html",
-        {"job": detail, "errors": errors or {}, "reason": reason},
+        {
+            "job": detail,
+            "handoff_url": handoff_url,
+            "journey_url": f"/admin/submissions/{source.id}/journey" if source else None,
+            "errors": errors or {},
+            "reason": reason,
+            "release_form": release_form
+            or {
+                "idempotency_key": str(uuid.uuid4()),
+                "mode": "standard",
+                "reason_code": "operator_review",
+            },
+        },
         status_code=status_code,
     )
 
@@ -400,6 +488,25 @@ def _detail_page(
 @protected.get("/jobs/{public_id}")
 def job_detail(request: Request, public_id: str) -> Response:
     return _detail_page(request, public_id)
+
+
+@protected.get("/jobs/{public_id}/participant")
+def participant_plan(request: Request, public_id: str) -> Response:
+    from dataclasses import asdict
+
+    from app.admin.queries import jobs as queries
+
+    deps = get_deps()
+    try:
+        with deps.sessions() as session:
+            found = queries.get_job_plan_projection(
+                session, public_id, forms=deps.forms, audience="participant"
+            )
+    except queries.ProjectionUnavailable as exc:
+        return _error(request, 409, str(exc))
+    if found is None:
+        return _error(request, 404, JOB_NOT_FOUND)
+    return _page(request, "admin/participant_plan.html", {"projection": asdict(found)})
 
 
 @protected.post("/jobs/{public_id}/reprocess")
@@ -449,6 +556,8 @@ async def resend_delivery(
     public_id: str,
     delivery_id: str,
     session: Annotated[AdminSession, Depends(require_session)],
+    expected_config_version: Annotated[int | None, Form()] = None,
+    expected_attempt: Annotated[int | None, Form()] = None,
 ) -> Response:
     """Entrega falha volta para pendente e o `deliver` é disparado de novo. Sem engine, o SDK insiste
     por minutos: a resposta não espera mais que HATCHET_TRIGGER_TIMEOUT_SECONDS. Se o disparo não
@@ -460,7 +569,12 @@ async def resend_delivery(
         return _error(request, 404, DELIVERY_NOT_FOUND)
     try:
         done = await job_actions.resend_delivery(
-            get_deps(), public_id, target, actor=session.username
+            get_deps(),
+            public_id,
+            target,
+            actor=session.username,
+            expected_config_version=expected_config_version,
+            expected_attempt=expected_attempt,
         )
     except job_actions.JobNotFound:
         return _error(request, 404, JOB_NOT_FOUND)
@@ -476,12 +590,18 @@ def job_pdf(request: Request, public_id: str, version: str = "") -> Response:
     """PDF de uma tentativa (a mais recente se `version` não vier), sempre como anexo."""
     try:
         pdf = job_actions.pdf_file(
-            get_deps(), public_id, int(version) if version.isdigit() else None, signed_url=True
+            get_deps(),
+            public_id,
+            int(version) if version.isdigit() else None,
+            access=AdminPdfAccess(),
+            signed_url=True,
         )
     except job_actions.NoPdf:
         return _error(request, 404, "Este pedido ainda não tem PDF.")
     except job_actions.PdfRemoved:
         return _error(request, 410, PDF_REMOVED)
+    except (RetryableError, TerminalError, OSError):
+        return _error(request, 502, "O PDF está indisponível. Tente novamente em instantes.")
     if pdf.url:
         return RedirectResponse(pdf.url, status_code=302)
     return Response(
@@ -578,9 +698,12 @@ def _destination_page(
     status_code: int = 200,
     new_secret: str | None = None,
     test: views.ProbeView | None = None,
+    test_error: str | None = None,
     errors: dict[str, str] | None = None,
     url: str | None = None,
     needs_confirmation: bool = False,
+    selected_events: list[str] | None = None,
+    selected_purpose: str | None = None,
 ) -> Response:
     """A página do destino. `new_secret` só vem na resposta da criação ou da troca: a única vez
     em que o segredo aparece. Num pedido do HTMX, uma recusa sai com 200: o HTMX não troca o
@@ -590,6 +713,11 @@ def _destination_page(
     title = _form_title(form_slug) if form_slug is not None else None
     with deps.sessions() as db:
         page = views.destination_page(db, form_slug, title, deps.cipher)
+        effective = (
+            destinations.serving(destinations.listing(db), form_slug)
+            if form_slug
+            else destinations.listing(db).get(None)
+        )
     if page is None:
         return _error(request, 404, DESTINATION_NOT_FOUND)
     if url is None:
@@ -601,8 +729,16 @@ def _destination_page(
         "admin/destination.html",
         {
             "page": page,
+            "effective_events": effective.events if effective else (),
+            "effective_purpose": effective.purpose if effective else None,
+            "selected_purpose": selected_purpose
+            or (page.stored.purpose if page.stored else "participant"),
+            "selected_events": selected_events
+            if selected_events is not None
+            else (page.stored.events if page.stored else ("plano.concluido",)),
             "new_secret": new_secret,
             "test": test,
+            "test_error": test_error,
             "errors": errors or {},
             "url": url,
             "needs_confirmation": needs_confirmation,
@@ -610,6 +746,60 @@ def _destination_page(
             "max_url_length": destinations.MAX_URL_LENGTH,
         },
         status_code=status_code,
+    )
+
+
+@protected.get("/integrations")
+def integration_hub_page(
+    request: Request,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    cursor: Annotated[str | None, Query(max_length=300)] = None,
+    connector: Literal["", "baserow", "webhook"] = "",
+    form_slug: str = "",
+) -> Response:
+    from zoneinfo import ZoneInfo
+
+    from app.admin import integration_hub_views
+    from app.admin.api.common import PageParams, paginate
+    from app.admin.api.errors import ApiError
+    from app.admin.queries import integration_hub
+
+    deps = get_deps()
+    with deps.sessions() as db:
+        try:
+            found = integration_hub.overview(
+                db, cipher=deps.cipher, connector=connector or None, form_slug=form_slug or None
+            )
+        except integration_hub.UnknownFormFilter:
+            return _error(request, 404, "Formulário não encontrado.")
+    try:
+        chunk, next_cursor = paginate(
+            found.items, PageParams(limit, cursor), key=lambda row: row.key
+        )
+    except ApiError:
+        return _error(request, 422, "O cursor não vale. Volte à central sem cursor.")
+    next_url = (
+        "/admin/integrations?"
+        + urlencode(
+            {"connector": connector, "form_slug": form_slug, "limit": limit, "cursor": next_cursor}
+        )
+        if next_cursor
+        else None
+    )
+    return _page(
+        request,
+        "admin/integrations.html",
+        {
+            "catalog": found.catalog,
+            "items": chunk,
+            "forms": found.forms,
+            "connector": connector,
+            "form_slug": form_slug,
+            "limit": limit,
+            "next_url": next_url,
+            "actions": integration_hub_views.actions,
+            "hub_timezone": ZoneInfo("America/Sao_Paulo"),
+        },
     )
 
 
@@ -640,6 +830,9 @@ def save_destination(
     url: Annotated[str, Form()] = "",
     version: Annotated[str, Form()] = "",
     confirm_http: Annotated[str, Form()] = "",
+    events: Annotated[list[str] | None, Form()] = None,
+    events_present: Annotated[str, Form()] = "",
+    purpose: Annotated[str | None, Form()] = None,
 ) -> Response:
     """Cria o destino, e o segredo novo aparece só nesta resposta, ou muda a URL dele."""
     expected = _version(version)
@@ -651,6 +844,26 @@ def save_destination(
             actor=session.username,
             expected_version=expected,
             http_confirmed=bool(confirm_http),
+            events=(events or []) if events_present else events,
+            purpose=purpose,
+        )
+    except destinations.InvalidPurpose as exc:
+        return _destination_page(
+            request,
+            status_code=422,
+            errors={"purpose": exc.message},
+            url=url,
+            selected_events=events,
+            selected_purpose=purpose,
+        )
+    except destinations.InvalidEvents as exc:
+        return _destination_page(
+            request,
+            status_code=422,
+            errors={"events": exc.message},
+            url=url,
+            selected_purpose=purpose,
+            selected_events=(events or []) if events_present else events,
         )
     except destinations.InvalidUrl as exc:
         return _destination_page(
@@ -659,6 +872,8 @@ def save_destination(
             errors={"url": exc.message},
             url=url,
             needs_confirmation=exc.needs_confirmation,
+            selected_purpose=purpose,
+            selected_events=events or [] if events_present else events,
         )
     except destinations.NoCipher:
         return _destination_page(request, status_code=422, errors={"url": NO_CIPHER}, url=url)
@@ -716,13 +931,17 @@ def remove_destination(
     if not confirm:
         return _destination_page(request, status_code=422, errors={"remove": CONFIRM_REMOVE})
     try:
-        destination_actions.remove(
+        removed = destination_actions.remove(
             get_deps(), form_slug, actor=session.username, expected_version=_version(version)
         )
     except destinations.Conflict:
         return _back(session, form_slug, DESTINATION_CHANGED)
     logger.info("admin: destino do webhook removido formulario=%s", _scope_label(form_slug))
-    session.flash = ("ok", DESTINATION_REMOVED)
+    session.flash = (
+        "ok",
+        DESTINATION_REMOVED
+        + f" Registros de entrega de respostas apagados: {removed.capture_counts.total}; pendentes não foram redirecionadas.",
+    )
     return RedirectResponse(views.DESTINATIONS_URL, status_code=303)
 
 
@@ -732,14 +951,19 @@ def send_test_event(
     request: Request,
     session: Annotated[AdminSession, Depends(require_session)],
     form_slug: Target,
+    event: Annotated[str, Form()] = "webhook.teste",
 ) -> Response:
     """O evento de teste sai da API, sem passar pelo Hatchet (não leva dado de lead), com os
     timeouts do adaptador: a resposta pode levar até uns 20 s com o receptor mudo. As entregas
     saem do worker, que pode não alcançar o que a API alcança (a tela avisa)."""
     try:
-        probe = destinations.send_test(get_deps(), form_slug, actor=session.username)
+        probe = destinations.send_test(get_deps(), form_slug, actor=session.username, event=event)
     except destinations.UnreadableSecret:
         return _destination_page(request, status_code=409, test=views.UNREADABLE_PROBE)
+    except destinations.InvalidPurpose as exc:
+        return _destination_page(request, status_code=422, test_error=exc.message)
+    except destinations.UnsupportedEvent:
+        return _back(session, form_slug, "O destino não declarou aceitar o evento de captura.")
     if probe is None:
         return _back(session, form_slug, NOTHING_TO_TEST)
     logger.info(
@@ -748,7 +972,7 @@ def send_test_event(
         probe.status,
         probe.error,
     )
-    return _destination_page(request, test=views.probe_view(probe))
+    return _destination_page(request, test=views.probe_view(probe, event=event))
 
 
 # --- formulários ------------------------------------------------------------------------------
@@ -873,6 +1097,7 @@ def _new_form_page(
     title: str = "",
     slug: str = "",
     source: str = "",
+    generation: str = "",
     suggest: bool = False,
     errors: dict[str, str] | None = None,
     status_code: int = 200,
@@ -889,6 +1114,7 @@ def _new_form_page(
         title=title,
         slug=slug,
         source=source,
+        generation=generation if generation in ("pdf", "none") else "",
         sources=sources,
         errors=errors or {},
         address_prefix=form_queries.public_url(deps.settings.public_base_url, ""),
@@ -912,13 +1138,19 @@ def create_form(
     title: Annotated[str, Form()] = "",
     slug: Annotated[str, Form()] = "",
     source: Annotated[str, Form()] = "",
+    generation: Annotated[str, Form()] = "",
 ) -> Response:
     """Cria o formulário, sem versão publicada, e abre o rascunho dele: do modelo inicial ou da
     cópia de outro formulário. Recusado, a página volta com o que a operadora mandou e o problema
     de cada campo, e nada é gravado."""
     try:
         created = drafts.create(
-            get_deps(), title=title, slug=slug, actor=session.username, source=source
+            get_deps(),
+            title=title,
+            slug=slug,
+            actor=session.username,
+            source=source,
+            generation=generation or None,
         )
     except DefinitionError as exc:
         return _new_form_page(
@@ -926,6 +1158,7 @@ def create_form(
             title=title,
             slug=slug,
             source=source,
+            generation=generation,
             errors=drafts.problems_by_field(exc.problems),
             status_code=422,
         )
@@ -1283,6 +1516,18 @@ def draft_preview(request: Request, slug: str) -> Response:
     return _page(request, "admin/form_preview.html", {"page": page})
 
 
+@protected.get("/forms/{slug}/draft/completion-preview")
+def draft_completion_preview(request: Request, slug: str) -> Response:
+    """Recibo de exemplo, sem link externo utilizável nem envio de respostas."""
+    try:
+        html = preview_actions.completion_preview(get_deps(), slug)
+    except UnknownForm:
+        raise NotFound(DRAFT_NOT_FOUND) from None
+    except DefinitionError:
+        raise NotFound(DRAFT_DOES_NOT_COMPILE) from None
+    return HTMLResponse(html)
+
+
 @protected.get("/forms/{slug}/draft/preview/frame")
 def draft_preview_frame(
     request: Request, slug: str, step: Annotated[str, Query(alias="etapa")] = "1"
@@ -1330,6 +1575,9 @@ def _pdf_page(
 ) -> Response:
     with get_deps().sessions() as db:
         images = sorted(form_assets.visible(db, draft.slug).values(), key=lambda a: a.name)
+    from app.forms.definition import compile_definition
+
+    compile_definition(draft.document).require_generation()
     page = draft_pages.pdf_editor(
         draft, tests=_recent_tests(request, draft), source=source, images=images, **kwargs
     )
@@ -1474,16 +1722,27 @@ def _tests_page(
     status_code: int = 200,
     headers: dict[str, str] | None = None,
     scoring: bool = False,
+    prompt_only: bool = False,
 ) -> Response:
     """A página do teste: as respostas (as de exemplo, se `answers` vier vazia) e a data, o prompt
     montado com elas ou, com `scoring`, a pontuação delas (ou os problemas delas) e os testes
     recentes. O que ela junta é da ação (`draft_test_actions.testing`), a mesma da API."""
     try:
         state = draft_test_actions.testing(
-            get_deps(), slug, answers=answers, day=day, scoring=scoring, now=_now(request)
+            get_deps(),
+            slug,
+            answers=answers,
+            day=day,
+            scoring=scoring,
+            prompt_only=prompt_only,
+            now=_now(request),
         )
     except UnknownForm:
         raise NotFound(DRAFT_NOT_FOUND) from None
+    if state.draft.document.get("generation") == "none":
+        return _capture_tests_page(
+            request, state.draft, answers=answers, day=day, status_code=status_code
+        )
     page = draft_pages.testing_page(
         state.draft,
         answers=answers or "",
@@ -1502,6 +1761,42 @@ def _tests_page(
     )
     response.headers.update(headers or {})
     return response
+
+
+def _capture_tests_page(
+    request: Request,
+    draft: drafts.Draft,
+    *,
+    answers: str | None = None,
+    day: str = "",
+    status_code: int = 200,
+) -> Response:
+    """O teste local usa a mesma validação de modo, respostas e conclusão da API/MCP."""
+    result = None
+    problems = ()
+    try:
+        result = drafts.test_capture(draft, answers=answers, day=day, now=_now(request))
+    except DefinitionError as exc:
+        problems = exc.problems
+    errors = {
+        field: tuple(
+            problem for problem in problems if (problem.path == "date") == (field == "date")
+        )
+        for field in ("answers", "date")
+    }
+    return _page(
+        request,
+        "admin/capture_test.html",
+        {
+            "draft": draft,
+            "result": result,
+            "answers": answers or "",
+            "day": day,
+            "problems": problems,
+            "errors": errors,
+        },
+        status_code=422 if problems else status_code,
+    )
 
 
 def _given(answers: str) -> str | None:
@@ -1523,7 +1818,7 @@ def assemble_prompt(
 ) -> Response:
     """O prompt montado com as respostas e a data do formulário, sem gravar nada. É um POST para
     as respostas não irem para a URL nem para o log de acesso."""
-    return _tests_page(request, slug, answers=_given(answers), day=date)
+    return _tests_page(request, slug, answers=_given(answers), day=date, prompt_only=True)
 
 
 @protected.post("/forms/{slug}/draft/score")
@@ -1853,6 +2148,7 @@ def _integration_page(
     slug: str,
     *,
     status_code: int = 200,
+    profile: str | None = None,
     errors: dict[str, str] | None = None,
     problems: Sequence[str] = (),
     typed: dict[str, str] | None = None,
@@ -1864,7 +2160,10 @@ def _integration_page(
     digitar e escolher, devolvidos numa recusa (o token nunca volta). Num pedido do HTMX, uma recusa
     sai com 200, para o HTMX trocar o trecho."""
     deps = get_deps()
-    detail = integration_actions.read_detail(deps, slug, typed=selected)
+    profile = profile or request.query_params.get("profile")
+    if profile not in (None, "pdf", "capture"):
+        return _error(request, 422, "Selecione o perfil pdf ou capture.")
+    detail = integration_actions.read_detail(deps, slug, typed=selected, profile=profile)
     if detail is None:
         return _error(request, 404, FORM_NOT_FOUND)
     stored = detail.stored
@@ -1872,6 +2171,7 @@ def _integration_page(
     values = {
         "base_url": stored.base_url if stored else "",
         "table_id": str(stored.table_id) if stored else "",
+        "purpose": stored.purpose if stored else "",
         **(typed or {}),
     }
     if request.headers.get("hx-request") == "true":
@@ -1914,18 +2214,20 @@ def connect_integration(
     table_id: Annotated[str, Form()] = "",
     token: Annotated[str, Form()] = "",
     version: Annotated[str, Form()] = "",
+    purpose: Annotated[str | None, Form()] = None,
 ) -> Response:
     """Conecta o formulário a uma tabela do Baserow, ou muda a conexão. Antes de guardar, lê os
     campos da tabela com o token: uma recusa mostra o motivo e não grava nada. Um token em branco,
     numa integração que existe, mantém o guardado. Mudar o endereço ou a tabela apaga o mapeamento.
     As conferências são da ação (`app.admin.actions.integrations.connect`), que a API também usa."""
     expected = integration_actions.version_number(version)
-    typed = {"base_url": base_url.strip(), "table_id": table_id.strip()}
+    typed = {"base_url": base_url.strip(), "table_id": table_id.strip(), "purpose": purpose or ""}
     try:
         connected = integration_actions.connect(
             get_deps(),
             slug,
             base_url=base_url,
+            purpose=purpose,
             table_id=integration_actions.table_number(typed["table_id"]),
             token=token,
             expected_version=expected,
@@ -1977,7 +2279,12 @@ def save_integration_mapping(
     chosen = _chosen_sources(form)
     try:
         saved = integration_actions.save_mapping(
-            get_deps(), slug, chosen=chosen, expected_version=expected, actor=session.username
+            get_deps(),
+            slug,
+            chosen=chosen,
+            expected_version=expected,
+            actor=session.username,
+            profile=str(form.get("profile")) if form.get("profile") in ("pdf", "capture") else None,
         )
     except integration_actions.NotPublished as exc:
         return _integration_back(session, slug, str(exc))
@@ -2060,7 +2367,7 @@ def remove_integration(
             request, slug, status_code=422, errors={"remove": CONFIRM_REMOVE_INTEGRATION}
         )
     try:
-        integration_actions.remove(
+        removed = integration_actions.remove(
             get_deps(),
             slug,
             expected_version=integration_actions.version_number(version),
@@ -2068,7 +2375,11 @@ def remove_integration(
         )
     except integration_config.Conflict:
         return _integration_back(session, slug, INTEGRATION_CHANGED)
-    session.flash = ("ok", INTEGRATION_REMOVED)
+    session.flash = (
+        "ok",
+        INTEGRATION_REMOVED
+        + f" Registros de entrega de respostas apagados: {removed.capture_counts.total}; pendentes não serão enviadas.",
+    )
     return RedirectResponse(views.form_url(slug), status_code=303)
 
 
@@ -2077,18 +2388,26 @@ def send_integration_test(
     request: Request,
     slug: IntegrationSlug,
     session: Annotated[AdminSession, Depends(require_session)],
+    profile: Annotated[Literal["pdf", "capture"] | None, Form()] = None,
 ) -> Response:
     """Manda uma linha sintética (a lead de exemplo, no domínio `exemplo`) para a tabela, pelo mesmo
     caminho de um pedido de verdade, e mostra o que aconteceu. Sai da API, sem passar pelo Hatchet, e
     não toca dado de lead. A linha fica na tabela; testar de novo atualiza a mesma. O envio é da ação
     (`app.admin.actions.integrations.send_test`), que a API também usa."""
+    profile = profile or request.query_params.get("profile")
+    if profile not in (None, "pdf", "capture"):
+        return _error(request, 422, "Selecione o perfil pdf ou capture.")
     try:
-        result = integration_actions.send_test(get_deps(), slug, actor=session.username)
+        result = integration_actions.send_test(
+            get_deps(), slug, actor=session.username, profile=profile
+        )
     except integration_actions.TokenUnreadable:
         return _integration_page(request, slug, status_code=409, sample=UNREADABLE_SAMPLE)
     except integration_actions.IntegrationMissing:
         return _integration_back(session, slug, INTEGRATION_MISSING)
-    return _integration_page(request, slug, sample=integration_views.sample_view(result))
+    return _integration_page(
+        request, slug, profile=profile, sample=integration_views.sample_view(result)
+    )
 
 
 @protected.post("/forms/{slug}/baserow/resend-failed")
@@ -2139,5 +2458,188 @@ async def resend_sync(
     return RedirectResponse(f"/admin/jobs/{public_id}", status_code=303)
 
 
+@protected.get("/captures")
+def captures_page(
+    request: Request,
+    form: str = "",
+    form_version: str = "",
+    cursor: str | None = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+) -> Response:
+    """Lista paginada por chegada, com os mesmos filtros de formulário e versão da API."""
+    from app.admin.api.common import decode_keyset, encode_keyset
+    from app.admin.api.errors import ApiError
+    from app.admin.queries import captures
+
+    try:
+        after = decode_keyset(cursor) if cursor else None
+    except ApiError:
+        return _error(request, 422, "Página inválida. Abra novamente a lista de capturas.")
+    deps = get_deps()
+    with deps.sessions() as db:
+        items = captures.listing(
+            db,
+            deps.forms,
+            form=form or None,
+            version=int(form_version) if form_version.isdecimal() else None,
+            after=after,
+            limit=limit + 1,
+        )
+    more = len(items) > limit
+    items = items[:limit]
+    next_url = None
+    if more:
+        following = encode_keyset(items[-1]["created_at"], items[-1]["submission_id"])
+        query = {"form": form, "cursor": following, "limit": limit}
+        if form_version is not None:
+            query["form_version"] = form_version
+        next_url = "/admin/captures?" + urlencode(query)
+    return _page(
+        request,
+        "admin/captures.html",
+        {
+            "items": items,
+            "detail": None,
+            "next_url": next_url,
+            "form": form,
+            "form_version": form_version,
+        },
+    )
+
+
+@protected.get("/captures/{submission_id}")
+def capture_detail_page(submission_id: str, request: Request) -> Response:
+    """A operadora autenticada lê respostas pela mesma consulta da API."""
+    from app.admin.queries import captures
+
+    deps = get_deps()
+    with deps.sessions() as db:
+        found = captures.detail(db, deps.forms, submission_id, with_lead=True)
+    return _page(
+        request,
+        "admin/captures.html",
+        {"items": [], "detail": found},
+        status_code=200 if found else 404,
+    )
+
+
+@protected.post("/forms/{slug}/draft/capture-test")
+def capture_test_page(
+    slug: str,
+    request: Request,
+    answers: Annotated[str, Form()] = "",
+    date: Annotated[str, Form()] = "",
+) -> Response:
+    return _capture_tests_page(request, _draft(slug), answers=_given(answers), day=date)
+
+
+from app.admin import handoff_routes, journey_routes
+
+handoff_routes.register(protected)
+journey_routes.register(protected)
+
 router.include_router(open_routes)
 router.include_router(protected)
+
+
+@protected.post("/captures/{submission_id}/deliveries/{delivery_id}/retry")
+def retry_capture_delivery_page(
+    submission_id: str,
+    delivery_id: str,
+    request: Request,
+    session: Annotated[AdminSession, Depends(require_session)],
+    expected_dispatch: Annotated[int, Form()],
+    expected_config_version: Annotated[int, Form()],
+    confirm: Annotated[str, Form()] = "",
+) -> Response:
+    from app.admin.actions import captures
+
+    if confirm != "on":
+        return Response("Confirme o envio externo antes de repetir.", status_code=422)
+    try:
+        captures.retry(
+            get_deps(),
+            submission_id,
+            delivery_id,
+            expected_dispatch=expected_dispatch,
+            expected_config_version=expected_config_version,
+            actor=session.username,
+        )
+    except captures.Missing:
+        return Response("Captura ou entrega não encontrada.", status_code=404)
+    except captures.Conflict:
+        return Response(
+            "Entrega ou configuração mudou; confira a revisão e a finalidade.", status_code=409
+        )
+    return RedirectResponse(f"/admin/captures/{submission_id}", status_code=303)
+
+
+@protected.post("/jobs/{public_id}/release")
+async def release_job_pdf(
+    request: Request, public_id: str, session: Annotated[AdminSession, Depends(require_session)]
+) -> Response:
+    from pydantic import ValidationError
+
+    from app.deployment_contract import DeploymentContractError
+    from app.plan_release import ReleasePdfCommand, ReleaseRefused
+
+    posted = await request.form()
+    allowed = {
+        "expected_attempt",
+        "expected_artifact_id",
+        "expected_form_version_number",
+        "expected_release_version",
+        "idempotency_key",
+        "mode",
+        "reason_code",
+    }
+    fields = {key: posted.get(key, "") for key in allowed}
+    try:
+        command = ReleasePdfCommand.model_validate(
+            {**fields, "confirm": posted.get("confirm") == "on"}
+        )
+        done = await job_actions.release_pdf(
+            get_deps(),
+            request.app.state.trigger,
+            public_id,
+            actor=session.username,
+            command=command,
+        )
+    except ValidationError:
+        return await run_in_threadpool(
+            _detail_page,
+            request,
+            public_id,
+            errors={"release": "Confira os campos e confirme a liberação desta tentativa."},
+            release_form=fields,
+            status_code=422,
+        )
+    except DeploymentContractError:
+        return await run_in_threadpool(
+            _detail_page,
+            request,
+            public_id,
+            errors={"release": "A liberação aguarda a verificação da atualização."},
+            release_form=fields,
+            status_code=503,
+        )
+    except ReleaseRefused as error:
+        if error.status == 404:
+            return _error(request, 404, JOB_NOT_FOUND)
+        return await run_in_threadpool(
+            _detail_page,
+            request,
+            public_id,
+            errors={
+                "release": "A tentativa, a versão ou o PDF mudou. Confira a situação antes de liberar."
+            },
+            release_form=fields,
+            status_code=error.status,
+        )
+    messages = {
+        "no_participant_channel": "Acesso liberado; notificação não enviada.",
+        "event_not_selected": "Acesso liberado; a comunicação de conclusão já autorizada foi mantida.",
+        "outbox": "Acesso liberado; notificação registrada para envio.",
+    }
+    session.flash = ("ok", messages[done.commit.notification_decision])
+    return RedirectResponse(f"/admin/jobs/{public_id}", status_code=303)

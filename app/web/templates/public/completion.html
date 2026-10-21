@@ -1,0 +1,27 @@
+{% extends "public/base.html" %}
+{% block title %}Respostas salvas · {{ spec.title }}{% endblock %}
+{% block scripts %}{% if not preview %}<script src="{{ static_url('js/completion.js') }}" defer></script>{% endif %}{% endblock %}
+{% block body_attrs %}{% if not preview %} data-clear-draft="{{ spec.slug }}"{% endif %}{% endblock %}
+{% block main %}
+<main id="conteudo" class="container">
+  <section class="section" aria-labelledby="conclusao-titulo">
+    <h1 id="conclusao-titulo">{% if preview %}Prévia da conclusão{% else %}Respostas salvas{% endif %}</h1>
+    {% if preview %}<p>Esta prévia não salva respostas nem abre o destino.</p>{% endif %}
+    {% if completion.mode == 'result' %}
+    <p>Depois do envio, a participante acompanha a geração e acessa o resultado do PDF.</p>
+    {% else %}
+    {% for paragraph in completion.message.split('\n') %}<p>{{ paragraph }}</p>{% endfor %}
+    {% if completion.mode in ('button', 'redirect') %}
+      {% if preview %}
+      <button class="btn btn--primary" type="button" disabled>{{ completion.button_label }}</button>
+      <p>Destino configurado: {{ completion.url }}</p>
+      {% elif completion.url %}
+      <a class="btn btn--primary" href="{{ completion.url }}" rel="noreferrer noopener"{% if completion.mode == 'redirect' %} data-completion-redirect{% endif %}>{{ completion.button_label }}</a>
+      {% if completion.mode == 'redirect' %}<p>Se o encaminhamento não acontecer, use o botão para continuar.</p>{% endif %}
+      {% endif %}
+    {% endif %}
+    {% endif %}
+  </section>
+</main>
+{% endblock %}
+{% block footer %}<p>Suas respostas foram recebidas com segurança.{% if preview %} Este é apenas um exemplo de apresentação.{% endif %}</p>{% endblock %}

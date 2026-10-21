@@ -59,6 +59,7 @@ def connect_form(
             actor="operadora",
             expected_version=0,
             production=False,
+            purpose="internal",
         )
         stored = config.save_mapping(
             session,
@@ -143,6 +144,8 @@ def test_every_change_is_audited_in_the_name_of_who_made_it_without_the_token_or
     assert audited[0].details == {
         "form_slug": SLUG,
         "kind": "baserow",
+        "purpose": "internal",
+        "purpose_origin": "explicit",
         "host": "baserow.example.test",
         "table_id": BASEROW_TABLE,
         "token_changed": True,
@@ -172,6 +175,7 @@ def test_connecting_again_keeps_the_token_when_none_is_given_and_resets_the_mapp
                 expected_version=version,
                 production=False,
                 **values,
+                purpose="internal",
             )
 
     same = reconnect(stored.version)
@@ -225,6 +229,7 @@ def test_the_first_connection_needs_the_token_and_the_key(deps: Deps) -> None:
             actor="x",
             expected_version=0,
             production=False,
+            purpose="internal",
         )
     deps.cipher = None
     with deps.sessions.begin() as session, pytest.raises(NoCipher):
@@ -238,6 +243,7 @@ def test_the_first_connection_needs_the_token_and_the_key(deps: Deps) -> None:
             actor="x",
             expected_version=0,
             production=False,
+            purpose="internal",
         )
 
 
@@ -1066,3 +1072,52 @@ def test_removing_the_integration_removes_the_state_of_its_syncs_but_not_the_row
             sa.select(AuditLog).where(AuditLog.action == "integration.remove")
         ).one()
     assert removed.details["host"] == "baserow.example.test"
+
+
+def test_pdf_push_holds_configuration_until_transport_finishes(deps, baserow):
+    connected = connect_form(deps)
+    job = completed_job(deps)
+    (sync_id,) = sync_ids(deps, job.id)
+    sending, resume, changing, changed = (threading.Event() for _ in range(4))
+    errors = []
+
+    def hold(request):
+        if request.method == "POST":
+            sending.set()
+            assert resume.wait(5)
+
+    baserow.before = hold
+
+    def send():
+        try:
+            push.push(deps, sync_id)
+        except Exception as error:  # noqa: BLE001 — captura falha da thread para a asserção principal
+            errors.append(type(error).__name__)
+
+    def deactivate():
+        changing.set()
+        with deps.sessions.begin() as session:
+            config.set_active(
+                session,
+                form_slug="demo",
+                active=False,
+                actor="operadora",
+                expected_version=connected.version,
+            )
+        changed.set()
+
+    sender = threading.Thread(target=send)
+    writer = threading.Thread(target=deactivate)
+    sender.start()
+    try:
+        assert sending.wait(3)
+        writer.start()
+        assert changing.wait(2)
+        assert not changed.wait(0.15)
+    finally:
+        resume.set()
+        sender.join(5)
+        if writer.ident:
+            writer.join(5)
+    assert changed.is_set() and not errors
+    assert sync_state(deps, sync_id).status == "succeeded"

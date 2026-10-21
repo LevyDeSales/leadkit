@@ -30,40 +30,13 @@ o OpenAPI e exigem uma operação ou justificativa para cada rota.
   `openapi.json` e o teste que a prova está citado) ou `fora (letra)`, uma rota sem par, com o motivo
   em ["O que não entra na API"](#o-que-não-entra-na-api-e-por-quê).
 
-## Totais
+## Verificação da cobertura
 
-| Recurso | Rotas | Funções | Operações da API | Fora |
-| --- | ---: | ---: | ---: | ---: |
-| Acesso (login e sessão) | 3 | 3 | 0 | 3 |
-| Pedidos | 6 | 6 | 6 | 0 |
-| Destinos do webhook | 11 | 6 | 6 | 0 |
-| Formulários: cadastro, situação e retenção | 10 | 10 | 8 | 2 |
-| Versões | 3 | 3 | 3 | 0 |
-| Rascunho: editor | 5 | 5 | 4 | 1 |
-| Rascunho: PDF e prévias | 4 | 4 | 2 | 0 |
-| Rascunho: testes | 7 | 7 | 6 | 0 |
-| Rascunho: publicação | 2 | 2 | 2 | 0 |
-| Integração com o Baserow | 8 | 8 | 8 | 0 |
-| Imagens dos formulários | 5 | 5 | 5 | 0 |
-| Chaves de API | 3 | 3 | 3 | 0 |
-| Configurar o MCP | 2 | 2 | 0 | 1 |
-| **Total** | **69** | **64** | **53** | **7** |
-
-- **69 rotas** (`GET` e `POST`; o admin não usa outro método), de **64 funções**: as cinco ações dos
-  destinos (ver, endereço, segredo, remoção e teste) existem para o destino padrão e para o de um
-  formulário, com a mesma função.
-- **62 rotas têm par na API**, em **53 operações** (algumas rotas dividem a operação: as duas dos
-  destinos, o editor do PDF e o do formulário, que salvam o mesmo rascunho, a página do teste e o
-  trecho do polling, e a criação de chave da página das chaves e a da tela do MCP). **7 rotas ficam
-  fora**: o login e a saída (a chave substitui a sessão), três telas sem dado nem ação e a tela de
-  configurar o MCP.
-- O editor estruturado do rascunho tem **48 operações** dentro de uma rota só (`POST
-  /admin/forms/{slug}/draft/edit`): 42 viram uma edição do documento e 6 são só redesenho da tela
-  ([a tabela](#operações-do-editor-48)).
-- Mais **2 operações novas**, sem rota no admin (`get_current_api_key` e `list_audit_log`): ver
-  [as novas](#operações-novas-sem-rota-no-admin).
-- Total da API: **55 operações** (53 + 2), as mesmas do `docs/api/openapi.json` (o teste de cobertura
-  confere). **Nenhuma linha está `falta`**: a cobertura está fechada.
+O [inventário por recurso](#inventário-por-recurso) registra cada rota e sua operação da API ou
+justificativa de exceção. As operações estão no [contrato OpenAPI](openapi.json), e o
+[teste de cobertura](../../tests_app/test_admin_api_coverage.py) confere o inventário contra as
+rotas do app, o OpenAPI e as operações dos editores. A cobertura está fechada: nenhuma linha
+pode ficar `falta`.
 
 ## Inventário por recurso
 
@@ -71,9 +44,16 @@ o OpenAPI e exigem uma operação ou justificativa para cada rota.
 
 | Rota atual | O que faz | Serviço hoje | Operação da API | `operation_id` | Papel | Marcas | Status |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `GET /admin/login` | Mostra o formulário de login; com sessão válida, vai para `/admin` | `AdminAuth.read` | — | — | — | — | fora (A) |
+| `GET /admin/login` | Mostra o formulário de login; com sessão válida, segue o `next` seguro dentro do admin, sem query string, ou `/admin/forms` por padrão | `AdminAuth.read` | — | — | — | — | fora (A) |
 | `POST /admin/login` | Confere usuário e senha (argon2), bloqueia o IP após 5 falhas, abre a sessão com o token CSRF | `AdminAuth.check_credentials`, `LoginThrottle` | — | — | — | — | fora (A) |
 | `POST /admin/logout` | Encerra a sessão e apaga o cookie | `AdminAuth` | — | — | — | — | fora (A) |
+
+### Navegação HTML
+
+| Rota atual | O que faz | Serviço hoje | Operação da API | `operation_id` | Papel | Marcas | Status |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `GET /admin/responses` | Orienta a operadora para os históricos de pedidos com PDF e respostas sem PDF, preservando o filtro de formulário | `routes.responses_page`; `queries.forms.form_title` só para o título de navegação | — | — | — | — | fora (B) |
+| `GET /admin/advanced` | Agrupa links para ferramentas existentes, sem executar suas operações | `routes.advanced_page` | — | — | — | — | fora (B) |
 
 ### Pedidos
 
@@ -88,11 +68,24 @@ e-mail pede `total`; `leitura` busca só pelo código. `download_job_pdf` entreg
 | Rota atual | O que faz | Serviço hoje | Operação da API | `operation_id` | Papel | Marcas | Status |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `GET /admin` | Lista os pedidos (busca por nome, e-mail ou código; filtros de status, de formulário (`form=<endereço>`) e da versão dele (select "Versão", só com um formulário escolhido; `form_version=<texto>`, o texto que a coluna mostra; o mesmo parâmetro na API, que o recusa sem `form`), de quando o pedido chegou (select "Recebido", `period` com `today`, `7d` ou `30d`, em dias de calendário de Brasília; na API, `created_from` e `created_to`) e da entrega ao webhook da tentativa atual (select "Entrega", `delivery=failed` ou `pending`; o mesmo parâmetro na API) e da sincronização com a planilha da tentativa atual (select "Planilha", `sync=failed` ou `pending`; o mesmo parâmetro na API); 25 por página; a coluna Formulário mostra o título e a versão; a coluna "Entregas e planilha" mostra a entrega ao webhook e a sincronização com a planilha da tentativa atual, e na API cada item traz `deliveries` e `syncs`, só com destino ou tipo e estado) e avisa dos formulários sem destino e dos segredos que não abrem (o aviso vai para `list_destinations`). Na API, sem dado pessoal para `leitura` | `queries.jobs` (`JobFilters`, os filtros, e a consulta que `views.list_jobs` decora) e `views.destinations_overview` (consulta com rótulo) | `GET /jobs` | `list_jobs` | leitura | lead | feita · tests_app/test_admin_api_jobs.py::test_list_jobs_is_an_envelope_of_the_newest_first_with_the_state_and_no_lead_data |
-| `GET /admin/jobs/{public_id}` | O pedido: lead, respostas, pontuação, plano, PDFs, entregas, sincronizações e linha do tempo das tentativas. Na API, a lead, as respostas, a pontuação e o plano ficam no bloco `lead_data`, só para `total` | `queries.jobs` (a consulta que `views.job_detail` decora) | `GET /jobs/{public_id}` | `get_job` | leitura | lead | feita · tests_app/test_admin_api_jobs.py::test_get_job_a_read_key_reads_the_state_of_every_order_and_no_lead_data |
+| `GET /admin/jobs/{public_id}` | O pedido: lead, respostas, pontuação, plano, PDFs, disponibilidade técnica da tentativa atual (`current_pdf`, com prova limitada de leitura; HEAD isolado não basta), entregas, sincronizações e linha do tempo das tentativas. Na API, a lead, as respostas, a pontuação e o plano ficam no bloco `lead_data`, só para `total` | `queries.jobs` (a consulta que `views.job_detail` decora) | `GET /jobs/{public_id}` | `get_job` | leitura | lead | feita · tests_app/test_admin_api_jobs.py::test_get_job_a_read_key_reads_the_state_of_every_order_and_no_lead_data |
+| `POST /admin/jobs/{public_id}/release` | Libera a tentativa e o PDF observados, com confirmação e replay histórico; não renova retenção nem exige compra ou reunião | `actions.jobs.release_pdf` e `plan_release.release_pdf` | `POST /jobs/{public_id}/release` | `release_job_pdf` | total | externo | feita · tests_app/test_plan_release.py::test_admin_release_requires_total_confirmation_and_replays_without_dispatch |
 | `POST /admin/jobs/{public_id}/reprocess` | Nova tentativa auditada, com motivo, disparada uma vez; recusa se a tentativa mudou | `actions.jobs.reprocess`: o motivo de 10 a 300 caracteres, o `confirm`, a tentativa esperada, `jobs.reprocess` e o disparo (`launching.launch_attempt`), com a diferença entre enfileirada e adiada para o reconciliador | `POST /jobs/{public_id}/reprocess` | `reprocess_job` | total | externo | feita · tests_app/test_admin_api_job_actions.py::test_reprocess_job_creates_the_next_attempt_and_answers_with_the_new_state |
 | `POST /admin/jobs/{public_id}/deliveries/{delivery_id}/resend` | Entrega que falhou volta para pendente e é disparada de novo | `actions.jobs.resend_delivery`: `jobs.resend_delivery` e o disparo (`launching.launch_delivery`, numa thread, com o limite de `HATCHET_TRIGGER_TIMEOUT_SECONDS`) | `POST /jobs/{public_id}/deliveries/{delivery_id}/resend` | `resend_job_delivery` | total | externo | feita · tests_app/test_admin_api_job_actions.py::test_resend_job_delivery_returns_the_failed_delivery_to_pending_and_launches_it |
-| `GET /admin/jobs/{public_id}/pdf` | PDF de uma tentativa (a última, sem `version`), como anexo; é o plano da lead, então só `total` | `actions.jobs.pdf_file`: a tentativa, o 404 sem PDF, o 410 se a retenção o apagou, e a URL assinada de 300 s (a página) ou os bytes (a API) | `GET /jobs/{public_id}/pdf` | `download_job_pdf` | total | lead | feita · tests_app/test_admin_api_jobs.py::test_download_job_pdf_gives_the_bytes_of_the_latest_attempt_as_an_attachment |
+| `GET /admin/jobs/{public_id}/participant` | Plano projetado antes da serialização, sem documento interno oculto ou respostas | `queries.jobs.get_job_plan_projection` | `GET /jobs/{public_id}/plan-projection` | `get_job_plan_projection` | total | lead | feita · tests_app/test_admin_plan_projection.py::test_projection_http_and_html_have_no_hidden_internal_document |
+| `GET /admin/jobs/{public_id}/pdf` | PDF de uma tentativa (a atual, sem `version`), como anexo; é o plano da lead, então só `total` | `actions.jobs.pdf_file`: a tentativa atual sem fallback, validação real e recuperação autorizada de históricos sem IA, o 404 sem PDF, o 410 se a retenção o apagou, e a URL assinada de 300 s (a página) ou os bytes (a API) | `GET /jobs/{public_id}/pdf` | `download_job_pdf` | total | lead | feita · tests_app/test_admin_api_jobs.py::test_download_job_pdf_gives_the_bytes_of_the_latest_attempt_as_an_attachment |
 | `POST /admin/jobs/{public_id}/syncs/{sync_id}/resend` | Sincronização com a planilha que falhou volta para pendente e é disparada de novo | `actions.jobs.resend_sync`: `integration_syncs.resend` e o disparo (`launching.launch_sync`) | `POST /jobs/{public_id}/syncs/{sync_id}/resend` | `resend_job_sync` | total | externo | feita · tests_app/test_admin_api_job_actions.py::test_resend_job_sync_returns_the_failed_sync_to_pending_and_launches_it |
+
+### Central de integrações
+
+[Contrato e orientação de uso](integracoes.md). Consulta local agregada de Baserow e Webhook, sem rede, escrita ou dados da participante.
+`scope_kind=default|form` e `form_slug` anulável distinguem o padrão de qualquer slug.
+Filtros por conector e formulário, paginação estável e catálogo de contadores globais;
+revisão herdada descreve o receptor efetivo e não a versão para criar configuração própria.
+
+| Rota atual | O que faz | Serviço hoje | Operação da API | `operation_id` | Papel | Marcas | Status |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `GET /admin/integrations` | Lista configurações, herança e histórico local por formulário | `integration_hub.overview` | `GET /integrations` | `list_integrations` | leitura | — | feita · tests_app/test_admin_integration_hub.py::test_api_and_page_share_local_redacted_data_and_work_without_javascript |
 
 ### Destinos do webhook
 
@@ -147,6 +140,7 @@ O escopo é o destino padrão ou o de um formulário. Na API o escopo é o parâ
 | `POST /admin/forms/{slug}/draft/edit` | Uma operação do editor estruturado sobre o que a página mandou, sem gravar (ver [as 48](#operações-do-editor-48)) | `FormEdit.apply`, `PlanEdit`, `DataEdit`, `ScoringEdit`: presa na rota, e feita sobre o estado do formulário HTML | `PATCH /forms/{slug}/draft` | `patch_form_draft` | total | — | feita · tests_app/test_admin_api_drafts.py::test_patch_form_draft_edits_the_draft_and_answers_with_the_new_document |
 | `GET /admin/forms/{slug}/draft/preview` | Moldura (um `iframe` de 375 px) para a prévia da página pública | `draft_pages.preview_page` (só tela) | — | — | — | — | fora (B) |
 | `GET /admin/forms/{slug}/draft/preview/frame` | A página pública do rascunho inteira, como a lead a veria, a partir da etapa `etapa` | `actions.previews.public_page` (o contexto do template: as etapas, as condições e a etapa em que abre) e `render_public_page` (o HTML); a rota só lê o `?etapa=` (`draft_pages.step_of`) | `GET /forms/{slug}/draft/public-page` | `render_form_draft_public_page` | leitura | — | feita · tests_app/test_admin_api_previews.py::test_the_public_page_of_the_api_is_the_page_the_admin_shows_for_the_same_data |
+| `GET /admin/forms/{slug}/draft/completion-preview` | Recibo de exemplo da conclusão salva, com botão externo desativado e texto escapado | `actions.previews.completion_preview` e `web.completion.render_completion`; não salva respostas, não navega e não chama LLM/PDF | `GET /forms/{slug}/draft/completion-preview` | `render_form_draft_completion_preview` | leitura | — | feita · tests_app/test_admin_completion.py::test_completion_preview_is_read_only_and_cannot_navigate_outside |
 
 ### Rascunho: PDF e prévias
 
@@ -425,12 +419,17 @@ Ler a auditoria não a grava: só as escritas são auditadas (decisão 2 da revi
 - **(A) Login por senha, sessão e saída** (3 rotas). A API autentica por chave a cada chamada: não há
   sessão, cookie, token CSRF nem bloqueio de login por IP a replicar (a chave errada tem o bloqueio
   próprio, o mesmo mecanismo). Entrar com a senha continua sendo só pelo navegador.
-- **(B) Telas sem dado nem ação** (3 rotas): a tela da importação (`GET /admin/forms/import`), a de
-  criar um formulário (`GET /admin/forms/new`) e a moldura da prévia da página pública
+- **(B) Telas de navegação ou sem dado nem ação** (5 rotas): a tela da importação
+  (`GET /admin/forms/import`), a de criar um formulário (`GET /admin/forms/new`) e a moldura da prévia da página pública
   (`GET /admin/forms/{slug}/draft/preview`). A primeira e a segunda são formulários vazios (as
   sugestões de título e de endereço da cópia são conveniência de digitação; quem cria pela API manda
   o que quer, e a lista dos formulários de onde copiar é `list_forms`). A terceira é só o `iframe`
-  que aponta para `.../preview/frame`, que tem a operação dele.
+  que aponta para `.../preview/frame`, que tem a operação dele. Os hubs protegidos
+  `GET /admin/responses` e `GET /admin/advanced` são navegação HTML: o primeiro orienta para os
+  históricos já cobertos, preservando o filtro de formulário e consultando só seu título para
+  contexto; o segundo agrupa links para ferramentas existentes. Não acrescentam leitura de
+  respostas nem operação de negócio: as operações dos destinos continuam cobertas pela API e
+  pelo MCP, sem operação ou ferramenta nova para os links.
 - **(C) Redesenho do editor** (6 operações dentro de `draft/edit`). `refresh-question`,
   `refresh-rule`, `refresh-operator`, `plan-refresh`, `data-refresh` e `scoring-refresh-rule` só
   refazem a tela depois de uma troca de tipo ou de operador. O documento não guarda o estado da tela.
@@ -486,3 +485,95 @@ não lê: os números dela são para quem lê) e cobra:
 
 São **sete regras**, as mesmas da [ADR 0015](../adr/0015-api-de-admin.md#o-teste-de-cobertura) e do
 contrato da API.
+
+## Conclusão versionada
+
+O documento editado por `save_form_draft`/`patch_form_draft` inclui `completion` (modo, mensagem, rótulo do botão e URL HTTPS). Os campos do editor têm equivalência direta com esses caminhos no documento; não são novas operações de editor. Importar, duplicar, exportar e publicar preservam o bloco pela mesma versão. Mudar somente conclusão não invalida teste LLM. `render_form_draft_completion_preview` está disponível no catálogo MCP derivado do OpenAPI, sem efeitos externos.
+
+
+## Capturas sem geração
+
+A entrega 8-A inclui autoria, recibo, consulta e retenção. As notificações assíncronas às
+integrações aplicáveis e ativas pertencem à entrega 8-B da mesma issue; #8 permanece aberta.
+`generation=none` dispensa conteúdo de geração e exige conclusão local, botão ou redirect;
+`generation` ausente na definição preserva PDF; em `create_form`, herda a finalidade da origem
+quando informada. Copiar captura com `generation=pdf` prepara o conteúdo de geração pelo modelo
+inicial no novo rascunho, mantendo perguntas e respostas de exemplo; a origem não muda.
+
+O detalhe HTML distingue somente captura e não mostra plano, prompt ou templates inexistentes,
+antes ou depois da publicação. A montagem do prompt confere a finalidade no mesmo rascunho usado
+na montagem; uma edição concorrente passa a valer na próxima operação. Se o rascunho lido é captura,
+a montagem retorna `409 state_conflict`. O teste local de captura em HTML/API/MCP usa
+`drafts.test_capture` e recusa rascunho PDF com `409`; não persiste submissão nem usa provedor.
+As regressões públicas estão em `tests_app/test_capture_review_fixes.py`.
+
+| Rota atual | O que faz | Serviço hoje | Operação da API | `operation_id` | Papel | Marcas | Status |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `GET /admin/captures` | Lista estado sem PII; dados exigem total e opt-in | `queries.captures.listing` | `GET /captures` | `list_captures` | leitura | lead | feita · tests_app/test_capture.py::test_capture_is_consultable_without_disclosing_lead_data |
+| `GET /admin/captures/{submission_id}` | Identidade histórica; sem token de recibo | `queries.captures.detail` | `GET /captures/{submission_id}` | `get_capture` | leitura | lead | feita · tests_app/test_capture.py::test_capture_is_consultable_without_disclosing_lead_data |
+| `POST /admin/forms/{slug}/draft/capture-test` | Testa respostas, data, pontuação e conclusão | `drafts.test_capture` | `POST /forms/{slug}/draft/capture-test` | `test_capture_form_draft` | leitura | — | feita · tests_app/test_capture.py::test_capture_local_test_and_inapplicable_generation_operations |
+| `POST /admin/captures/{submission_id}/deliveries/{delivery_id}/retry` | Reautoriza o mesmo destino e perfil histórico com revisão e epoch esperados | `actions.captures.retry` | `POST /captures/{submission_id}/deliveries/{delivery_id}/retry` | `retry_capture_delivery` | total | externo | feita · tests_app/test_capture_deliveries.py::test_capture_delivery_api_requires_total_confirmation_and_versions_without_pii |
+
+Entregas de captura aparecem em `get_capture`, `list_captures` e `get_form_integration` sem
+`lead_data`: apenas IDs, revisão, epoch, tentativas, estado, código seguro e evidência do transporte.
+`retry_capture_delivery` exige `confirm`, `expected_dispatch` e `expected_config_version`, conserva
+fato e destino e não gera PDF. Os perfis Baserow `pdf`/`capture` têm mapeamentos e chaves separados,
+com uma ativação da conexão; o perfil consultado pode ser escolhido explicitamente. O webhook
+expõe `events`; omitir na criação usa `plano.concluido`, e omitir na atualização conserva a lista.
+
+
+As operações de leitura de destino/integração e de remoção expõem `capture_delivery_counts`
+(pending/succeeded/failed). A confirmação HTML mostra o inventário que será apagado; o retorno da
+remoção informa o inventário efetivamente removido. Intenções de captura não passam ao padrão nem
+esperam novo destino: são apagadas por cascade, preservando as submissões. O fallback/retry PDF
+legado segue a regra existente. O teste HTML transporta o perfil selecionado como a API/MCP;
+erros na seleção de `events` são associados ao grupo de eventos e retornam esse campo na API.
+
+## Encaminhamento opcional por referência
+
+A gestão usa os papéis administrativos atuais e o catálogo MCP derivado. A resolução é serviço
+separado em `POST /integrations/v1/handoffs/resolve`, com credencial própria e esquema em
+`integrations-openapi.json`; não é operação administrativa nem ferramenta MCP. `expires_at` é
+obrigatório e nullable; `null` permite credencial sem vencimento. Criação/rotação levam
+`idempotency_key` no corpo e mostram o segredo utilizável uma vez. As leituras administrativas
+nunca devolvem referência bruta, cifra, hash, respostas ou URL com referência.
+
+| Rota atual | O que faz | Serviço hoje | Operação da API | `operation_id` | Papel | Marcas | Status |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `GET /admin/forms/{slug}/handoff` | Consulta receptor configurado | `handoff_receivers.get_receiver` | `GET /forms/{slug}/handoff-receiver` | `get_handoff_receiver` | leitura | — | feita · tests_app/test_admin_api_handoffs.py::test_manage_receiver_and_credentials_requires_total_confirmation_and_explicit_expiry |
+| `POST /admin/forms/{slug}/handoff/save` | Salva e pausa configuração | `handoff_receivers.save_receiver` | `PUT /forms/{slug}/handoff-receiver` | `save_handoff_receiver` | total | externo | feita · tests_app/test_admin_api_handoffs.py::test_manage_receiver_and_credentials_requires_total_confirmation_and_explicit_expiry |
+| `POST /admin/forms/{slug}/handoff/enabled` | Habilita ou pausa revisão | `handoff_receivers.set_receiver_enabled` | `POST /forms/{slug}/handoff-receiver/enabled` | `set_handoff_receiver_enabled` | total | externo | feita · tests_app/test_admin_api_handoffs.py::test_manage_receiver_and_credentials_requires_total_confirmation_and_explicit_expiry |
+| `POST /admin/forms/{slug}/handoff/create` | Emite segredo uma vez | `integration_credentials.create_credential` | `POST /forms/{slug}/handoff-receiver/credentials` | `create_integration_credential` | total | externo | feita · tests_app/test_admin_api_handoffs.py::test_manage_receiver_and_credentials_requires_total_confirmation_and_explicit_expiry |
+| `POST /admin/forms/{slug}/handoff/rotate` | Gira e revoga anterior no commit | `integration_credentials.rotate_credential` | `POST /integration-credentials/{credential_id}/rotate` | `rotate_integration_credential` | total | externo | feita · tests_app/test_admin_api_handoffs.py::test_manage_receiver_and_credentials_requires_total_confirmation_and_explicit_expiry |
+| `POST /admin/forms/{slug}/handoff/revoke` | Revoga credencial | `integration_credentials.revoke_credential` | `POST /integration-credentials/{credential_id}/revoke` | `revoke_integration_credential` | total | destrutiva, externo | feita · tests_app/test_admin_api_handoffs.py::test_manage_receiver_and_credentials_requires_total_confirmation_and_explicit_expiry |
+| `POST /admin/forms/{slug}/handoff/revoke-reference` | Revoga referência preservando respostas | `handoffs.revoke_handoff` | `POST /submissions/{submission_id}/handoff/revoke` | `revoke_submission_handoff` | total | destrutiva, externo | feita · tests_app/test_admin_api_handoffs.py::test_get_and_revoke_submission_handoff_do_not_expose_pii_or_reference |
+
+| `operation_id` | Operação da API | O que faz | Papel | Marcas | Status |
+| --- | --- | --- | --- | --- | --- |
+| `list_integration_credentials` | `GET /forms/{slug}/handoff-receiver/credentials` | Lista credenciais sem segredo | leitura | — | feita · tests_app/test_admin_api_handoffs.py::test_manage_receiver_and_credentials_requires_total_confirmation_and_explicit_expiry |
+| `get_submission_handoff` | `GET /submissions/{submission_id}/handoff` | Consulta intenção pelo identificador da submissão | leitura | — | feita · tests_app/test_admin_api_handoffs.py::test_get_and_revoke_submission_handoff_do_not_expose_pii_or_reference |
+
+## Jornada e fontes de eventos
+
+Fontes e credenciais de eventos são distintas da resolução de encaminhamentos. A ingestão
+`POST /integrations/v1/journey/events` é serviço com autenticação EventCredentialAuth própria e
+schema em `integrations-openapi.json`, fora do catálogo administrativo: o admin autoriza fontes,
+mas não declara fatos comerciais em nome delas. Toda gestão e consulta abaixo integra o MCP.
+
+| Rota atual | O que faz | Serviço hoje | Operação da API | `operation_id` | Papel | Marcas | Status |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `GET /admin/forms/{slug}/event-sources` | Lista fontes e autoridades | `event_sources.list_sources` | `GET /forms/{slug}/event-sources` | `list_event_sources` | leitura | — | feita · tests_app/test_journey_events.py::test_html_pages_native_controls_csrf_safe_retry_and_journey |
+| `POST /admin/forms/{slug}/event-sources` | Cria fonte pausada | `event_sources.create_source` | `POST /forms/{slug}/event-sources` | `create_event_source` | total | externo | feita · tests_app/test_journey_events.py::test_paused_source_specific_credential_and_capture_ingestion |
+| `GET /admin/event-sources/{source_id}` | Consulta configuração histórica | `event_sources.source_info` | `GET /event-sources/{source_id}` | `get_event_source` | leitura | — | feita · tests_app/test_journey_events.py::test_html_pages_native_controls_csrf_safe_retry_and_journey |
+| `POST /admin/event-sources/{source_id}/update` | Altera permissões e pausa revisão nova | `event_sources.update_source` | `PUT /event-sources/{source_id}` | `update_event_source` | total | externo | feita · tests_app/test_journey_events.py::test_credential_expiry_rotation_replay_and_policy_revision |
+| `POST /admin/event-sources/{source_id}/enabled` | Habilita ou pausa fonte | `event_sources.set_enabled` | `POST /event-sources/{source_id}/enabled` | `set_event_source_enabled` | total | externo | feita · tests_app/test_journey_events.py::test_blocked_gate_refuses_ingestion_and_enable_but_allows_pause_revoke |
+| `POST /admin/event-sources/{source_id}/credential` | Emite segredo uma vez | `event_sources.issue_credential` | `POST /event-sources/{source_id}/credentials` | `create_event_credential` | total | externo | feita · tests_app/test_journey_events.py::test_paused_source_specific_credential_and_capture_ingestion |
+| `POST /admin/event-sources/{source_id}/credentials/{credential_id}/rotate` | Substitui credencial na mesma revisão | `event_sources.rotate_credential` | `POST /event-credentials/{credential_id}/rotate` | `rotate_event_credential` | total | externo | feita · tests_app/test_journey_events.py::test_credential_expiry_rotation_replay_and_policy_revision |
+| `POST /admin/event-sources/{source_id}/credentials/{credential_id}/revoke` | Revoga autenticação | `event_sources.revoke_credential` | `POST /event-credentials/{credential_id}/revoke` | `revoke_event_credential` | total | destrutiva, externo | feita · tests_app/test_journey_events.py::test_blocked_gate_refuses_ingestion_and_enable_but_allows_pause_revoke |
+| `GET /admin/submissions/{submission_id}/journey` | Consulta fatos locais e externos | `journey.read_journey` | `GET /submissions/{submission_id}/journey` | `get_submission_journey` | leitura | lead | feita · tests_app/test_journey_events.py::test_mcp_projection_confirmations_and_sensitive_opt_in |
+| `POST /admin/submissions/{submission_id}/journey/erase` | Apaga dados externos e revoga encaminhamento | `journey.erase_journey` | `POST /submissions/{submission_id}/journey/erase` | `erase_submission_journey` | total | destrutiva, externo | feita · tests_app/test_journey_events.py::test_external_ids_are_opt_in_and_erasure_revokes_atomically |
+
+| `operation_id` | Operação da API | O que faz | Papel | Marcas | Status |
+| --- | --- | --- | --- | --- | --- |
+| `list_event_credentials` | `GET /event-sources/{source_id}/credentials` | Metadados de credenciais sem segredo ou hash | leitura | — | feita · tests_app/test_journey_events.py::test_credential_expiry_rotation_replay_and_policy_revision |
+| `list_submission_journey_events` | `GET /submissions/{submission_id}/journey/events` | Histórico paginado por recebimento e ID local, com filtros GET na tela de jornada | leitura | lead | feita · tests_app/test_journey_events.py::test_history_paginates_and_multiple_sources_do_not_merge |

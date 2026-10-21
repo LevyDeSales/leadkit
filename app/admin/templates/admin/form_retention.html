@@ -13,7 +13,7 @@
 <div class="page-head">
   <div>
     <h1>Retenção de {{ page.title }}</h1>
-    <p>Até quando os dados das leads deste formulário ficam guardados. Mudar um prazo não pede publicação e vale também para os pedidos que já existem.</p>
+    <p>Até quando os dados das leads deste formulário ficam guardados. Mudar um prazo não pede publicação e vale também para os pedidos e as respostas sem PDF que já existem.</p>
   </div>
 </div>
 
@@ -25,7 +25,7 @@
 <section class="box" id="prazos" aria-labelledby="prazos-titulo">
   <h2 id="prazos-titulo">Prazos que valem hoje</h2>
   <dl class="kv">{% for row in page.rows %}<dt>{{ row.label }}</dt><dd>{{ row.value }} <span class="muted">· {{ row.source }}</span></dd>{% endfor %}</dl>
-  <p class="muted footnote">Nada sai antes de o link da lead vencer, qualquer que seja o prazo. A retenção roda uma vez por dia.</p>
+  <p class="muted footnote">Nos pedidos com PDF, a exclusão respeita a validade do link da participante e os prazos definidos. Para respostas sem PDF, o prazo de Pedido inteiro conta desde o recebimento: a validade do recibo e a reabertura da confirmação não prolongam a retenção. A retenção roda uma vez por dia.</p>
 </section>
 
 {#- Um POST comum, sem JavaScript: a redução volta como página de confirmação, com os campos como ela os digitou. -#}
@@ -46,7 +46,7 @@
       <div class="field">
         <label for="request-days">Pedido inteiro <span class="opt">(dias depois da última mudança)</span></label>
         <input class="input" id="request-days" name="request_days" type="number" inputmode="numeric" min="1" max="{{ page.max_days }}" value="{{ typed.request_days }}" placeholder="{{ page.default_request_days }}" autocomplete="off" aria-describedby="request-days-ajuda{% if errors.get('request_days') %} request-days-erro{% endif %}"{% if errors.get("request_days") %} aria-invalid="true"{% endif %}>
-        <p class="muted" id="request-days-ajuda">Em branco: o padrão do ambiente, {{ page.default_request_days }} dias. Respostas, plano, PDF e contato da lead (quando ela não tem outro pedido) saem juntos. Não pode ser menor que o prazo do PDF.</p>
+        <p class="muted" id="request-days-ajuda">Em branco: o padrão do ambiente, {{ page.default_request_days }} dias. Respostas, plano, PDF e contato da participante (quando não há outro envio associado) saem juntos. Este prazo também vale para respostas sem PDF, contado desde o recebimento. Não pode ser menor que o prazo do PDF.</p>
         {% if errors.get("request_days") %}<p class="error" id="request-days-erro">{{ m.icon('alert-circle') }}{{ errors["request_days"] }}</p>{% endif %}
       </div>
     </div>

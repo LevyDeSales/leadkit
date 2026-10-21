@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import Depends, Path, Query, Request
 from fastapi.concurrency import run_in_threadpool
@@ -47,10 +47,14 @@ from app.admin.api.schemas.jobs import (
     DeliveryFilter,
     JobDetail,
     JobPage,
+    JobPlanProjection,
     JobStatus,
     JobSummary,
+    ReleasedJobPdf,
+    ReleaseJobPdfRequest,
     ReprocessedJob,
     ReprocessJobRequest,
+    ResendDeliveryRequest,
     ResendRequest,
     ResentDelivery,
     ResentSync,
@@ -60,6 +64,7 @@ from app.admin.api.security import CurrentKey, ensure_role
 from app.admin.queries import jobs as job_queries
 from app.deps import get_deps
 from app.errors import RetryableError, TerminalError
+from app.internal_links import AdminPdfAccess
 
 logger = logging.getLogger(__name__)
 
@@ -288,6 +293,8 @@ def list_jobs(
     description=(
         "O pedido de código `public_id`: situação, etapa, tentativa atual, formulário e versão, "
         "datas, até quando o link da lead vale, o código da falha, os PDFs de cada tentativa, as "
+        "evidências técnicas em `current_pdf` (tentativa atual, existência, validade estrutural, "
+        "acesso ao storage e verificação, sem conceder autorização), as "
         "entregas ao webhook, as sincronizações com a planilha e a linha do tempo, tentativa por "
         "tentativa (o que aconteceu e quando, sem texto livre). É o que se lê para saber o que "
         "falhou e o que fazer. **Nada disso diz quem é a lead.** `include_lead_data=true`, só com "
@@ -314,11 +321,54 @@ def get_job(
     deps = get_deps()
     with deps.sessions() as session:
         found = job_queries.read_job(
-            session, public_id, forms=deps.forms, now=now(request), with_lead=include_lead_data
+            session,
+            public_id,
+            forms=deps.forms,
+            now=now(request),
+            with_lead=include_lead_data,
+            storage=deps.storage,
         )
     if found is None:
         raise ApiError("not_found", "Pedido não encontrado.")
     return JobDetail.of(found, deps.settings.hatchet_run_url_template)
+
+
+@router.operation(
+    "GET",
+    "/jobs/{public_id}/plan-projection",
+    operation_id="get_job_plan_projection",
+    role="total",
+    lead_data=True,
+    errors={
+        409: "A tentativa atual não tem plano ou a versão histórica não permite projetá-lo (`state_conflict`)."
+    },
+    summary="Consultar o plano por audiência",
+    description="Devolve somente o plano da tentativa atual e referências da versão histórica. Participante remove campos internos antes da serialização; interna conserva o documento validado. Exige chave total. O documento inteiro é dado da lead; o MCP só oferece esta operação com GERADOR_MCP_LEAD_DATA=1. Não concede acesso público, não gera outro plano nem envia eventos.",
+    returns="Documento projetado para a audiência explícita, sem respostas ou contato.",
+    response_model=JobPlanProjection,
+)
+def get_job_plan_projection(
+    public_id: Annotated[str, Path(description="Código do pedido.")],
+    audience: Annotated[
+        Literal["participant", "internal"],
+        Query(description="Audiência do documento; participante por omissão."),
+    ] = "participant",
+) -> JobPlanProjection:
+    deps = get_deps()
+    try:
+        with deps.sessions() as session:
+            found = job_queries.get_job_plan_projection(
+                session, public_id, forms=deps.forms, audience=audience
+            )
+    except job_queries.ProjectionUnavailable as exc:
+        raise ApiError("state_conflict", str(exc)) from None
+    if found is None:
+        raise ApiError("not_found", "Pedido não encontrado.")
+    from dataclasses import asdict
+
+    values = asdict(found)
+    document = values.pop("document")
+    return JobPlanProjection(**values, lead_data={"document": document})
 
 
 @router.operation(
@@ -335,12 +385,15 @@ def get_job(
     },
     summary="Baixar o PDF do plano",
     description=(
-        "Baixa o PDF do plano da lead: os bytes do arquivo (`application/pdf`), da última tentativa "
-        "ou da que `version` pedir, e **nunca uma URL assinada** (a assinatura seria um segundo "
+        "Baixa o PDF do plano da lead: os bytes do arquivo (`application/pdf`), da tentativa "
+        "atual ou da que `version` pedir, e **nunca uma URL assinada** (a assinatura seria um segundo "
         "segredo, fora da chave e da auditoria). O plano é dado da lead, por isso só a chave `total` "
         "baixa. `404 not_found` se o pedido não existe ou ainda não tem o PDF dessa tentativa; "
         "`410 gone` se o prazo de retenção já apagou o arquivo; `502 upstream_failed` se o "
-        "armazenamento não respondeu. Conta 5 fichas do limite de uso. Não grava nada."
+        "PDF não pôde ser verificado ou acessado. Conta 5 fichas do limite de uso. "
+        "Um histórico sem evidência é validado neste download autorizado: se os bytes, hash, "
+        "tamanho, páginas e vínculo forem corretos, persiste somente a prova técnica, sem alterar "
+        "o processamento nem chamar IA. Sem `version`, nunca entrega uma tentativa anterior."
     ),
     returns="O arquivo PDF do plano, como anexo (`Content-Disposition: attachment`).",
     response_model=None,
@@ -354,12 +407,14 @@ def download_job_pdf(
         int | None,
         Query(
             ge=1,
-            description="A tentativa do PDF (`version` de `get_job.pdfs`). Ausente: a mais recente.",
+            description="A tentativa do PDF (`version` de `get_job.pdfs`). Ausente: a tentativa atual, sem fallback para uma anterior.",
         ),
     ] = None,
 ) -> PdfResponse:
     try:
-        pdf = job_actions.pdf_file(get_deps(), public_id, version, signed_url=False)
+        pdf = job_actions.pdf_file(
+            get_deps(), public_id, version, access=AdminPdfAccess(), signed_url=False
+        )
     except job_actions.NoPdf:
         raise ApiError(
             "not_found", "Este pedido não existe ou ainda não tem o PDF dessa tentativa."
@@ -376,7 +431,8 @@ def download_job_pdf(
             type(failure).__name__,
         )
         raise ApiError(
-            "upstream_failed", "O armazenamento não entregou o PDF. Tente de novo em instantes."
+            "upstream_failed",
+            "O PDF não pôde ser verificado ou acessado. Consulte a disponibilidade e tente novamente.",
         ) from None
     assert pdf.content is not None  # sem `signed_url`, a ação sempre devolve os bytes
     return PdfResponse(
@@ -398,7 +454,12 @@ def _state_after(request: Request, public_id: str) -> job_queries.JobState:
     """O estado do pedido depois da ação, lido de novo (sem o dado da lead)."""
     with get_deps().sessions() as session:
         found = job_queries.read_job(
-            session, public_id, forms=get_deps().forms, now=now(request), with_lead=False
+            session,
+            public_id,
+            forms=get_deps().forms,
+            now=now(request),
+            with_lead=False,
+            storage=get_deps().storage,
         )
     if found is None:
         raise ApiError("not_found", JOB_NOT_FOUND)
@@ -488,15 +549,19 @@ async def reprocess_job(
     errors={
         404: "O pedido não existe, ou a entrega não é dele (`not_found`).",
         409: (
-            "A entrega não está em `failed`: já voltou para a fila, ou já saiu (`state_conflict`). "
-            "Nada acontece. " + CONFLICT_REPEATED
+            "A entrega não está em `failed`, ou receptor, revisão, audiência, tentativa ou "
+            "retenção não permitem repetir (`state_conflict`). Nada acontece. " + CONFLICT_REPEATED
         ),
     },
     summary="Reenviar uma entrega ao webhook",
     description=(
+        "Novas entregas fixam receptor, revisão, audiência e tentativa. Informe "
+        "`expected_config_version` e `expected_attempt`, lidos agora, para reautorizar a revisão "
+        "do mesmo receptor; a audiência do fato não muda. Tentativa anterior, receptor removido "
+        "ou retenção encerrada são recusados. Históricos sem correlação continuam internos legados. "
         "Reenvia ao webhook o PDF de uma entrega que **falhou** (`failed`, em `get_job.deliveries`): "
-        "ela volta para pendente (`pending`) e o envio é disparado de novo, para o destino que "
-        'vale agora para o formulário. Chama um serviço de fora, por isso exige `"confirm": '
+        "ela volta para pendente (`pending`) e o envio é disparado com a autorização conferida. "
+        'Chama um serviço de fora, por isso exige `"confirm": '
         "true`; sem ele a resposta é `422 confirmation_required` e nada acontece. A ação fica na "
         "auditoria em nome da chave que chamou. Uma entrega que não falhou (já pendente ou "
         "entregue) é `409 state_conflict`: é isso que torna seguro repetir a chamada depois de uma "
@@ -517,12 +582,19 @@ async def resend_job_delivery(
         uuid.UUID,
         Path(description="O `id` da entrega, como `get_job` a mostra em `deliveries`."),
     ],
-    body: ResendRequest,
+    body: ResendDeliveryRequest,
     key: CurrentKey,
 ) -> ResentDelivery:
     deps = get_deps()
     try:
-        done = await job_actions.resend_delivery(deps, public_id, delivery_id, actor=key.actor)
+        done = await job_actions.resend_delivery(
+            deps,
+            public_id,
+            delivery_id,
+            actor=key.actor,
+            expected_config_version=body.expected_config_version,
+            expected_attempt=body.expected_attempt,
+        )
     except job_actions.JobNotFound:
         raise ApiError("not_found", JOB_NOT_FOUND) from None
     except job_actions.ResendRefused as refused:
@@ -594,8 +666,59 @@ def _resend_refused(what: str, refused: job_actions.ResendRefused) -> ApiError:
     """A recusa de um reenvio: `404` se a linha não é deste pedido, `409` se não está em `failed`."""
     if refused.missing:
         return ApiError("not_found", f"Esta {what} não existe neste pedido.")
+    if what == "entrega":
+        return ApiError(
+            "state_conflict",
+            "A entrega precisa ter falhado e manter a mesma audiência e tentativa. Leia a revisão atual do mesmo destino e envie expected_config_version e expected_attempt; confira também a retenção. Nada foi feito.",
+        )
     return ApiError(
         "state_conflict",
         f"Só dá para reenviar uma {what} que falhou (`failed`), e esta já não está nesse estado. "
         "Nada foi feito. " + CONFLICT_REPEATED,
     )
+
+
+@router.operation(
+    "POST",
+    "/jobs/{public_id}/release",
+    operation_id="release_job_pdf",
+    role="total",
+    external_effect=True,
+    response_model=ReleasedJobPdf,
+    errors={
+        404: "Pedido não encontrado.",
+        409: "state_conflict: tentativa, versão, idempotência ou PDF incompatíveis; nenhuma nova liberação.",
+        503: "A atualização ainda não habilitou a liberação.",
+    },
+    summary="Liberar acesso ao plano",
+    description="Autoriza somente a tentativa e o PDF observados, sem gerar plano, exigir compra ou reunião, nem renovar retenção. Replay exato retorna o fato histórico sem enviar novamente. Sem canal participante, libera acesso e informa que a notificação não foi enviada.",
+    returns="Fato de liberação, tentativa, decisão de notificar e estados do transporte; nenhum documento ou link interno.",
+)
+async def release_job_pdf(
+    request: Request, public_id: str, body: ReleaseJobPdfRequest, key: CurrentKey
+) -> ReleasedJobPdf:
+    from app.deployment_contract import DeploymentContractError
+    from app.plan_release import ReleasePdfCommand, ReleaseRefused
+
+    try:
+        done = await job_actions.release_pdf(
+            get_deps(),
+            request.app.state.trigger,
+            public_id,
+            actor=key.actor,
+            command=ReleasePdfCommand.model_validate(body.model_dump()),
+        )
+    except DeploymentContractError:
+        raise ApiError("unavailable", "A liberação aguarda a verificação da atualização.") from None
+    except ReleaseRefused as error:
+        code = (
+            "not_found"
+            if error.status == 404
+            else "validation_failed"
+            if error.status == 422
+            else "state_conflict"
+        )
+        raise ApiError(
+            code, "A liberação foi recusada.", errors=[ErrorItem("reason_code", error.code)]
+        ) from None
+    return ReleasedJobPdf.of(done)

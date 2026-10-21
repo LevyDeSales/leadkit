@@ -36,6 +36,7 @@ import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal, Protocol
+from uuid import UUID
 
 from pydantic import BaseModel, ValidationError
 from pydantic.fields import FieldInfo
@@ -221,20 +222,40 @@ def _check_screen(spec: FormSpec, screen: Screen) -> None:
 
 
 @dataclass(frozen=True)
+class Handoff:
+    receiver_id: UUID
+    receiver_revision: int
+
+
+@dataclass(frozen=True)
+class Completion:
+    """Próximo passo após salvar respostas; não altera geração nem autorização do PDF."""
+
+    mode: Literal["result", "confirmation", "button", "redirect"] = "result"
+    message: str = "Recebemos suas respostas. Obrigada por participar."
+    button_label: str = "Continuar"
+    url: str | None = None
+    handoff: Handoff | None = None
+
+
+@dataclass(frozen=True)
 class FormSpec:
     slug: str
     version: str
     title: str
     consent_text_version: str
     answers_model: type[BaseModel]
-    plan_model: type[BaseModel]
+    plan_model: type[BaseModel] | None
     identity: Callable[[Any], LeadIdentity]
-    instructions: str
-    prompt_template: str
+    instructions: str | None
+    prompt_template: str | None
     prompt_version: str
-    example_plan: dict[str, Any]
+    example_plan: dict[str, Any] | None
     # O prompt, o PDF e a prévia, já compilados no ambiente isolado (`app.forms.sandbox`).
-    templates: FormTemplates
+    templates: FormTemplates | None
+    generation: Literal["pdf", "none"] = "pdf"
+    completion: Completion = Completion()
+    release_mode: Literal["automatic", "manual"] = "automatic"
     # As condições das perguntas e das opções: o avaliador que diz o que aparece para certas
     # respostas. O modelo das respostas já as aplica; quem lê o envio ou grava as respostas usa o
     # mesmo resultado (`Conditions.evaluate`).
@@ -253,19 +274,51 @@ class FormSpec:
     # os lê, na tela do pedido. Campo sem rótulo não consta, e o admin mostra o nome dele.
     plan_labels: Mapping[str, str] = field(default_factory=dict)
 
+    # Ausente em contratos manuais: nenhuma saída recebe dados sem classificação recuperável.
+    plan_projector: Callable[[Mapping[str, Any], str], dict[str, Any]] | None = None
+
+    def project_plan(
+        self,
+        document: Mapping[str, Any],
+        *,
+        audience: Literal["internal", "participant"] = "participant",
+    ) -> dict[str, Any]:
+        """Cópia JSON validada pela versão deste contrato, destinada à audiência pedida."""
+        if (
+            self.generation != "pdf"
+            or self.plan_model is None
+            or self.plan_projector is None
+            or not self.version
+            or not isinstance(self.version_number, int)
+            or self.version_number < 1
+        ):
+            raise PlanProjectionError("plan_projection_unavailable")
+        return self.plan_projector(document, audience)
+
+    def require_generation(self) -> None:
+        """Recusa operações de geração em uma captura, antes de chamar provedores."""
+        if self.generation != "pdf":
+            raise GenerationUnavailable("este formulário apenas captura respostas")
+
     def render_prompt(self, answers: BaseModel) -> str:
+        self.require_generation()
         return self.templates.render_prompt(answers)
 
     def with_assets(self, assets: Mapping[str, AssetRef]) -> FormSpec:
         """O mesmo contrato com as imagens do formulário (`asset:<nome>`) que o PDF e a prévia
         usam, cada nome com o conteúdo fixado. A versão publicada leva o que fixou na publicação
         (`app.forms.assets.version_refs`); o rascunho, as imagens de agora."""
-        return replace(self, templates=replace(self.templates, assets=dict(assets)))
+        return (
+            replace(self, templates=replace(self.templates, assets=dict(assets)))
+            if self.templates
+            else self
+        )
 
     def validate_plan(self, data: str, answers: BaseModel) -> BaseModel:
         """Plano do LLM (texto JSON) validado pelo `plan_model` e depois pelo `check_plan`. Os
         problemas do `check_plan` saem como `ValidationError` (tipo `plan_check`): seguem o mesmo
         caminho dos erros do modelo, da rodada de reparo ao `plan_invalid`."""
+        self.require_generation()
         plan = self.plan_model.model_validate_json(data)
         problems = self.check_plan(plan, answers) if self.check_plan else []
         if problems:
@@ -289,6 +342,22 @@ class FormSpec:
         # Tela inconsistente com `Answers` quebra na importação, não no navegador do lead.
         if self.screen is not None:
             _check_screen(self, self.screen)
+
+
+class PlanProjectionError(ValueError):
+    """Projeção recusada sem incluir valores ou erros de validação do documento."""
+
+    def __init__(self, code: str) -> None:
+        self.code = code
+        super().__init__(
+            "A projeção do plano está indisponível."
+            if code == "plan_projection_unavailable"
+            else "Não foi possível projetar o plano informado."
+        )
+
+
+class GenerationUnavailable(ValueError):
+    """A operação exige um formulário com geração de PDF."""
 
 
 class UnknownForm(LookupError):

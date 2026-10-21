@@ -92,6 +92,19 @@ class Submission(Base):
     created_at: Mapped[datetime] = _created_at()
 
 
+class CaptureReceipt(Base):
+    """Capacidade revogável para ler apenas a conclusão histórica de uma captura."""
+
+    __tablename__ = "capture_receipts"
+    id: Mapped[uuid.UUID] = _pk()
+    submission_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("submissions.id", ondelete="CASCADE"), unique=True
+    )
+    public_id: Mapped[str] = mapped_column(sa.String(32), unique=True)
+    token_version: Mapped[int] = mapped_column(sa.Integer, server_default=sa.text("1"))
+    expires_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True))
+
+
 class Job(Base):
     """Estado de negócio do pedido de plano. Execução, retries e histórico ficam no Hatchet."""
 
@@ -157,17 +170,27 @@ class Artifact(Base):
     renderer: Mapped[str] = mapped_column(sa.Text)
     created_at: Mapped[datetime] = _created_at()
     purged_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    verified_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    storage_revision: Mapped[str | None] = mapped_column(sa.Text)
 
 
 class Delivery(Base):
-    """Entrega do resultado a um destino externo (hoje: o webhook). Retries ficam no Hatchet.
+    """Fato PDF com receptor, revisão, audiência e tentativa fixados; epochs cercam repetições.
 
-    `destination_scope` e `destination_host`: qual destino do webhook o último envio usou (o do
-    formulário ou o padrão, resolvido na hora) e o host da URL. Nulos antes do primeiro envio e nas
-    entregas de antes do destino no admin."""
+    Históricos sem correlação são internos legados e nunca adotam participante por fallback.
+    Escopo e host registram o último transporte; a exclusão do receptor não apaga o fato nem
+    autoriza outro destino. Nenhuma URL, segredo ou cópia do documento vive nesta linha."""
 
     __tablename__ = "deliveries"
     __table_args__ = (
+        sa.CheckConstraint("audience in ('internal', 'participant')", name="audience"),
+        sa.CheckConstraint(
+            "authorization_origin in ('legacy', 'explicit')", name="authorization_origin"
+        ),
+        sa.CheckConstraint(
+            "authorization_origin = 'legacy' AND audience = 'internal' OR authorization_origin = 'explicit' AND webhook_destination_id IS NOT NULL AND config_version IS NOT NULL AND authorized_attempt IS NOT NULL",
+            name="authorization",
+        ),
         sa.UniqueConstraint(
             "artifact_id", "destination", name="uq_deliveries_artifact_destination"
         ),
@@ -175,12 +198,36 @@ class Delivery(Base):
         sa.CheckConstraint(
             f"destination_scope in ({_in(WEBHOOK_SCOPES)})", name="destination_scope"
         ),
+        sa.CheckConstraint(
+            "(destination = 'webhook.release' AND event = 'plano.liberado' "
+            "AND release_id IS NOT NULL AND audience = 'participant' "
+            "AND authorization_origin = 'explicit' AND authorized_attempt IS NOT NULL "
+            "AND webhook_destination_id IS NOT NULL AND config_version IS NOT NULL) OR "
+            "(destination <> 'webhook.release' AND event <> 'plano.liberado' AND release_id IS NULL)",
+            name="release_channel",
+        ),
+        sa.Index(
+            "uq_deliveries_release_receiver",
+            "release_id",
+            "webhook_destination_id",
+            unique=True,
+            postgresql_where=sa.text("release_id IS NOT NULL"),
+        ),
         sa.Index("ix_deliveries_status_created_at", "status", "created_at"),
     )
 
     id: Mapped[uuid.UUID] = _pk()
     job_id: Mapped[uuid.UUID] = mapped_column(sa.ForeignKey("jobs.id"), index=True)
     artifact_id: Mapped[uuid.UUID] = mapped_column(sa.ForeignKey("artifacts.id"))
+    webhook_destination_id: Mapped[uuid.UUID | None] = mapped_column(sa.Uuid)
+    config_version: Mapped[int | None] = mapped_column(sa.Integer)
+    audience: Mapped[str] = mapped_column(sa.String(16), server_default="internal")
+    authorization_origin: Mapped[str] = mapped_column(sa.String(16), server_default="legacy")
+    authorized_attempt: Mapped[int | None] = mapped_column(sa.Integer)
+    dispatch_no: Mapped[int] = mapped_column(sa.Integer, server_default="1")
+    release_id: Mapped[uuid.UUID | None] = mapped_column(sa.ForeignKey("plan_releases.id"))
+    occurred_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    blocked_reason: Mapped[str | None] = mapped_column(sa.Text)
     destination: Mapped[str] = mapped_column(sa.String(64))
     event: Mapped[str] = mapped_column(sa.String(64))
     status: Mapped[str] = mapped_column(sa.String(16), default="pending")
@@ -201,6 +248,10 @@ class WebhookDestination(Base):
 
     __tablename__ = "webhook_destinations"
     __table_args__ = (
+        sa.CheckConstraint("purpose in ('internal', 'participant')", name="purpose"),
+        sa.CheckConstraint(
+            "purpose_origin in ('legacy', 'explicit', 'default')", name="purpose_origin"
+        ),
         sa.UniqueConstraint("form_slug", name="uq_webhook_destinations_form_slug"),
         sa.Index(
             "uq_webhook_destinations_default",
@@ -210,10 +261,16 @@ class WebhookDestination(Base):
         ),
     )
 
+    purpose: Mapped[str] = mapped_column(sa.String(16), server_default="participant")
+    purpose_origin: Mapped[str] = mapped_column(sa.String(16), server_default="default")
+
     id: Mapped[uuid.UUID] = _pk()
     form_slug: Mapped[str | None] = mapped_column(sa.String(64))
     url: Mapped[str] = mapped_column(sa.Text)
     secret_sealed: Mapped[str] = mapped_column(sa.Text)
+    events: Mapped[list[str]] = mapped_column(
+        JSONB, server_default=sa.text("'[\"plano.concluido\"]'::jsonb")
+    )
     version: Mapped[int] = mapped_column(sa.Integer, default=1)
     created_by: Mapped[str] = mapped_column(sa.Text)
     created_at: Mapped[datetime] = _created_at()
@@ -252,10 +309,17 @@ class Integration(Base):
 
     __tablename__ = "integrations"
     __table_args__ = (
+        sa.CheckConstraint("purpose in ('internal', 'participant')", name="purpose"),
+        sa.CheckConstraint(
+            "purpose_origin in ('legacy', 'explicit', 'default')", name="purpose_origin"
+        ),
         sa.UniqueConstraint("form_slug", "kind", name="uq_integrations_form_slug_kind"),
         sa.CheckConstraint(f"kind in ({_in(INTEGRATION_KINDS)})", name="kind"),
         sa.CheckConstraint("table_id >= 1", name="table_id"),
     )
+
+    purpose: Mapped[str] = mapped_column(sa.String(16), server_default="participant")
+    purpose_origin: Mapped[str] = mapped_column(sa.String(16), server_default="default")
 
     id: Mapped[uuid.UUID] = _pk()
     form_slug: Mapped[str] = mapped_column(sa.String(64))
@@ -267,6 +331,10 @@ class Integration(Base):
         JSONB, nullable=False, server_default=sa.text("'[]'::jsonb")
     )
     key_field_id: Mapped[int | None] = mapped_column(sa.Integer)
+    capture_mapping: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, server_default=sa.text("'[]'::jsonb")
+    )
+    capture_key_field_id: Mapped[int | None] = mapped_column(sa.Integer)
     active: Mapped[bool] = mapped_column(sa.Boolean, server_default=sa.false())
     version: Mapped[int] = mapped_column(sa.Integer, default=1)
     created_by: Mapped[str] = mapped_column(sa.Text)
@@ -308,6 +376,53 @@ class IntegrationSync(Base):
     row_id: Mapped[int | None] = mapped_column(sa.Integer)
     synced_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
     created_at: Mapped[datetime] = _created_at()
+
+
+class CaptureDelivery(Base):
+    """Intenção transacional por captura e destino fixo; nunca guarda respostas ou credenciais."""
+
+    __tablename__ = "capture_deliveries"
+    __table_args__ = (
+        sa.CheckConstraint(
+            "(integration_id IS NULL) <> (webhook_destination_id IS NULL)", name="destination"
+        ),
+        sa.CheckConstraint(f"status in ({_in(DELIVERY_STATUSES)})", name="status"),
+        sa.UniqueConstraint(
+            "submission_id", "event", "integration_id", name="uq_capture_deliveries_integration"
+        ),
+        sa.UniqueConstraint(
+            "submission_id", "event", "webhook_destination_id", name="uq_capture_deliveries_webhook"
+        ),
+        sa.Index("ix_capture_deliveries_status_updated_at", "status", "updated_at"),
+    )
+    id: Mapped[uuid.UUID] = _pk()
+    submission_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("submissions.id", ondelete="CASCADE"), index=True
+    )
+    integration_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.ForeignKey("integrations.id", ondelete="CASCADE"), index=True
+    )
+    webhook_destination_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.ForeignKey(
+            "webhook_destinations.id", ondelete="CASCADE", name="fk_capture_deliveries_webhook"
+        ),
+        index=True,
+    )
+    event: Mapped[str] = mapped_column(sa.String(64), default="submissao.persistida")
+    config_version: Mapped[int] = mapped_column(sa.Integer)
+    status: Mapped[str] = mapped_column(sa.String(16), default="pending")
+    attempts: Mapped[int] = mapped_column(sa.Integer, default=0)
+    dispatch_no: Mapped[int] = mapped_column(sa.Integer, default=1)
+    hatchet_run_id: Mapped[str | None] = mapped_column(sa.String(64))
+    last_error: Mapped[str | None] = mapped_column(sa.String(64))
+    response_status: Mapped[int | None] = mapped_column(sa.Integer)
+    row_id: Mapped[int | None] = mapped_column(sa.Integer)
+    outcome: Mapped[str | None] = mapped_column(sa.String(16))
+    delivered_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    created_at: Mapped[datetime] = _created_at()
+    updated_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
 
 
 class Form(Base):
@@ -557,3 +672,289 @@ class ApiKey(Base):
     revoked_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
     revoked_by: Mapped[str | None] = mapped_column(sa.Text)
     last_used_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+
+
+class DeploymentContract(Base):
+    """Piso operacional persistente e atestação da frota compatível com projeções."""
+
+    __tablename__ = "deployment_contract"
+    __table_args__ = (
+        sa.CheckConstraint("id = 1", name="single_row"),
+        sa.CheckConstraint("minimum_contract >= 0", name="minimum_contract"),
+        sa.CheckConstraint("phase in ('blocked', 'verified')", name="phase"),
+        sa.CheckConstraint(
+            "phase <> 'verified' OR (minimum_contract >= 1 AND epoch IS NOT NULL AND attested_at IS NOT NULL)",
+            name="verified",
+        ),
+    )
+    id: Mapped[int] = mapped_column(sa.SmallInteger, primary_key=True)
+    minimum_contract: Mapped[int] = mapped_column(sa.Integer, server_default="1")
+    phase: Mapped[str] = mapped_column(sa.String(16), server_default="blocked")
+    epoch: Mapped[uuid.UUID | None] = mapped_column(sa.Uuid)
+    evidence: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default=sa.text("'{}'::jsonb"))
+    attested_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+
+
+class HandoffReceiver(Base):
+    """Serviço autorizado a resolver encaminhamentos de um formulário e revisão."""
+
+    __tablename__ = "handoff_receivers"
+    __table_args__ = (
+        sa.UniqueConstraint("id", "form_slug", name="uq_handoff_receivers_id_form"),
+        sa.CheckConstraint("purpose = 'support'", name="purpose"),
+        sa.CheckConstraint("projection = 'correlation.v1'", name="projection"),
+        sa.CheckConstraint("reference_ttl_seconds BETWEEN 60 AND 604800", name="reference_ttl"),
+        sa.CheckConstraint("revision >= 1 AND version >= 1", name="versions"),
+    )
+    id: Mapped[uuid.UUID] = _pk()
+    form_slug: Mapped[str] = mapped_column(sa.ForeignKey("forms.slug"), unique=True)
+    name: Mapped[str] = mapped_column(sa.String(100))
+    entry_url: Mapped[str] = mapped_column(sa.Text)
+    purpose: Mapped[str] = mapped_column(sa.String(16), default="support", server_default="support")
+    projection: Mapped[str] = mapped_column(
+        sa.String(32), default="correlation.v1", server_default="correlation.v1"
+    )
+    reference_ttl_seconds: Mapped[int] = mapped_column(sa.Integer, default=604800)
+    revision: Mapped[int] = mapped_column(sa.Integer, default=1, server_default="1")
+    version: Mapped[int] = mapped_column(sa.Integer, default=1, server_default="1")
+    enabled: Mapped[bool] = mapped_column(sa.Boolean, default=False, server_default=sa.false())
+    created_by: Mapped[str] = mapped_column(sa.Text)
+    created_at: Mapped[datetime] = _created_at()
+    updated_by: Mapped[str] = mapped_column(sa.Text)
+    updated_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), default=utcnow)
+
+
+class IntegrationCredential(Base):
+    """Credencial de serviço: somente hash, escopo fixo e emissão sem recuperação de segredo."""
+
+    __tablename__ = "integration_credentials"
+    __table_args__ = (
+        sa.ForeignKeyConstraint(
+            ["receiver_id", "form_slug"],
+            ["handoff_receivers.id", "handoff_receivers.form_slug"],
+            name="fk_integration_credentials_receiver_form",
+        ),
+        sa.UniqueConstraint(
+            "created_by", "operation", "idempotency_hash", name="uq_integration_credentials_command"
+        ),
+        sa.CheckConstraint("receiver_revision >= 1 AND version >= 1", name="versions"),
+        sa.CheckConstraint("purpose = 'support'", name="purpose"),
+        sa.CheckConstraint("scope = 'handoffs:resolve'", name="scope"),
+        sa.CheckConstraint("projection = 'correlation.v1'", name="projection"),
+        sa.CheckConstraint("operation in ('create', 'rotate')", name="operation"),
+        sa.CheckConstraint("expires_at IS NULL OR expires_at > created_at", name="expiry"),
+    )
+    id: Mapped[uuid.UUID] = _pk()
+    key_id: Mapped[str] = mapped_column(sa.String(32), unique=True)
+    name: Mapped[str] = mapped_column(sa.String(100))
+    secret_hash: Mapped[str] = mapped_column(sa.String(64))
+    receiver_id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, index=True)
+    receiver_revision: Mapped[int] = mapped_column(sa.Integer)
+    form_slug: Mapped[str] = mapped_column(sa.String(64))
+    purpose: Mapped[str] = mapped_column(sa.String(16), default="support", server_default="support")
+    scope: Mapped[str] = mapped_column(
+        sa.String(32), default="handoffs:resolve", server_default="handoffs:resolve"
+    )
+    projection: Mapped[str] = mapped_column(
+        sa.String(32), default="correlation.v1", server_default="correlation.v1"
+    )
+    version: Mapped[int] = mapped_column(sa.Integer, default=1, server_default="1")
+    created_by: Mapped[str] = mapped_column(sa.Text)
+    created_at: Mapped[datetime] = _created_at()
+    expires_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    revoked_by: Mapped[str | None] = mapped_column(sa.Text)
+    last_used_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    operation: Mapped[str] = mapped_column(sa.String(16))
+    idempotency_hash: Mapped[str] = mapped_column(sa.String(64))
+    command_fingerprint: Mapped[str] = mapped_column(sa.String(64))
+    successor_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.ForeignKey("integration_credentials.id")
+    )
+
+
+class HandoffReference(Base):
+    """Intenção histórica por submissão; a referência recuperável fica somente cifrada."""
+
+    __tablename__ = "handoff_references"
+    __table_args__ = (
+        sa.UniqueConstraint(
+            "submission_id", "purpose", name="uq_handoff_references_submission_purpose"
+        ),
+        sa.CheckConstraint("purpose = 'support'", name="purpose"),
+        sa.CheckConstraint("projection = 'correlation.v1'", name="projection"),
+        sa.CheckConstraint("receiver_revision >= 1 AND version >= 1", name="versions"),
+        sa.CheckConstraint("expires_at > created_at", name="expiry"),
+        sa.CheckConstraint(
+            "(issuance_state = 'ready' AND token_hash IS NOT NULL AND unavailable_code IS NULL) OR "
+            "(issuance_state = 'unavailable' AND token_hash IS NULL AND token_ciphertext IS NULL "
+            "AND unavailable_code IS NOT NULL)",
+            name="issuance",
+        ),
+        sa.CheckConstraint("revoked_at IS NULL OR token_ciphertext IS NULL", name="revocation"),
+    )
+    id: Mapped[uuid.UUID] = _pk()
+    submission_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("submissions.id", ondelete="CASCADE"), index=True
+    )
+    purpose: Mapped[str] = mapped_column(sa.String(16), default="support", server_default="support")
+    receiver_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("handoff_receivers.id"), index=True
+    )
+    receiver_revision: Mapped[int] = mapped_column(sa.Integer)
+    entry_url: Mapped[str] = mapped_column(sa.Text)
+    projection: Mapped[str] = mapped_column(
+        sa.String(32), default="correlation.v1", server_default="correlation.v1"
+    )
+    token_hash: Mapped[str | None] = mapped_column(sa.String(64), unique=True)
+    token_ciphertext: Mapped[str | None] = mapped_column(sa.Text)
+    created_at: Mapped[datetime] = _created_at()
+    expires_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    revoked_by: Mapped[str | None] = mapped_column(sa.Text)
+    version: Mapped[int] = mapped_column(sa.Integer, default=1, server_default="1")
+    issuance_state: Mapped[str] = mapped_column(sa.String(16))
+    unavailable_code: Mapped[str | None] = mapped_column(sa.String(64))
+
+
+class PlanRelease(Base):
+    """Autorização imutável de uma tentativa; decisão negativa de notificar também é um fato."""
+
+    __tablename__ = "plan_releases"
+    __table_args__ = (
+        sa.UniqueConstraint("job_id", "attempt", name="uq_plan_releases_job_attempt"),
+        sa.UniqueConstraint("job_id", "idempotency_key", name="uq_plan_releases_job_idempotency"),
+        sa.CheckConstraint(
+            "attempt >= 1 AND version = 1 AND form_version_number >= 1", name="versions"
+        ),
+        sa.CheckConstraint("mode in ('standard', 'alternative')", name="mode"),
+        sa.CheckConstraint(
+            "reason_code in ('operator_review', 'participant_request', 'alternative_channel', 'other')",
+            name="reason_code",
+        ),
+        sa.CheckConstraint(
+            "notification_decision in ('outbox', 'no_participant_channel', 'event_not_selected')",
+            name="notification_decision",
+        ),
+    )
+    id: Mapped[uuid.UUID] = _pk()
+    job_id: Mapped[uuid.UUID] = mapped_column(sa.ForeignKey("jobs.id"), index=True)
+    artifact_id: Mapped[uuid.UUID] = mapped_column(sa.ForeignKey("artifacts.id"))
+    attempt: Mapped[int] = mapped_column(sa.Integer)
+    form_slug: Mapped[str] = mapped_column(sa.String(64))
+    form_version_number: Mapped[int] = mapped_column(sa.Integer)
+    form_version: Mapped[str] = mapped_column(sa.String(64))
+    version: Mapped[int] = mapped_column(sa.Integer, default=1, server_default="1")
+    actor: Mapped[str] = mapped_column(sa.Text)
+    occurred_at: Mapped[datetime] = _created_at()
+    mode: Mapped[str] = mapped_column(sa.String(16))
+    reason_code: Mapped[str] = mapped_column(sa.String(32))
+    idempotency_key: Mapped[uuid.UUID] = mapped_column(sa.Uuid)
+    command_fingerprint: Mapped[str] = mapped_column(sa.String(64))
+    notification_decision: Mapped[str] = mapped_column(sa.String(32))
+
+
+class EventSource(Base):
+    """Autoridade histórica explícita para declarações externas de um diagnóstico."""
+
+    __tablename__ = "event_sources"
+    __table_args__ = (
+        sa.ForeignKeyConstraint(
+            ["receiver_id", "form_slug"], ["handoff_receivers.id", "handoff_receivers.form_slug"]
+        ),
+        sa.UniqueConstraint("receiver_id", "receiver_revision", "namespace"),
+        sa.UniqueConstraint("created_by", "idempotency_hash"),
+        sa.CheckConstraint(
+            "revision >= 1 AND version >= 1 AND receiver_revision >= 1", name="versions"
+        ),
+        sa.CheckConstraint("purpose = 'support'", name="purpose"),
+    )
+    id: Mapped[uuid.UUID] = _pk()
+    receiver_id: Mapped[uuid.UUID] = mapped_column(sa.Uuid)
+    receiver_revision: Mapped[int] = mapped_column(sa.Integer)
+    form_slug: Mapped[str] = mapped_column(sa.String(64))
+    purpose: Mapped[str] = mapped_column(sa.String(16), default="support", server_default="support")
+    namespace: Mapped[str] = mapped_column(sa.String(64))
+    name: Mapped[str] = mapped_column(sa.String(100))
+    policy: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    revision: Mapped[int] = mapped_column(sa.Integer, default=1, server_default="1")
+    version: Mapped[int] = mapped_column(sa.Integer, default=1, server_default="1")
+    enabled: Mapped[bool] = mapped_column(sa.Boolean, default=False, server_default=sa.false())
+    created_by: Mapped[str] = mapped_column(sa.Text)
+    created_at: Mapped[datetime] = _created_at()
+    updated_by: Mapped[str] = mapped_column(sa.Text)
+    updated_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), default=utcnow)
+    idempotency_hash: Mapped[str] = mapped_column(sa.String(64))
+    command_fingerprint: Mapped[str] = mapped_column(sa.String(64))
+
+
+class EventCredential(Base):
+    """Segredo de eventos independente das credenciais de resolução e administração."""
+
+    __tablename__ = "event_credentials"
+    __table_args__ = (
+        sa.UniqueConstraint("created_by", "operation", "idempotency_hash"),
+        sa.CheckConstraint("scope = 'journey:events:write'", name="scope"),
+        sa.CheckConstraint("source_revision >= 1 AND version >= 1", name="versions"),
+        sa.CheckConstraint("operation in ('create', 'rotate')", name="operation"),
+        sa.CheckConstraint("expires_at IS NULL OR expires_at > created_at", name="expiry"),
+    )
+    id: Mapped[uuid.UUID] = _pk()
+    source_id: Mapped[uuid.UUID] = mapped_column(sa.ForeignKey("event_sources.id"), index=True)
+    source_revision: Mapped[int] = mapped_column(sa.Integer)
+    scope: Mapped[str] = mapped_column(
+        sa.String(32), default="journey:events:write", server_default="journey:events:write"
+    )
+    key_id: Mapped[str] = mapped_column(sa.String(32), unique=True)
+    secret_hash: Mapped[str] = mapped_column(sa.String(64))
+    name: Mapped[str] = mapped_column(sa.String(100))
+    version: Mapped[int] = mapped_column(sa.Integer, default=1, server_default="1")
+    created_by: Mapped[str] = mapped_column(sa.Text)
+    created_at: Mapped[datetime] = _created_at()
+    expires_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    revoked_by: Mapped[str | None] = mapped_column(sa.Text)
+    last_used_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    operation: Mapped[str] = mapped_column(sa.String(16))
+    idempotency_hash: Mapped[str] = mapped_column(sa.String(64))
+    command_fingerprint: Mapped[str] = mapped_column(sa.String(64))
+    successor_id: Mapped[uuid.UUID | None] = mapped_column(sa.ForeignKey("event_credentials.id"))
+
+
+class JourneyEvent(Base):
+    """Snapshot declarado; o apagamento remove o conteúdo protegido sem cópia recuperável."""
+
+    __tablename__ = "journey_events"
+    __table_args__ = (
+        sa.UniqueConstraint("source_id", "event_id_digest", name="uq_journey_events_event"),
+        sa.UniqueConstraint(
+            "source_id",
+            "reference_id",
+            "entity_kind",
+            "entity_id_digest",
+            "entity_revision",
+            name="uq_journey_events_revision",
+        ),
+        sa.CheckConstraint("entity_revision >= 1 AND source_revision >= 1", name="revisions"),
+        sa.Index("ix_journey_events_history", "reference_id", "received_at", "id"),
+    )
+    id: Mapped[uuid.UUID] = _pk()
+    source_id: Mapped[uuid.UUID] = mapped_column(sa.ForeignKey("event_sources.id"))
+    credential_id: Mapped[uuid.UUID] = mapped_column(sa.ForeignKey("event_credentials.id"))
+    source_revision: Mapped[int] = mapped_column(sa.Integer)
+    reference_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("handoff_references.id", ondelete="CASCADE")
+    )
+    event_id_digest: Mapped[str] = mapped_column(sa.String(64))
+    entity_id_digest: Mapped[str] = mapped_column(sa.String(64))
+    fingerprint: Mapped[str] = mapped_column(sa.String(64))
+    type: Mapped[str] = mapped_column(sa.String(48))
+    entity_kind: Mapped[str] = mapped_column(sa.String(16))
+    entity_revision: Mapped[int] = mapped_column(sa.Integer)
+    occurred_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True))
+    received_at: Mapped[datetime] = _created_at()
+    safe_data: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    protected_data: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB, nullable=True, deferred=True
+    )
+    erased_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))

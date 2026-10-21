@@ -207,9 +207,9 @@ def conflict_of(
 
 
 SAVE_TEXT = (
-    "Criar o destino, ou mudar o endereço dele, muda para onde vão os dados das leads: o evento "
-    "`plano.concluido`, com nome, e-mail, telefone e respostas, passa a ir para o receptor deste "
-    "endereço."
+    "Gravar o receptor e sua finalidade define quem recebe os dados. Finalidade interna envia "
+    "o plano integral, respostas e dados comerciais; participante envia somente o plano público "
+    "e referências permitidas. Captura e Baserow exigem finalidade interna."
 )
 
 
@@ -267,7 +267,21 @@ def save_destination(
             actor=key.actor,
             expected_version=expected,
             http_confirmed=body.confirm_http,
+            events=body.events,
+            purpose=body.purpose,
         )
+    except destinations.InvalidPurpose as invalid:
+        raise ApiError(
+            "validation_failed",
+            invalid.message,
+            errors=[ErrorItem(field="purpose", message=invalid.message)],
+        ) from None
+    except destinations.InvalidEvents as invalid:
+        raise ApiError(
+            "validation_failed",
+            "Confira os eventos aceitos pelo receptor.",
+            errors=[ErrorItem(field="events", message=invalid.message)],
+        ) from None
     except destinations.InvalidUrl as invalid:
         if invalid.needs_confirmation:
             raise ApiError("confirmation_required", HTTP_NEEDS_CONFIRMATION) from None
@@ -320,7 +334,8 @@ ROTATE_TEXT = (
         "Gera um segredo novo para o destino do escopo `scope` (`default` ou o endereço de um "
         "formulário). **O novo aparece só nesta resposta** (`secret`, com `Cache-Control: "
         "no-store`): guarde-o e ponha-o no receptor agora. **O antigo deixa de valer na hora**: o "
-        "envio seguinte, inclusive o de uma entrega em repetição, já sai assinado com o novo, e um "
+        "envio novo sai assinado com o novo. Entregas PDF fixadas antes da troca exigem repetição "
+        "explícita com a revisão atual, sem mudar a finalidade; um "
         "receptor que ainda confere com o antigo passa a recusar os eventos. É também o que repara um "
         "destino cujo segredo não abre com a chave atual (`secret_unreadable`). `expected_version` é a "
         "`version` que `get_destination` devolveu; se mudou, `409 version_conflict` e o segredo não "
@@ -355,8 +370,9 @@ def rotate_destination_secret(
 
 REMOVE_TEXT = (
     "Remover o destino o apaga, com o segredo, e muda para onde vão os dados das leads: os formulários "
-    "que dependiam dele passam a usar o destino padrão, se houver, e sem ele os planos deixam de ser "
-    "entregues."
+    "que dependiam dele passam a usar o destino padrão para novos eventos, se houver. Entregas PDF "
+    "já fixadas não são redirecionadas; só fatos internos legados sem correlação conservam a resolução interna legada. "
+    "Os registros de entrega de respostas vinculados serão apagados, inclusive os pendentes e já concluídos; as contagens aparecem na leitura e no retorno. Pendentes de captura não são reenviados nem transferidos ao padrão; as respostas salvas permanecem."
 )
 
 
@@ -377,18 +393,20 @@ REMOVE_TEXT = (
         "Apaga o destino do escopo `scope` (`default` ou o endereço de um formulário), com o "
         "segredo. **Os formulários que dependiam dele deixam de ser entregues ali**: ao remover o "
         "destino de um formulário, ele passa a usar o destino padrão, se houver; ao remover o "
-        "padrão, os formulários sem destino próprio **deixam de entregar** (os planos ficam sem "
-        "destino até alguém criar outro). A resposta diz quem entrega o escopo agora (`serving`: "
+        "padrão, os novos envios de formulários sem destino próprio **ficam sem entrega**. Intenções "
+        "PDF já fixadas neste receptor não são redirecionadas nem adotam outro criado depois; "
+        "somente fatos internos legados sem correlação mantêm a resolução interna legada. "
+        "A resposta diz quem entrega novos eventos do escopo (`serving`: "
         "`default` ou `none`) e traz o destino que saiu (`removed`), como estava. Não tem volta: para "
         "ter o destino de novo, crie-o com `save_destination` (e um segredo novo). Por isso a operação "
         "é marcada e exige `confirm=true` na query (sem ele, `422 confirmation_required` e nada "
         "acontece). `expected_version` é a `version` que `get_destination` devolveu, também na query; "
         "se o destino mudou ou já foi removido, `409 version_conflict` e nada é removido. A remoção "
         "fica na auditoria em nome da chave (`webhook_destination.remove`), com o host, sem o "
-        "segredo nem o caminho da URL. Remove também o destino guardado de um formulário que saiu do "
+        "segredo nem o caminho da URL. Intenções de captura vinculadas são apagadas por cascade; a resposta informa as contagens, e pendentes não são enviadas nem transferidas ao padrão. Remove também o destino guardado de um formulário que saiu do "
         "código."
     ),
-    returns="O destino que saiu, como estava, e quem entrega os eventos do escopo agora.",
+    returns="O destino removido, o fallback somente para novos eventos e as intenções de captura apagadas; entregas PDF fixadas não são redirecionadas.",
     response_model=RemovedDestination,
 )
 def remove_destination(
@@ -475,9 +493,19 @@ def send_destination_test_event(
     deps = get_deps()
     target = resolve(deps, scope)
     try:
-        probe = destinations.send_test(deps, target.form_slug, actor=key.actor)
+        probe = destinations.send_test(deps, target.form_slug, actor=key.actor, event=body.event)
     except destinations.UnreadableSecret:
         raise ApiError("state_conflict", UNREADABLE_SECRET) from None
+    except destinations.InvalidPurpose as exc:
+        raise ApiError(
+            "validation_failed",
+            exc.message,
+            errors=[ErrorItem(field="purpose", message=exc.message)],
+        ) from None
+    except destinations.UnsupportedEvent:
+        raise ApiError(
+            "state_conflict", "O destino não declarou aceitar o evento de captura."
+        ) from None
     if probe is None:
         raise ApiError("state_conflict", NOTHING_TO_TEST)
     logger.info(

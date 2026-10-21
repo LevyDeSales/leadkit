@@ -5,16 +5,16 @@ from __future__ import annotations
 import copy
 import re
 import socket
+import sys
 import threading
-import time
 import traceback
 from dataclasses import replace
 from datetime import UTC, datetime
 from io import BytesIO
+from pathlib import Path
 from typing import Any
 
 import pytest
-import weasyprint
 from conftest import legacy_spec, publish
 from pypdf import PdfReader
 from test_intake import submit
@@ -258,13 +258,11 @@ def test_plan_or_template_errors_fail_terminally_without_lead_data(
     assert LEAD_NAME not in trace and LEAD_EMAIL not in trace
 
 
-def test_engine_failures_fail_terminally_without_lead_data(
+def test_engine_startup_failures_fail_terminally_without_lead_data(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
-    def broken_layout(*args: object, **kwargs: object) -> None:
-        raise ValueError(f"layout quebrou no parágrafo de {LEAD_NAME}")
-
-    monkeypatch.setattr(weasyprint.HTML, "render", broken_layout)
+    monkeypatch.setattr(sys, "executable", str(tmp_path / "missing-python"))
 
     with pytest.raises(TerminalError) as caught:
         WeasyPrintRenderer().render(DEMO, EXAMPLE_PLAN, context(name=LEAD_NAME))
@@ -273,39 +271,23 @@ def test_engine_failures_fail_terminally_without_lead_data(
     assert LEAD_NAME not in traceback_text(caught.value)
 
 
-def test_renders_one_document_at_a_time_across_threads(monkeypatch: pytest.MonkeyPatch) -> None:
-    """O WeasyPrint não é thread-safe, e o worker roda tasks síncronas num pool de threads."""
-    active = peak = 0
-    counter = threading.Lock()
-    engine_render = weasyprint.HTML.render
-
-    def observed_render(self: weasyprint.HTML, *args: Any, **kwargs: Any) -> Any:
-        nonlocal active, peak
-        with counter:
-            active += 1
-            peak = max(peak, active)
-        try:
-            time.sleep(0.05)  # alarga a janela em que outra thread entraria junto
-            return engine_render(self, *args, **kwargs)
-        finally:
-            with counter:
-                active -= 1
-
-    monkeypatch.setattr(weasyprint.HTML, "render", observed_render)
+def test_pdfs_requested_from_multiple_threads_keep_their_text_and_fonts() -> None:
     renderers = [WeasyPrintRenderer() for _ in range(4)]
-    texts: list[str] = []
+    results: dict[int, Any] = {}
 
-    def render_with(renderer: WeasyPrintRenderer) -> None:
-        texts.append(text_of(renderer.render(DEMO, EXAMPLE_PLAN, context()).content))
+    def render_with(index: int, renderer: WeasyPrintRenderer) -> None:
+        results[index] = renderer.render(DEMO, EXAMPLE_PLAN, context(name=f"Participante {index}"))
 
-    threads = [threading.Thread(target=render_with, args=(r,)) for r in renderers]
+    threads = [threading.Thread(target=render_with, args=(i, r)) for i, r in enumerate(renderers)]
     for thread in threads:
         thread.start()
     for thread in threads:
-        thread.join()
+        thread.join(timeout=30)
 
-    assert peak == 1
-    assert len(texts) == 4 and len(set(texts)) == 1
+    assert len(results) == 4
+    for index, rendered in results.items():
+        assert f"Participante {index}" in text_of(rendered.content)
+        assert fonts_of(rendered.content) and all(fonts_of(rendered.content).values())
 
 
 def test_render_step_in_weasyprint_mode_stores_the_lead_pdf_without_internal_data(

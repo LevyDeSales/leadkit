@@ -1,0 +1,117 @@
+{% extends "admin/layout.html" %}
+{% import "admin/macros.html" as m %}
+{% set section = "integrations" %}
+{% block title %}Integrações{% endblock %}
+{% block content %}
+<div class="page-head">
+<div><h1>Integrações</h1>
+<p>Configure quem recebe os dados dos seus formulários. O próximo passo da participante continua na conclusão de cada formulário.</p></div><a class="btn btn--secondary" href="/admin/destinations">Gerenciar webhooks</a></div>
+<div class="stackcol">
+<section class="box" aria-labelledby="catalogo">
+<h2 id="catalogo">Conectores disponíveis</h2>
+<p>Contadores globais, independentemente dos filtros e da página.</p>
+{% for item in catalog %}
+<h3>{{ 'Baserow' if item.connector == 'baserow' else 'Webhook' }}</h3>
+<p>{{ 'Envie respostas e dados autorizados para uma tabela, com mapeamento por formulário.' if item.connector == 'baserow' else 'Envie eventos assinados para um receptor HTTP. Use um receptor padrão ou um específico por formulário.' }}</p>
+<p>{{ item.configured }} configurações
+{% if item.active is not none %} · {{ item.active }} conexões ativas
+{% endif %} · {{ item.served_forms }} formulários com receptor.{% if item.connector == "webhook" %} O receptor padrão conta uma vez.{% endif %}</p>
+{% endfor %}</section>
+<form class="box form-stack" method="get" action="/admin/integrations" aria-label="Filtrar integrações">
+<label for="connector">Conector</label>
+<select class="select" id="connector" name="connector"><option value="">Todos</option>
+{% for value in ['baserow', 'webhook'] %}<option value="{{ value }}"
+{% if connector == value %} selected
+{% endif %}>{{ 'Baserow' if value == 'baserow' else 'Webhook' }}</option>
+{% endfor %}</select>
+<label for="form_slug">Formulário</label>
+<select class="select" id="form_slug" name="form_slug"><option value="">Todos</option>
+{% for form in forms %}<option value="{{ form.slug }}"
+{% if form_slug == form.slug %} selected
+{% endif %}>{{ form.title or 'Formulário não disponível' }} · {{ form.slug }}</option>
+{% endfor %}</select>
+<input type="hidden" name="limit" value="{{ limit }}">
+<div><button class="btn btn--primary" type="submit">Filtrar</button> <a href="/admin/integrations">Limpar filtros</a></div></form>
+<p>Esta central mostra fatos locais. Abra a configuração para conferir o provedor.</p>
+<div class="tablewrap" role="region" aria-label="Associações de integrações" tabindex="0">
+<table class="table table--cards hub-table">
+<caption>Configurações e associações por formulário</caption>
+<thead>
+<tr>
+<th scope="col">Conector</th>
+<th scope="col">Formulário/escopo</th>
+<th scope="col">Configuração</th>
+<th scope="col">Situação</th>
+<th scope="col">Última confirmação de envio</th>
+<th scope="col">Ações</th></tr></thead>
+<tbody>
+{% for row in items %}
+{% set name = (row.form.title or 'Formulário não disponível') ~ ' · ' ~ row.form_slug if row.form else 'Receptor padrão' %}
+{% set label = 'Baserow' if row.connector == 'baserow' else 'Webhook' %}
+<tr>
+<td data-label="Conector">{{ label }}</td>
+<th scope="row" data-label="Formulário/escopo">{{ name }}
+{% if row.form and row.form.exists %}
+<p>{{ 'Ativo' if row.form.active else 'Inativo' }} · {{ 'Versão ' ~ row.form.published_version if row.form.published_version else 'Sem publicação' }}</p>
+<p>{{ {'pdf':'Plano com PDF', 'capture':'Captura sem PDF'}.get(row.form.profile, 'Perfil indisponível') }}</p>
+{% endif %}</th>
+<td data-label="Configuração">
+{% if row.receiver %}<span class="mono">{{ row.receiver.host }}</span>
+{% if row.receiver.table_id %}
+<p>Tabela {{ row.receiver.table_id }}</p>
+{% endif %}
+<p>Finalidade {{ 'interna' if row.receiver.purpose == 'internal' else 'participante' }} · {{ {'legacy':'origem legada','explicit':'escolha explícita','default':'padrão seguro'}[row.receiver.purpose_origin] }}</p>
+<p>Eventos: {% for event in row.receiver.events %}{{ {'plano.concluido': 'Plano concluído', 'submissao.persistida': 'Respostas salvas', 'plano.liberado': 'Liberação do plano'}[event] }}{% if not loop.last %} · {% endif %}{% endfor %}</p>
+<p>Revisão {{ row.receiver.version }} do receptor {{ 'padrão' if row.receiver.scope_kind == 'default' else row.receiver.form_slug }}</p>
+{% if row.mapping %}
+<p>PDF: {{ 'mapeamento salvo' if row.mapping.pdf_present else 'sem mapeamento' }} · Captura: {{ 'mapeamento salvo' if row.mapping.capture_present else 'sem mapeamento' }}</p>
+{% endif %}
+{% else %}Sem configuração
+{% endif %}</td>
+<td data-label="Situação">
+{% if row.connector == 'baserow' %}{{ 'Não configurada' if not row.receiver else 'Ativa' if row.receiver.active else 'Desativada' }}
+{% else %}{{ {'none':'Sem receptor','own':'Configurado','default':'Usa padrão'}[row.serving] }}
+{% endif %}
+{% if row.receiver and row.receiver.credential_unreadable %}
+<p>Credencial guardada ilegível; revise a configuração.</p>
+{% endif %}
+{% for issue in row.form_issues %}
+<p>{{ issue.message }}</p>
+{% endfor %}
+{% if row.mapping and row.form.profile and not (row.mapping.capture_present if row.form.profile == 'capture' else row.mapping.pdf_present) %}
+<p>Mapeamento não preparado para o perfil atual.</p>
+{% endif %}
+{% for stream in ['pdf','capture'] %}
+{% set counts = row.history[stream] %}
+<p>{{ 'PDF' if stream == 'pdf' else 'Captura' }}: {{ counts.pending }} pendentes · {{ counts.succeeded }} confirmados · {{ counts.failed }} com falha</p>
+{% endfor %}</td>
+<td data-label="Última confirmação de envio">
+{% if row.history.last_success %}
+{% set success = row.history.last_success %}<time datetime="{{ success.at.isoformat() }}">{{ success.at.astimezone(hub_timezone).strftime('%d/%m/%Y %H:%M') }} (São Paulo)</time>
+<p>{{ 'PDF' if success.stream == 'pdf' else 'Captura' }} · {{ {'current':'Revisão atual','previous':'Revisão anterior','unknown':'Revisão não registrada'}[success.configuration_match] }}</p>
+{% else %}Sem confirmação registrada
+{% endif %}
+{% if row.scope_kind == 'default' %}
+<p>Resumo compartilhado; não some às linhas dos formulários.</p>
+{% endif %}</td>
+<td data-label="Ações">
+{% for title, url in actions(row) %}
+<p><a href="{{ url }}" aria-label="{{ title }} · {{ label }} · {{ name }}">{{ title }}</a></p>
+{% endfor %}
+{% if row.serving == 'default' %}
+<p>Alterar o padrão afeta também outros formulários que usam este receptor.</p>
+{% endif %}</td></tr>
+{% else %}
+<tr>
+<td colspan="6">Nenhuma associação para estes filtros.</td></tr>
+{% endfor %}
+</tbody></table></div>
+{% if next_url %}
+<nav aria-label="Paginação"><a class="btn btn--secondary" href="{{ next_url }}">Próxima página</a></nav>
+{% endif %}
+<details class="box"><summary>Como interpretar os estados</summary>
+<p>Uma conexão ativa indica que o envio está habilitado. Mapeamento salvo não comprova compatibilidade com a tabela atual. A validação do provedor fica nos detalhes.</p>
+<p>Histórico local conservado, separado por captura e PDF. Confirmação de transporte não comprova leitura, atendimento ou liberação do PDF. Registros PDF legados sem vínculo com receptor permanecem no pedido. Abrir teste apenas navega: o envio seguinte é sintético; no Baserow, grava uma linha que permanece na tabela.</p>
+</details>
+</div>
+{% endblock %}

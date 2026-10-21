@@ -79,7 +79,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.forms import FormSpec, UnknownForm, draft_patch, starter
+from app.forms import Completion, FormSpec, GenerationUnavailable, UnknownForm, draft_patch, starter
 from app.forms import assets as form_assets
 from app.forms.dates import LEAD_TIMEZONE, local_date
 from app.forms.definition import (
@@ -135,6 +135,7 @@ OWN_FIELDS = ("instructions", "prompt")
 TEMPLATE_FIELDS = ("pdf", "preview")
 # As que o editor estruturado cobre (`app.admin.form_editor`), com as respostas de exemplo.
 SCREEN_FIELDS = (
+    "generation",
     "title",
     "intro",
     "minutes",
@@ -146,6 +147,8 @@ SCREEN_FIELDS = (
     "data",
     "scoring",
     "notices",
+    "completion",
+    "release",
 )
 # O que o resto não traz: o endereço, que só muda antes da primeira publicação e no campo dele, e
 # a versão do texto do consentimento, que a publicação sobe sozinha. Salvar põe de volta os
@@ -418,6 +421,15 @@ def document_of(
         document["examples"] = {**examples, "answers": answers}
     elif examples is None:
         document["examples"] = {"answers": answers}
+    if document.get("generation", "pdf") == "none":
+        for key in ("instructions", "prompt", "plan", "pdf", "preview", "phases"):
+            document.pop(key, None)
+        if isinstance(document.get("examples"), dict):
+            document["examples"].pop("plan", None)
+    elif previous.get("generation") == "none" and document.get("generation", "pdf") == "pdf":
+        # A operadora habilitou geração explicitamente: começa pelo mesmo modelo PDF da criação.
+        # Nenhum bloco de geração fica guardado enquanto o rascunho é captura.
+        _prepare_pdf(document)
     _keep_wording(document, previous)
     # O que o JSONB não guarda (NaN, o caractere nulo) sai aqui, com o caminho: no banco, viraria
     # um erro com um trecho da definição na mensagem.
@@ -425,6 +437,15 @@ def document_of(
     if problems:
         raise DefinitionError(problems)
     return document
+
+
+def _prepare_pdf(document: dict[str, Any]) -> None:
+    """Prepara geração num rascunho que era captura, preservando perguntas e respostas."""
+    initial = starter.definition(slug=document["slug"], title=str(document.get("title", "")))
+    for key in ("instructions", "plan", "pdf", "preview"):
+        document[key] = initial[key]
+    document["prompt"] = starter.prompt_of(document.get("steps", ()), document.get("identity", {}))
+    document["examples"] = {**document["examples"], "plan": initial["examples"]["plan"]}
 
 
 # --- o prompt montado -------------------------------------------------------------------------
@@ -535,6 +556,7 @@ def assemble(
     spec = compile_definition(
         draft.document, version_number=draft.next_number, clock=lambda: moment
     )
+    spec.require_generation()
     validated, shown = _validated(spec, draft, answers)
     try:
         prompt = spec.render_prompt(validated)
@@ -660,6 +682,19 @@ def _rename_of(session: Session, draft: Draft, new_slug: str | None) -> str | No
     new_slug = (new_slug or "").strip() or None
     rename = new_slug if new_slug is not None and new_slug != draft.slug else None
     if rename is not None:
+        from app.models import HandoffReceiver
+
+        if session.scalar(
+            sa.select(HandoffReceiver.id).where(HandoffReceiver.form_slug == draft.slug)
+        ):
+            raise DefinitionError(
+                [
+                    Problem(
+                        "slug",
+                        "este endereço já tem receptor de encaminhamento; crie uma cópia para usar outro endereço",
+                    )
+                ]
+            )
         refused = SLUG_PUBLISHED if draft.published else slug_problem(session, rename)
         if refused is not None:
             raise DefinitionError([Problem("slug", refused)])
@@ -730,7 +765,7 @@ def save_document(
         library = (
             {n: a.ref for n, a in form_assets.visible(session, slug).items()} if resources else {}
         )
-    if resources:
+    if resources and stored.get("generation", "pdf") == "pdf":
         check_templates(
             template_texts_of(stored), stored, number=draft.next_number, assets=library
         )  # DefinitionError
@@ -757,6 +792,7 @@ def save_templates(
             raise UnknownForm(slug)
         if draft.token != expected:
             raise DraftChanged
+    compile_definition(draft.document).require_generation()
     document = templates_document(texts, draft.document)
     return save_document(deps, slug, document, actor=actor, expected=expected)
 
@@ -894,6 +930,11 @@ def _store(
     now = utc_now()
     try:
         with deps.sessions.begin() as session:
+            from app.forms.continuation_contract import assert_definition_contract
+            from app.integration_readiness import configuration_lock
+
+            configuration_lock(session, shared=True)
+            assert_definition_contract(session, document)
             # A linha do formulário serializa as mudanças do rascunho e a publicação.
             session.execute(sa.select(Form.id).where(Form.id == draft.form_id).with_for_update())
             latest = load(session, draft.slug)
@@ -925,6 +966,17 @@ def _rename(session: Session, draft: Draft, slug: str, *, actor: str) -> None:
     vai junto. Ninguém recebeu o endereço antigo: o formulário nunca esteve no ar."""
     if draft.published:
         raise DefinitionError([Problem("slug", SLUG_PUBLISHED)])
+    from app.models import HandoffReceiver
+
+    if session.scalar(sa.select(HandoffReceiver.id).where(HandoffReceiver.form_slug == draft.slug)):
+        raise DefinitionError(
+            [
+                Problem(
+                    "slug",
+                    "este endereço já tem receptor de encaminhamento; crie uma cópia para usar outro endereço",
+                )
+            ]
+        )
     session.execute(sa.update(Form).where(Form.id == draft.form_id).values(slug=slug))
     session.execute(
         sa.update(WebhookDestination)
@@ -1011,6 +1063,10 @@ def _origin(session: Session, source: str, *, slug: str, title: str) -> _Origin 
             return None
         base = draft.document
     document = {**base, "slug": slug, "title": title}
+    if isinstance(document.get("completion"), Mapping) and document["completion"].get("handoff"):
+        document["completion"] = {
+            key: value for key, value in document["completion"].items() if key != "handoff"
+        }
     if isinstance(document.get("consent"), Mapping):
         document["consent"] = {**document["consent"], "version": f"{slug}-v1"}
     return _Origin(document, version)
@@ -1023,13 +1079,23 @@ def problems_by_field(problems: Sequence[Problem]) -> dict[str, str]:
     return {problem.path: problem.message for problem in reversed(problems)}
 
 
-def create(deps: Deps, *, title: str, slug: str, actor: str, source: str = "") -> str:
+def create(
+    deps: Deps,
+    *,
+    title: str,
+    slug: str,
+    actor: str,
+    source: str = "",
+    generation: str | None = None,
+) -> str:
     """Cria um formulário do banco sem versão publicada, em nome de `actor`, e devolve o slug. O
     rascunho parte do modelo inicial (`app.forms.starter`) ou, com `source`, da cópia da definição
     desse formulário (`_origin`), com o título e o endereço novos. Um slug em branco sai do título.
     O formulário só vai ao ar na primeira publicação, que cria a versão 1. Levanta
     `DefinitionError` com os problemas no título (`title`), no endereço (`slug`) ou na origem
     (`source`); nada é gravado nesse caso."""
+    if generation not in (None, "pdf", "none"):
+        raise DefinitionError([Problem("generation", "use pdf ou none")])
     title, source = title.strip(), source.strip()
     slug = slug.strip() or slug_of(title)
     problems = []
@@ -1046,7 +1112,25 @@ def create(deps: Deps, *, title: str, slug: str, actor: str, source: str = "") -
             problems.append(Problem("source", SOURCE_UNKNOWN))
         if problems:
             raise DefinitionError(problems)
-        start = origin.document if origin else starter.definition(slug=slug, title=title)
+        start = (
+            origin.document
+            if origin
+            else starter.definition(slug=slug, title=title, generation=generation or "pdf")
+        )
+        if origin and generation == "none":
+            start = {
+                k: v
+                for k, v in start.items()
+                if k not in ("instructions", "prompt", "plan", "pdf", "preview", "phases")
+            }
+            start["generation"] = "none"
+            start["examples"] = {"answers": start["examples"]["answers"]}
+            if start.get("completion", {}).get("mode", "result") == "result":
+                start["completion"] = {"mode": "confirmation"}
+        elif origin and generation == "pdf":
+            start = {**start, "generation": "pdf"}
+            if origin.document.get("generation") == "none":
+                _prepare_pdf(start)
         document = as_stored(session, start)
     try:
         compile_definition(document, version_number=FIRST_VERSION)
@@ -1073,6 +1157,9 @@ def _insert_form(
     digest = fingerprint(document)
     now = utc_now()
     with deps.sessions.begin() as session:
+        from app.forms.continuation_contract import assert_definition_contract
+
+        assert_definition_contract(session, document)
         form_id = session.scalar(
             insert(Form)
             .values(
@@ -1293,7 +1380,15 @@ def review(session: Session, draft: Draft) -> Review:
         spec = compile_definition(document, version_number=number)
     except DefinitionError as exc:
         problems = exc.problems
-    llm = llm_changes(previous, draft.document) if draft.pending else ()
+    if spec is not None:
+        from app.integration_readiness import problems as integration_problems
+
+        problems = (*problems, *integration_problems(session, spec))
+    llm = (
+        llm_changes(previous, draft.document)
+        if draft.pending and document.get("generation", "pdf") == "pdf"
+        else ()
+    )
     return Review(
         draft=draft,
         number=number,
@@ -1379,6 +1474,15 @@ def publish(
     version_id = uuid.uuid4()
     try:
         with deps.sessions.begin() as session:
+            from app.integration_readiness import configuration_lock
+            from app.integration_readiness import problems as integration_problems
+
+            configuration_lock(session)
+            from app.forms.continuation_contract import assert_definition_contract
+
+            assert_definition_contract(session, found.document)
+            if issues := integration_problems(session, found.spec):
+                raise PublishRefused(found, ["Integrações incompatíveis com a finalidade."], issues)
             session.execute(sa.select(Form.id).where(Form.id == draft.form_id).with_for_update())
             latest = load(session, slug)
             if latest is None or latest.token != expected or latest.next_number != found.number:
@@ -1450,3 +1554,23 @@ def _simulation(deps: Deps, slug: str, found: Review, reasons: Sequence[str]) ->
         if from_pdf:
             reasons, problems = [*reasons, PDF_FAILED], from_pdf
     return Simulation(found, tuple(reasons), tuple(problems))
+
+
+@dataclass(frozen=True)
+class CaptureTest:
+    """Teste local sem gravar respostas ou chamar geração."""
+
+    spec: FormSpec
+    today: date
+    scores: dict[str, Any]
+    completion: Completion
+
+
+def test_capture(draft: Draft, *, answers=None, day="", now: datetime) -> CaptureTest:
+    """Valida respostas, data, pontuação e conclusão na mesma versão do rascunho."""
+    moment = simulated_moment(_simulated(day), now)
+    scored = score(draft, answers=answers, now=moment)
+    if scored.spec.generation != "none":
+        raise GenerationUnavailable("este teste local exige somente captura")
+    result = scored.run.result.scores if scored.run else {}
+    return CaptureTest(scored.spec, local_date(moment), result, scored.spec.completion)

@@ -47,6 +47,7 @@ def admin(deps: Deps, baserow: FakeBaserow) -> TestClient:
 
 def connect(client: TestClient, **changes: str) -> object:
     form = {
+        "purpose": "internal",
         "base_url": BASEROW_URL,
         "table_id": str(BASEROW_TABLE),
         "token": BASEROW_TOKEN,

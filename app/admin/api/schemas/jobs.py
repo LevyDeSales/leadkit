@@ -22,6 +22,7 @@ from pydantic import AwareDatetime, BaseModel, Field, StringConstraints
 from app.admin.actions.jobs import REASON_MAX_LENGTH, REASON_MIN_LENGTH
 from app.admin.api.common import ConfirmedInput, Page, utc
 from app.admin.queries import jobs as queries
+from app.pdf_availability import PdfState, availability_dict
 
 JobStatus = Literal["queued", "running", "completed", "failed"]
 JobStage = Literal["queued", "generating", "rendering", "completed", "failed"]
@@ -187,12 +188,23 @@ class JobPdf(BaseModel):
     byte_size: int = Field(description="O tamanho do arquivo, em bytes.", examples=[184320])
     created_at: AwareDatetime = Field(description="Quando o PDF foi gerado (ISO 8601, UTC).")
     purged_at: AwareDatetime | None = Field(
-        description="Quando o prazo de retenção apagou o arquivo (o registro fica). Nulo: o arquivo "
-        "ainda existe."
+        description="Quando a retenção registrou a remoção do arquivo. Nulo não comprova existência "
+        "nem acesso; consulte `current_pdf` para a tentativa atual."
     )
 
 
 class JobDelivery(BaseModel):
+    event: str = "plano.concluido"
+    release_id: uuid.UUID | None = None
+    occurred_at: AwareDatetime | None = None
+    blocked_reason: str | None = None
+
+    audience: Literal["internal", "participant"] = "internal"
+    authorization_origin: Literal["legacy", "explicit"] = "legacy"
+    config_version: int | None = None
+    current_config_version: int | None = None
+    dispatch_no: int = 1
+
     """A entrega do PDF de uma tentativa ao destino externo."""
 
     id: uuid.UUID = Field(description="O id da entrega.")
@@ -404,6 +416,15 @@ class JobLeadData(BaseModel):
 def _delivery_of(delivery: queries.DeliveryState, run_url_template: str | None) -> dict[str, Any]:
     """Os campos de `JobDelivery` de uma entrega lida: um só lugar para o pedido e para o reenvio."""
     return {
+        "audience": delivery.audience,
+        "authorization_origin": delivery.authorization_origin,
+        "config_version": delivery.config_version,
+        "current_config_version": delivery.current_config_version,
+        "dispatch_no": delivery.dispatch_no,
+        "event": delivery.event,
+        "release_id": delivery.release_id,
+        "occurred_at": utc(delivery.occurred_at),
+        "blocked_reason": delivery.blocked_reason,
         "id": delivery.id,
         "destination": delivery.destination,
         "status": delivery.status,
@@ -436,7 +457,11 @@ def _sync_of(sync: queries.SyncState) -> dict[str, Any]:
 def _state_fields(state: queries.JobState, run_url_template: str | None) -> dict[str, Any]:
     """Os campos de `JobState`, o estado do pedido, sem nada da lead."""
     return {
+        "current_pdf": availability_dict(state.current_pdf),
         "public_id": state.public_id,
+        "release": ReleaseStatus(
+            **{**state.release, "released_at": utc(state.release["released_at"])}
+        ),
         "status": state.status,
         "stage": state.stage,
         "attempt": state.attempt,
@@ -482,7 +507,42 @@ def _state_fields(state: queries.JobState, run_url_template: str | None) -> dict
     }
 
 
+class CurrentPdf(BaseModel):
+    """Evidência técnica da tentativa atual; disponibilidade não concede acesso ao documento."""
+
+    attempt: int
+    state: PdfState = Field(
+        description="available, missing, removed, unavailable, unknown ou invalid."
+    )
+    available: bool = Field(description="PDF atual verificado e acessível; não é autorização.")
+    exists: bool | None = Field(
+        description="Existência no storage; nulo se não foi possível conferir."
+    )
+    valid: bool | None = Field(
+        description="Validade estrutural mínima; nulo sem evidência confiável."
+    )
+    accessible: bool | None = Field(
+        description="Leitura limitada comprovada para o objeto atual; HEAD isolado não basta."
+    )
+    verified_at: AwareDatetime | None = Field(
+        description="Verificação real dos bytes; históricos ficam nulos."
+    )
+
+
+class ReleaseStatus(BaseModel):
+    form_version_number: int | None
+    policy: Literal["automatic", "manual", "unavailable"]
+    state: Literal["automatic", "held", "released", "unavailable"]
+    release_version: int
+    release_id: uuid.UUID | None
+    released_at: AwareDatetime | None
+    attempt: int
+    artifact_id: uuid.UUID | None
+
+
 class JobState(BaseModel):
+    release: ReleaseStatus
+
     """O estado de um pedido, sem nada que diga quem é a lead."""
 
     public_id: str = Field(
@@ -515,6 +575,7 @@ class JobState(BaseModel):
     run_url: str | None = Field(
         description="O link da execução no painel do Hatchet, se o ambiente tem o modelo do link."
     )
+    current_pdf: CurrentPdf
     pdfs: list[JobPdf] = Field(description="Os PDFs, da tentativa mais nova para a mais antiga.")
     deliveries: list[JobDelivery] = Field(
         description="As entregas ao webhook, da mais antiga para a mais nova."
@@ -593,6 +654,19 @@ class ReprocessedJob(JobState):
         return cls(**_state_fields(state, run_url_template), launched=launched)
 
 
+class ResendDeliveryRequest(ConfirmedInput):
+    expected_config_version: int | None = Field(
+        default=None,
+        ge=1,
+        description="Revisão atual do mesmo destino, lida no painel de destinos. Obrigatória para novas entregas fixadas.",
+    )
+    expected_attempt: int | None = Field(
+        default=None,
+        ge=1,
+        description="Tentativa atual autorizada; obrigatória para novas entregas. A audiência do fato não muda.",
+    )
+
+
 class ResendRequest(ConfirmedInput):
     """O pedido de reenvio de uma entrega ou de uma sincronização. Chama o destino de novo, por isso
     exige `confirm: true`."""
@@ -620,3 +694,59 @@ class ResentSync(JobSync):
     @classmethod
     def with_launch(cls, sync: queries.SyncState, *, launched: bool) -> ResentSync:
         return cls(**_sync_of(sync), launched=launched)
+
+
+class JobProjectionData(BaseModel):
+    document: dict[str, Any]
+
+
+class JobPlanProjection(BaseModel):
+    """Documento da audiência pedida, sem anexar os dados internos do envio."""
+
+    public_id: str
+    form_slug: str
+    form_version: str
+    form_version_number: int
+    attempt: int
+    audience: Literal["participant", "internal"]
+    lead_data: JobProjectionData
+
+
+class ReleaseJobPdfRequest(ConfirmedInput):
+    expected_attempt: int = Field(ge=1)
+    expected_artifact_id: uuid.UUID
+    expected_form_version_number: int = Field(ge=1)
+    expected_release_version: int = Field(ge=0)
+    idempotency_key: uuid.UUID
+    mode: Literal["standard", "alternative"]
+    reason_code: Literal["operator_review", "participant_request", "alternative_channel", "other"]
+
+
+class ReleaseNotification(BaseModel):
+    id: uuid.UUID
+    event: str
+    status: DeliveryStatus
+
+
+class ReleasedJobPdf(BaseModel):
+    release_id: uuid.UUID
+    attempt: int
+    artifact_id: uuid.UUID
+    release_version: int
+    occurred_at: AwareDatetime
+    mode: Literal["standard", "alternative"]
+    reason_code: str
+    notification_decision: Literal["outbox", "no_participant_channel", "event_not_selected"]
+    current: bool
+    replay: bool
+    notifications: list[ReleaseNotification]
+    launched: bool
+
+    @classmethod
+    def of(cls, done):
+        from dataclasses import asdict
+
+        data = asdict(done.commit)
+        data.pop("delivery_ids")
+        data["occurred_at"] = utc(data["occurred_at"])
+        return cls(**data, notifications=list(done.notifications), launched=done.launched)

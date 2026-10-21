@@ -198,6 +198,7 @@ def test_the_detail_tells_which_destination_serves_the_form(deps: Deps) -> None:
                 expected_version=0,
                 production=False,
                 http_confirmed=False,
+                purpose="internal",
             )
 
     none = detail(deps, "demo")
@@ -208,9 +209,11 @@ def test_the_detail_tells_which_destination_serves_the_form(deps: Deps) -> None:
 
     assert none is not None and none.destination is None
     assert default is not None and default.destination == queries.Serving(
-        "default", "padrao.example.test"
+        "default", "padrao.example.test", ("plano.concluido",)
     )
-    assert own is not None and own.destination == queries.Serving("form", "proprio.example.test")
+    assert own is not None and own.destination == queries.Serving(
+        "form", "proprio.example.test", ("plano.concluido",)
+    )
 
 
 def test_the_detail_gives_the_draft_as_it_is(deps: Deps) -> None:
@@ -282,6 +285,7 @@ def test_the_detail_gives_the_integration_without_the_token(deps: Deps) -> None:
             actor="testes",
             expected_version=0,
             production=False,
+            purpose="internal",
         )
 
     found = detail(deps, "demo")

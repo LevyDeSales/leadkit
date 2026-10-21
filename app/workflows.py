@@ -25,6 +25,7 @@ from hatchet_sdk import (
     Context,
     DedupeViolationError,
     IdempotencyCollisionError,
+    NonRetryableException,
     StatusBasedIdempotencyConfig,
     TTLBasedIdempotencyConfig,
 )
@@ -32,7 +33,14 @@ from pydantic import BaseModel, ConfigDict
 
 from app import jobs, pipeline
 from app.deps import get_deps
-from app.errors import FailureCode, as_hatchet_error, cause_summary, failure_code_from_errors
+from app.errors import (
+    FailureCode,
+    RetryableError,
+    TerminalError,
+    as_hatchet_error,
+    cause_summary,
+    failure_code_from_errors,
+)
 from app.forms import draft_tests
 from app.hatchet_client import hatchet
 from app.integrations import push as integration_push
@@ -100,15 +108,25 @@ class DeliverInput(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     delivery_id: uuid.UUID
+    dispatch_no: int = 1
     run_key: str
 
     @classmethod
-    def for_delivery(cls, delivery_id: uuid.UUID) -> DeliverInput:
-        return cls(delivery_id=delivery_id, run_key=f"mcc:deliver:{delivery_id}")
+    def for_delivery(cls, delivery_id: uuid.UUID, dispatch_no: int = 1) -> DeliverInput:
+        return cls(
+            delivery_id=delivery_id,
+            dispatch_no=dispatch_no,
+            run_key=f"mcc:deliver:{delivery_id}:{dispatch_no}",
+        )
 
 
 class DeliverOutput(BaseModel):
-    status: str
+    """Somente a referência da entrega e contagens efetivamente observadas."""
+
+    delivery_id: uuid.UUID
+    delivered_count: int = 0
+    skipped_count: int = 0
+    failed_count: int = 0
 
 
 # --- generate_plan ----------------------------------------------------------------------------
@@ -245,19 +263,32 @@ deliver = hatchet.workflow(
 )
 def send(input: DeliverInput, ctx: Context) -> DeliverOutput:
     try:
-        status = pipeline.deliver(get_deps(), input.delivery_id)
+        status = pipeline.deliver(get_deps(), input.delivery_id, input.dispatch_no)
     except Exception as exc:  # noqa: BLE001 - relançada sem a causa, logo abaixo
-        raise _task_failure("send", exc) from None
-    return DeliverOutput(status=status)
+        safe = _task_failure("send", exc)
+        if isinstance(exc, RetryableError):
+            raise RetryableError(exc.code, "falha na entrega PDF") from None
+        if isinstance(exc, TerminalError):
+            raise NonRetryableException(f"[{exc.code.value}] falha na entrega PDF") from None
+        if isinstance(exc, NonRetryableException):
+            raise NonRetryableException("[internal] falha na entrega PDF") from None
+        raise safe from None
+    return DeliverOutput(
+        delivery_id=input.delivery_id,
+        delivered_count=int(status == "succeeded"),
+        skipped_count=int(status in ("obsolete", "already_succeeded", "blocked")),
+    )
 
 
 @deliver.on_failure_task(retries=3, backoff_factor=2.0, backoff_max_seconds=15)
-def delivery_failed(input: DeliverInput, ctx: Context) -> FailureOutput:
-    code, failed_task = failure_code_from_errors(ctx.task_run_errors)
+def delivery_failed(input: DeliverInput, ctx: Context) -> DeliverOutput:
+    code, _ = failure_code_from_errors(ctx.task_run_errors)
     if code is FailureCode.INTERNAL:
         code = FailureCode.DELIVERY_UNAVAILABLE
-    pipeline.mark_delivery_failed(get_deps(), input.delivery_id, code.value)
-    return FailureOutput(code=code, failed_task=failed_task)
+    count = pipeline.mark_delivery_failed(
+        get_deps(), input.delivery_id, code.value, input.dispatch_no
+    )
+    return DeliverOutput(delivery_id=input.delivery_id, failed_count=count, skipped_count=1 - count)
 
 
 # --- sync_integration -------------------------------------------------------------------------
@@ -449,9 +480,20 @@ async def alaunch_draft_test(test_id: uuid.UUID, *, timeout: float) -> str | Non
 
 
 def launch_delivery(delivery_id: uuid.UUID) -> str | None:
+    from app.models import Delivery
+
+    with get_deps().sessions() as session:
+        from app.integration_readiness import configuration_lock
+        from app.plan_release import delivery_eligible
+
+        configuration_lock(session, shared=True)
+        row = session.get(Delivery, delivery_id)
+        if row is None or row.status != "pending" or not delivery_eligible(session, row):
+            return None
+        dispatch_no = row.dispatch_no
     try:
         ref = deliver.run(
-            DeliverInput.for_delivery(delivery_id),
+            DeliverInput.for_delivery(delivery_id, dispatch_no),
             wait_for_result=False,
             additional_metadata={"delivery_id": str(delivery_id)},
         )
@@ -460,10 +502,10 @@ def launch_delivery(delivery_id: uuid.UUID) -> str | None:
         run_id = exc.existing_run_external_id
     except DedupeViolationError:
         return "existing"
-    except Exception:
-        logger.exception("não foi possível disparar deliver delivery=%s", delivery_id)
+    except Exception:  # noqa: BLE001 - falha do SDK não leva conteúdo externo ao log
+        logger.warning("disparo PDF adiado delivery=%s dispatch=%s", delivery_id, dispatch_no)
         return None
-    pipeline.set_delivery_run_id(get_deps(), delivery_id, run_id)
+    pipeline.set_delivery_run_id(get_deps(), delivery_id, run_id, dispatch_no)
     return run_id
 
 
@@ -486,4 +528,93 @@ def launch_sync(sync_id: uuid.UUID) -> str | None:
         return None
     with get_deps().sessions.begin() as session:
         syncs.set_run_id(session, sync_id, run_id)
+    return run_id
+
+
+class CaptureInput(BaseModel):
+    """Referências operacionais; nenhum dado ou capacidade da participante."""
+
+    model_config = ConfigDict(frozen=True)
+    delivery_id: uuid.UUID
+    dispatch_no: int
+    run_key: str
+
+    @classmethod
+    def for_delivery(cls, delivery_id, dispatch_no):
+        return cls(
+            delivery_id=delivery_id,
+            dispatch_no=dispatch_no,
+            run_key=f"leadkit:capture:{delivery_id}:{dispatch_no}",
+        )
+
+
+class CaptureOutput(BaseModel):
+    """IDs e contagens distinguem transporte confirmado de callback ou execução sem trabalho."""
+
+    delivery_id: uuid.UUID
+    delivered_count: int = 0
+    skipped_count: int = 0
+    failed_count: int = 0
+
+
+deliver_capture = hatchet.workflow(
+    name="deliver_capture",
+    description="Entrega uma captura persistida ao destino autorizado",
+    input_validator=CaptureInput,
+    idempotency=StatusBasedIdempotencyConfig(
+        key_expression="input.run_key", fallback_ttl=timedelta(hours=12)
+    ),
+)
+
+
+@deliver_capture.task(
+    execution_timeout=timedelta(minutes=2),
+    schedule_timeout=timedelta(hours=6),
+    retries=8,
+    backoff_factor=4.0,
+    backoff_max_seconds=3600,
+)
+def send_capture(input: CaptureInput, ctx: Context) -> CaptureOutput:
+    from app import capture_deliveries
+
+    try:
+        status = capture_deliveries.dispatch(get_deps(), input.delivery_id, input.dispatch_no)
+    except Exception as exc:  # noqa: BLE001 — fronteira de provedor; somente código seguro sai.
+        raise _task_failure("send_capture", exc) from None
+    return CaptureOutput(
+        delivery_id=input.delivery_id,
+        delivered_count=int(status == "succeeded"),
+        skipped_count=int(status in ("obsolete", "already_succeeded")),
+        failed_count=int(status == "failed"),
+    )
+
+
+@deliver_capture.on_failure_task(retries=3, backoff_factor=2.0, backoff_max_seconds=15)
+def capture_failed(input: CaptureInput, ctx: Context) -> CaptureOutput:
+    from app import capture_deliveries
+
+    count = capture_deliveries.mark_failed(get_deps(), input.delivery_id, input.dispatch_no)
+    return CaptureOutput(delivery_id=input.delivery_id, failed_count=count, skipped_count=1 - count)
+
+
+def launch_capture(delivery_id: uuid.UUID, dispatch_no: int) -> str | None:
+    """Disparo oportunista; erro do SDK não leva exceção bruta nem perde a intenção."""
+    from app import capture_deliveries
+
+    try:
+        ref = deliver_capture.run(
+            CaptureInput.for_delivery(delivery_id, dispatch_no),
+            wait_for_result=False,
+            additional_metadata={"delivery_id": str(delivery_id), "dispatch_no": str(dispatch_no)},
+        )
+        run_id = ref.workflow_run_id
+    except IdempotencyCollisionError as exc:
+        run_id = exc.existing_run_external_id
+    except Exception:  # noqa: BLE001 — falha isolada, sem mensagem bruta.
+        logger.warning(
+            "disparo de captura adiado delivery=%s dispatch=%s", delivery_id, dispatch_no
+        )
+        return None
+    with get_deps().sessions.begin() as session:
+        capture_deliveries.set_run_id(session, delivery_id, dispatch_no, run_id)
     return run_id

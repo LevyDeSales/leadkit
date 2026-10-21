@@ -31,7 +31,11 @@
 <footer class="site-footer">
   <div class="container">
     {%- block footer %}
+    {% if spec is defined and spec.generation == "none" %}
+    <p>Suas respostas são salvas ao concluir o envio.</p>
+    {% else %}
     <p>Este diagnóstico gera uma orientação inicial e não substitui consultoria nem parecer técnico.</p>
+    {% endif %}
     {%- endblock %}
   </div>
 </footer>
