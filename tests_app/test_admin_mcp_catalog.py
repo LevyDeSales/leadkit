@@ -48,7 +48,7 @@ def selected(role: str, lead_data: bool = False) -> dict[str, ToolSpec]:
 def test_the_catalog_has_exactly_the_operation_ids_of_the_file() -> None:
     assert LOADED.skipped == {}
     assert set(TOOLS) == operation_ids(DOCUMENT)
-    assert len(TOOLS) == 61
+    assert len(TOOLS) == 62
 
 
 def test_the_list_of_exceptions_starts_empty() -> None:
@@ -116,7 +116,7 @@ def test_a_leitura_key_registers_only_the_leitura_tools() -> None:
     found = selected("leitura")
 
     assert set(found) == LEITURA
-    assert len(found) == 29
+    assert len(found) == 30
     assert all(tool.role == "leitura" for tool in found.values())
     assert {"publish_form_draft", "upload_asset", "download_job_pdf"}.isdisjoint(found)
 
@@ -125,14 +125,14 @@ def test_a_total_key_registers_all_but_the_lead_pdf_while_the_option_is_off() ->
     found = selected("total")
 
     assert set(found) == operation_ids(DOCUMENT) - {"download_job_pdf", "get_job_plan_projection"}
-    assert len(found) == 59
+    assert len(found) == 60
 
 
 def test_the_lead_data_option_registers_the_lead_pdf_for_a_total_key() -> None:
     found = selected("total", lead_data=True)
 
     assert set(found) == operation_ids(DOCUMENT)
-    assert len(found) == 61
+    assert len(found) == 62
 
 
 def test_the_option_does_nothing_for_a_leitura_key() -> None:

@@ -698,6 +698,60 @@ def _destination_page(
     )
 
 
+@protected.get("/integrations")
+def integration_hub_page(
+    request: Request,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    cursor: Annotated[str | None, Query(max_length=300)] = None,
+    connector: Literal["", "baserow", "webhook"] = "",
+    form_slug: str = "",
+) -> Response:
+    from zoneinfo import ZoneInfo
+
+    from app.admin import integration_hub_views
+    from app.admin.api.common import PageParams, paginate
+    from app.admin.api.errors import ApiError
+    from app.admin.queries import integration_hub
+
+    deps = get_deps()
+    with deps.sessions() as db:
+        try:
+            found = integration_hub.overview(
+                db, cipher=deps.cipher, connector=connector or None, form_slug=form_slug or None
+            )
+        except integration_hub.UnknownFormFilter:
+            return _error(request, 404, "Formulário não encontrado.")
+    try:
+        chunk, next_cursor = paginate(
+            found.items, PageParams(limit, cursor), key=lambda row: row.key
+        )
+    except ApiError:
+        return _error(request, 422, "O cursor não vale. Volte à central sem cursor.")
+    next_url = (
+        "/admin/integrations?"
+        + urlencode(
+            {"connector": connector, "form_slug": form_slug, "limit": limit, "cursor": next_cursor}
+        )
+        if next_cursor
+        else None
+    )
+    return _page(
+        request,
+        "admin/integrations.html",
+        {
+            "catalog": found.catalog,
+            "items": chunk,
+            "forms": found.forms,
+            "connector": connector,
+            "form_slug": form_slug,
+            "limit": limit,
+            "next_url": next_url,
+            "actions": integration_hub_views.actions,
+            "hub_timezone": ZoneInfo("America/Sao_Paulo"),
+        },
+    )
+
+
 @protected.get("/destinations")
 def destination_list(request: Request) -> Response:
     deps = get_deps()

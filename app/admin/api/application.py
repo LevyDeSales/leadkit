@@ -51,6 +51,7 @@ from app.admin.api import (
     errors,
     forms,
     handoffs,
+    integration_hub,
     integrations,
     jobs,
     previews,
@@ -142,6 +143,7 @@ ROUTERS = (
     previews.router,
     integrations.router,
     handoffs.router,
+    integration_hub.router,
     jobs.router,
     publication.router,
 )

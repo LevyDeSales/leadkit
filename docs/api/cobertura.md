@@ -35,25 +35,29 @@ o OpenAPI e exigem uma operação ou justificativa para cada rota.
 | Recurso | Rotas | Funções | Operações da API | Fora |
 | --- | ---: | ---: | ---: | ---: |
 | Acesso (login e sessão) | 3 | 3 | 0 | 3 |
-| Pedidos | 6 | 6 | 6 | 0 |
+| Pedidos | 7 | 7 | 7 | 0 |
+| Projeções de plano | 1 | 1 | 1 | 0 |
 | Capturas | 3 | 3 | 3 | 0 |
+| Central de integrações | 1 | 1 | 1 | 0 |
 | Destinos do webhook | 11 | 6 | 6 | 0 |
 | Formulários: cadastro, situação e retenção | 10 | 10 | 8 | 2 |
 | Versões | 3 | 3 | 3 | 0 |
 | Rascunho: editor | 6 | 6 | 5 | 1 |
-| Rascunho: PDF e prévias | 4 | 4 | 2 | 0 |
-| Rascunho: testes | 8 | 8 | 7 | 0 |
+| Rascunho: PDF e prévias | 4 | 4 | 4 | 0 |
+| Rascunho: testes | 7 | 7 | 6 | 0 |
 | Rascunho: publicação | 2 | 2 | 2 | 0 |
 | Integração com o Baserow | 8 | 8 | 8 | 0 |
 | Imagens dos formulários | 5 | 5 | 5 | 0 |
 | Chaves de API | 3 | 3 | 3 | 0 |
-| Configurar o MCP | 2 | 2 | 0 | 1 |
-| **Total** | **74** | **69** | **60** | **7** |
+| Configurar o MCP | 2 | 2 | 1 | 1 |
+| **Total** | **76** | **71** | **62** | **7** |
 
-- **74 rotas** (`GET` e `POST`; o admin não usa outro método), de **69 funções**: as cinco ações dos
+O total considera operações únicas; recursos podem compartilhar a mesma operação.
+
+- **76 rotas** (`GET` e `POST`; o admin não usa outro método), de **71 funções**: as cinco ações dos
   destinos (ver, endereço, segredo, remoção e teste) existem para o destino padrão e para o de um
   formulário, com a mesma função.
-- **66 rotas têm par na API**, em **57 operações** (algumas rotas dividem a operação: as duas dos
+- **69 rotas têm par na API**, em **60 operações** (algumas rotas dividem a operação: as duas dos
   destinos, o editor do PDF e o do formulário, que salvam o mesmo rascunho, a página do teste e o
   trecho do polling, e a criação de chave da página das chaves e a da tela do MCP). **7 rotas ficam
   fora**: o login e a saída (a chave substitui a sessão), três telas sem dado nem ação e a tela de
@@ -63,7 +67,7 @@ o OpenAPI e exigem uma operação ou justificativa para cada rota.
   ([a tabela](#operações-do-editor-48)).
 - Mais **2 operações novas**, sem rota no admin (`get_current_api_key` e `list_audit_log`): ver
   [as novas](#operações-novas-sem-rota-no-admin).
-- Total da API: **59 operações** (57 + 2), as mesmas do `docs/api/openapi.json` (o teste de cobertura
+- Total da API: **62 operações** (60 + 2), as mesmas do `docs/api/openapi.json` (o teste de cobertura
   confere). **Nenhuma linha está `falta`**: a cobertura está fechada.
 
 ## Inventário por recurso
@@ -95,6 +99,17 @@ e-mail pede `total`; `leitura` busca só pelo código. `download_job_pdf` entreg
 | `GET /admin/jobs/{public_id}/participant` | Plano projetado antes da serialização, sem documento interno oculto ou respostas | `queries.jobs.get_job_plan_projection` | `GET /jobs/{public_id}/plan-projection` | `get_job_plan_projection` | total | lead | feita · tests_app/test_admin_plan_projection.py::test_projection_http_and_html_have_no_hidden_internal_document |
 | `GET /admin/jobs/{public_id}/pdf` | PDF de uma tentativa (a atual, sem `version`), como anexo; é o plano da lead, então só `total` | `actions.jobs.pdf_file`: a tentativa atual sem fallback, validação real e recuperação autorizada de históricos sem IA, o 404 sem PDF, o 410 se a retenção o apagou, e a URL assinada de 300 s (a página) ou os bytes (a API) | `GET /jobs/{public_id}/pdf` | `download_job_pdf` | total | lead | feita · tests_app/test_admin_api_jobs.py::test_download_job_pdf_gives_the_bytes_of_the_latest_attempt_as_an_attachment |
 | `POST /admin/jobs/{public_id}/syncs/{sync_id}/resend` | Sincronização com a planilha que falhou volta para pendente e é disparada de novo | `actions.jobs.resend_sync`: `integration_syncs.resend` e o disparo (`launching.launch_sync`) | `POST /jobs/{public_id}/syncs/{sync_id}/resend` | `resend_job_sync` | total | externo | feita · tests_app/test_admin_api_job_actions.py::test_resend_job_sync_returns_the_failed_sync_to_pending_and_launches_it |
+
+### Central de integrações
+
+[Contrato e orientação de uso](integracoes.md). Consulta local agregada de Baserow e Webhook, sem rede, escrita ou dados da participante.
+`scope_kind=default|form` e `form_slug` anulável distinguem o padrão de qualquer slug.
+Filtros por conector e formulário, paginação estável e catálogo de contadores globais;
+revisão herdada descreve o receptor efetivo e não a versão para criar configuração própria.
+
+| Rota atual | O que faz | Serviço hoje | Operação da API | `operation_id` | Papel | Marcas | Status |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `GET /admin/integrations` | Lista configurações, herança e histórico local por formulário | `integration_hub.overview` | `GET /integrations` | `list_integrations` | leitura | — | feita · tests_app/test_admin_integration_hub.py::test_api_and_page_share_local_redacted_data_and_work_without_javascript |
 
 ### Destinos do webhook
 
