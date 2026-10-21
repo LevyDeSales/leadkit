@@ -9,6 +9,7 @@
 <label for="{{ prefix }}-date">Data e hora de Brasília (quando escolhida)</label><input type="datetime-local" class="input" id="{{ prefix }}-date" name="expires_at" value="{{ submitted.get('expires_at', '') }}" aria-describedby="{{ prefix }}-help"><p id="{{ prefix }}-help">Escolha uma data futura ou selecione Sem vencimento.</p>
 {% endmacro %}
 {% block content %}
+<div class="event-sources">
 {% set source_values = values if failed_operation in ['create', 'update'] else {} %}
 {% set credential_values = values if failed_operation == 'credential' else {} %}
 <nav><a href="/admin/forms/{{ slug }}">Voltar ao formulário</a>{% if source %} · <a href="/admin/forms/{{ slug }}/event-sources">Todas as fontes</a>{% endif %}</nav>
@@ -36,4 +37,5 @@
 <form method="post" action="/admin/event-sources/{{ source.id }}/credentials/{{ credential.id }}/rotate" class="form-stack">{{ csrf() }}<input type="hidden" name="expected_version" value="{{ credential.version }}"><input type="hidden" name="idempotency_key" value="{{ idempotency_key }}">{{ expiry('rotate-' ~ credential.id, values if failed_operation == 'rotate' and failed_credential_id == credential.id|string else {}) }}{{ confirm('Confirmo substituir a credencial ' ~ credential.name ~ ' e revogar a anterior.') }}<button class="btn btn--secondary" type="submit">Girar {{ credential.name }}</button></form>
 <form id="revoke-{{ credential.id }}" tabindex="-1" method="post" action="/admin/event-sources/{{ source.id }}/credentials/{{ credential.id }}/revoke">{{ csrf() }}<input type="hidden" name="expected_version" value="{{ credential.version }}">{{ confirm('Confirmo revogar permanentemente a credencial ' ~ credential.name ~ '.') }}<button class="btn btn--secondary" type="submit">Revogar {{ credential.name }}</button></form>{% endif %}</article>{% else %}<p>Nenhuma credencial emitida.</p>{% endfor %}</section>
 {% endif %}
+</div>
 {% endblock %}
