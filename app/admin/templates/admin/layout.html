@@ -11,7 +11,7 @@
     <a href="/admin/assets"{% if section == "assets" %} aria-current="page"{% endif %}>{{ m.icon('image') }}Imagens</a>
     <a href="/admin/integrations"{% if section in ("integrations", "destinations") %} aria-current="page"{% endif %}>{{ m.icon('send') }}Integrações</a>
     <a href="/admin/advanced"{% if section in ("advanced", "api-keys", "mcp") %} aria-current="page"{% endif %}>Avançado</a>
-    <a href="https://github.com/LevyDeSales/leadkit/blob/develop/docs/guia-da-operadora/README.md" title="Guia público da versão em desenvolvimento (develop)">Guia de uso<span class="sr-only"> — no GitHub, versão em desenvolvimento</span></a>
+    <a href="{{ operator_guide_url }}" title="Consultar o guia público de uso">Guia de uso<span class="sr-only"> — no GitHub</span></a>
   </nav>
   {% if env_label %}<span class="badge badge--warn" title="Ambiente">{{ env_label }}</span>{% endif %}
   <div class="topbar__user">

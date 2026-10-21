@@ -47,7 +47,7 @@ from app.integrations import config as integration_config
 from app.integrations import mapping as integration_mapping
 from app.internal_links import AdminPdfAccess
 from app.models import utcnow
-from app.version import describe
+from app.version import describe, operator_guide_url
 from app.web.origin import origin_of
 from app.web.templating import templates
 
@@ -274,6 +274,7 @@ def _page(
             "flash": flash,
             "env_label": ENV_LABELS.get(settings.app_env),
             "version_label": describe(settings.app_version, settings.app_build_date),
+            "operator_guide_url": operator_guide_url(settings.app_version),
         },
         status_code=status_code,
     )

@@ -1,6 +1,6 @@
 # Guia da operadora
 
-Este guia acompanha o comportamento de `develop`, conferido em 21/10/2026. Isso não confirma que a mesma versão já esteja em produção. Se sua tela for diferente, peça à administradora técnica que confira a versão da instalação antes de seguir uma ação.
+Este guia acompanha o código da revisão ou tag que você está consultando no GitHub. O link **Guia de uso** do painel abre a tag da versão instalada quando ela é uma versão de release; builds sem versão de release válida abrem `develop`. Se sua tela for diferente, peça à administradora técnica que confira a versão da instalação e a revisão do guia antes de seguir uma ação.
 
 Você pode preparar um formulário que apenas salva respostas ou que também gera um plano em PDF. “Lead”, quando aparecer na tela, significa a participante que respondeu. Os nomes entre aspas são os textos usados no painel.
 
