@@ -56,6 +56,7 @@ STATE_LABELS = {
     "persisted": "Salva",
     "succeeded": "Transporte concluído",
     "queued": "Na fila",
+    "completed": "Concluído",
     "pending": "Pendente",
     "automatic": "Automático",
 }
@@ -163,11 +164,13 @@ def journey_page(request, submission_id, *, status=200, message=None):
     def scheduled(value):
         if value.starts_at is None:
             return None
-        return (
-            value.starts_at.astimezone(ZoneInfo(value.timezone)).strftime("%d/%m/%Y às %H:%M")
-            + " · "
-            + value.timezone
-        )
+        zone = ZoneInfo(value.timezone)
+        interval = "Início: " + value.starts_at.astimezone(zone).strftime("%d/%m/%Y às %H:%M")
+        if value.ends_at is not None:
+            interval += " · término: " + value.ends_at.astimezone(zone).strftime(
+                "%d/%m/%Y às %H:%M"
+            )
+        return interval + " · fuso: " + value.timezone
 
     return _page(
         request,

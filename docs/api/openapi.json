@@ -7887,9 +7887,17 @@
             "title": "Attempt"
           },
           "occurred_at": {
-            "format": "date-time",
-            "title": "Occurred At",
-            "type": "string"
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Instante comprovado do fato em UTC; null quando a transição não tem instante registrado. Criação ou atualização do registro não substituem esse instante.",
+            "title": "Occurred At"
           },
           "origin": {
             "const": "local",

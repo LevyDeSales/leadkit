@@ -360,8 +360,15 @@ class LocalFact(BaseModel):
     origin: Literal["local"] = "local"
     type: str
     state: str
-    occurred_at: datetime
+    occurred_at: datetime | None = Field(
+        description="Instante comprovado do fato em UTC; null quando a transição não tem instante registrado. Criação ou atualização do registro não substituem esse instante."
+    )
     attempt: int | None = None
+
+    @field_validator("occurred_at")
+    @classmethod
+    def utc(cls, value):
+        return value.astimezone(UTC) if value is not None else None
 
 
 class SubmissionJourney(BaseModel):

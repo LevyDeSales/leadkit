@@ -1136,7 +1136,9 @@ def test_journey_preserves_local_release_facts_without_external_declarations(
     with deps.sessions.begin() as session:
         job = session.get(Job, job_id)
         submission_id, public_id = job.submission_id, job.public_id
-        release_pdf(session, deps, public_id, actor="operadora", command=command_for(artifact_id))
+        released = release_pdf(
+            session, deps, public_id, actor="operadora", command=command_for(artifact_id)
+        )
     response = api_client("leitura").get(
         url_of("get_submission_journey", submission_id=submission_id)
     )
@@ -1149,6 +1151,18 @@ def test_journey_preserves_local_release_facts_without_external_declarations(
         for fact in facts
     )
     assert response.json()["external_declared"] == [] and response.json()["reference_id"] is None
+
+    from datetime import UTC
+
+    expected_release_time = released.occurred_at.astimezone(UTC).isoformat().replace("+00:00", "Z")
+    assert (
+        next(fact for fact in facts if fact["type"] == "plan_authorization")["occurred_at"]
+        == expected_release_time
+    )
+    assert (
+        next(fact for fact in facts if fact["type"] == "current_plan_authorization")["occurred_at"]
+        == expected_release_time
+    )
 
 
 def test_html_missing_resources_and_invalid_filters_are_safe_errors(world):
@@ -1163,3 +1177,137 @@ def test_html_missing_resources_and_invalid_filters_are_safe_errors(world):
     for parameter in ("cursor", "type", "source_id"):
         response = client.get(path, params={parameter: "PRIVATE-INVALID-MARKER"})
         assert response.status_code == 422 and "PRIVATE-INVALID-MARKER" not in response.text
+
+
+@pytest.mark.parametrize("recorded_times", [True, False])
+def test_local_fact_times_are_proven_transitions_in_api_mcp_and_html(
+    deps, api_client, manual_pdf, tmp_path, recorded_times
+):
+    import re
+
+    from admin_mcp_live import Live
+    from test_admin import login
+
+    from app.models import Delivery, Job, Submission
+
+    job_id, artifact_id = manual_pdf
+    with deps.sessions.begin() as session:
+        job = session.get(Job, job_id)
+        submission_id = job.submission_id
+        session.get(Submission, submission_id).created_at = NOW - timedelta(days=4)
+        job.created_at = NOW - timedelta(days=3)
+        job.completed_at = NOW - timedelta(days=2) if recorded_times else None
+        session.add(
+            Delivery(
+                job_id=job_id,
+                artifact_id=artifact_id,
+                destination="synthetic",
+                event="plano.concluido",
+                status="succeeded",
+                created_at=NOW - timedelta(days=3),
+                delivered_at=NOW - timedelta(days=1) if recorded_times else None,
+            )
+        )
+    client = api_client("leitura")
+    path = url_of("get_submission_journey", submission_id=submission_id)
+    response = client.get(path)
+    assert response.status_code == 200, response.text
+    facts = {item["type"]: item for item in response.json()["local_facts"]}
+    from datetime import UTC, datetime
+
+    assert (
+        datetime.fromisoformat(facts["submission"]["occurred_at"]).astimezone(UTC).isoformat()
+        == "2026-10-16T12:00:00+00:00"
+    )
+    assert facts["generation"]["occurred_at"] == (
+        "2026-10-18T12:00:00Z" if recorded_times else None
+    )
+    assert facts["transport"]["occurred_at"] == ("2026-10-19T12:00:00Z" if recorded_times else None)
+    assert facts["current_plan_authorization"]["state"] == "held"
+    assert facts["current_plan_authorization"]["occurred_at"] is None
+    live = Live(client, tmp_path)
+    try:
+        assert (
+            live.ok("get_submission_journey", {"submission_id": str(submission_id)})["local_facts"]
+            == response.json()["local_facts"]
+        )
+    finally:
+        live.close()
+    assert login(client).status_code == 303
+    page = client.get(f"/admin/submissions/{submission_id}/journey")
+    assert page.status_code == 200
+    local_section = page.text.split("<h2>Fatos locais</h2>", 1)[1].split("</section>", 1)[0]
+    paragraphs = re.findall(r"<p>(.*?)</p>", local_section, flags=re.DOTALL)
+    generation = next(text for text in paragraphs if "Processamento" in text)
+    transport = next(text for text in paragraphs if "Transporte local" in text)
+    authorization = next(text for text in paragraphs if "Autorização atual" in text)
+    assert "17/10/2026" not in local_section
+    assert "Instante da transição não registrado" in authorization
+    if recorded_times:
+        assert "18/10/2026 09:00" in generation and "19/10/2026 09:00" in transport
+    else:
+        assert "Instante da transição não registrado" in generation
+        assert "Instante da transição não registrado" in transport
+
+
+@pytest.mark.parametrize("recorded_time", [True, False])
+def test_capture_transport_uses_delivery_time_or_unknown_not_creation(world, deps, recorded_time):
+    from app.models import CaptureDelivery, WebhookDestination
+
+    with deps.sessions.begin() as session:
+        destination = WebhookDestination(
+            form_slug="synthetic",
+            url="https://example.test/synthetic",
+            secret_sealed="synthetic-unusable",
+            purpose="internal",
+            purpose_origin="explicit",
+            created_by="teste",
+            updated_by="teste",
+        )
+        session.add(destination)
+        session.flush()
+        session.add(
+            CaptureDelivery(
+                submission_id=UUID(world["submission"]),
+                webhook_destination_id=destination.id,
+                config_version=1,
+                status="succeeded",
+                created_at=NOW - timedelta(days=3),
+                delivered_at=NOW - timedelta(days=1) if recorded_time else None,
+            )
+        )
+    fact = next(item for item in read(world)["local_facts"] if item["type"] == "capture_transport")
+    assert fact["occurred_at"] == ("2026-10-19T12:00:00Z" if recorded_time else None)
+
+
+def test_meeting_interval_uses_declared_zone_for_both_ends_and_keeps_api_utc(world):
+    from test_admin import login
+
+    body = event(world)
+    body["data"].update(
+        timezone="America/New_York",
+        starts_at="2026-10-25T13:00:00Z",
+        ends_at="2026-10-25T14:30:00Z",
+    )
+    assert post(world, body).status_code == 201
+    declared = read(world)["external_declared"][0]
+    assert declared["starts_at"] == "2026-10-25T13:00:00Z"
+    assert declared["ends_at"] == "2026-10-25T14:30:00Z"
+    client = world["writer"]
+    assert login(client).status_code == 303
+    page = client.get("/admin/submissions/" + world["submission"] + "/journey")
+    assert page.status_code == 200
+    assert (
+        "Início: 25/10/2026 às 09:00 · término: 25/10/2026 às 10:30 · fuso: America/New_York"
+        in page.text
+    )
+    assert "Ocorrência" in page.text and "(Brasília)" in page.text
+
+
+@pytest.mark.parametrize("world", [{"generation": "pdf"}], indirect=True)
+def test_automatic_authorization_and_queued_generation_have_no_invented_transition_time(world):
+    facts = {item["type"]: item for item in read(world)["local_facts"]}
+    assert facts["current_plan_authorization"]["state"] == "automatic"
+    assert facts["current_plan_authorization"]["occurred_at"] is None
+    assert facts["generation"]["state"] == "queued"
+    assert facts["generation"]["occurred_at"] is None

@@ -267,7 +267,13 @@ def read_journey(session, submission_id, *, with_lead=False):
         .where(Job.submission_id == submission.id)
         .options(
             load_only(
-                Job.id, Job.submission_id, Job.attempt, Job.status, Job.created_at, Job.expires_at
+                Job.id,
+                Job.submission_id,
+                Job.attempt,
+                Job.status,
+                Job.created_at,
+                Job.completed_at,
+                Job.expires_at,
             )
         )
     )
@@ -280,13 +286,16 @@ def read_journey(session, submission_id, *, with_lead=False):
             LocalFact(
                 type="current_plan_authorization",
                 state=access["state"],
-                occurred_at=access.get("released_at") or job.created_at,
+                occurred_at=access.get("released_at"),
                 attempt=job.attempt,
             )
         )
         local.append(
             LocalFact(
-                type="generation", state=job.status, occurred_at=job.created_at, attempt=job.attempt
+                type="generation",
+                state=job.status,
+                occurred_at=job.completed_at if job.status == "completed" else None,
+                attempt=job.attempt,
             )
         )
         for release in session.execute(
@@ -303,7 +312,7 @@ def read_journey(session, submission_id, *, with_lead=False):
                 )
             )
         for delivery in session.execute(
-            sa.select(Delivery.status, Delivery.created_at, Delivery.authorized_attempt)
+            sa.select(Delivery.status, Delivery.delivered_at, Delivery.authorized_attempt)
             .where(Delivery.job_id == job.id)
             .order_by(Delivery.created_at)
         ):
@@ -311,18 +320,20 @@ def read_journey(session, submission_id, *, with_lead=False):
                 LocalFact(
                     type="transport",
                     state=delivery.status,
-                    occurred_at=delivery.created_at,
+                    occurred_at=delivery.delivered_at if delivery.status == "succeeded" else None,
                     attempt=delivery.authorized_attempt,
                 )
             )
     for delivery in session.execute(
-        sa.select(CaptureDelivery.status, CaptureDelivery.created_at)
+        sa.select(CaptureDelivery.status, CaptureDelivery.delivered_at)
         .where(CaptureDelivery.submission_id == submission.id)
         .order_by(CaptureDelivery.created_at)
     ):
         local.append(
             LocalFact(
-                type="capture_transport", state=delivery.status, occurred_at=delivery.created_at
+                type="capture_transport",
+                state=delivery.status,
+                occurred_at=delivery.delivered_at if delivery.status == "succeeded" else None,
             )
         )
     projected = []

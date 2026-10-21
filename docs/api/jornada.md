@@ -58,3 +58,14 @@ A migration0018 acrescenta três tabelas sobre0017, conserva o piso2 e não seme
 credenciais. Instale com migrador que conhece0018; migrador2 anterior recusa o head novo. O retorno
 a um runtime2 anterior depende da prova de compatibilidade e não oferece endpoints de eventos.
 A prova sintética de código não valida emissor real, ativação comercial ou conformidade universal.
+
+Os fatos locais distinguem estado de instante comprovado. `local_facts[].occurred_at` é nullable:
+a conclusão usa `Job.completed_at` quando o estado é concluído; o transporte concluído usa
+`delivered_at`; submissão e liberação conservam seus instantes registrados. Sem instante da
+transição, inclusive autorização retida/automática, a API e o MCP retornam `null` e a tela informa
+“Instante da transição não registrado”. Datas de criação/atualização do registro não substituem
+conclusão, envio ou liberação. Isso não acrescenta histórico nem muda retenção.
+
+O intervalo da agenda mostra início e término no mesmo fuso IANA declarado, explicitado na tela;
+a API conserva esses instantes em UTC. Ocorrência e recebimento continuam identificados
+separadamente e podem ser apresentados em Brasília no painel.
