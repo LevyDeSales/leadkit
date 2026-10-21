@@ -12,7 +12,7 @@ Antes da primeira publicação não há formulário público disponível. Depois
 
 ## Só quero salvar respostas. Preciso configurar geração?
 
-Não. Escolha captura e uma confirmação, botão ou encaminhamento, conforme o [começo rápido](comeco-rapido.md). Não escolha acompanhamento do PDF. Os envios aparecem em “Capturas”, sem pedido de geração.
+Não. Escolha captura e uma confirmação, botão ou encaminhamento, conforme o [começo rápido](comeco-rapido.md). Não escolha acompanhamento do PDF. Os envios aparecem em “Respostas” → “Somente respostas”, na lista de capturas, sem pedido de geração.
 
 ## O que posso testar sem enviar dados para fora?
 

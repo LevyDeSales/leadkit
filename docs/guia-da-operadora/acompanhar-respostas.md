@@ -4,13 +4,13 @@
 
 ## Encontrar respostas recebidas
 
-**Onde entrar:** “Capturas” para formulários sem PDF; “Pedidos” para formulários com geração.
+**Onde entrar:** “Respostas” (`/admin/responses`) → “Somente respostas” para formulários sem PDF ou “Com PDF” para formulários com geração. Essas opções abrem as listas existentes, chamadas “Capturas confirmadas” e “Pedidos de plano”.
 
-Na lista de “Formulários”, a coluna “Envios” pode incluir capturas, mas seu link abre apenas “Pedidos”. Para respostas sem PDF, entre diretamente em “Capturas”.
+Na lista de “Formulários”, a coluna “Respostas” abre “Respostas” para aquele formulário. Escolha a lista desejada; o filtro do formulário é preservado. Um mesmo formulário pode ter histórico nas duas listas se mudou de finalidade entre versões.
 
-Na captura (`/admin/captures`), preencha “Formulário” com o endereço identificador do formulário e, se necessário, “Número da versão”; clique em “Filtrar capturas”. Abra a linha desejada. O detalhe mostra identificação, respostas, consentimento e pontuação, atualmente reunidos também em texto JSON. Não é uma falha de exibição: peça ajuda para interpretar os nomes se necessário.
+Em “Somente respostas”, na lista de capturas (`/admin/captures`), preencha “Formulário” com o endereço identificador do formulário e, se necessário, “Número da versão”; clique em “Filtrar capturas”. Abra a linha desejada. O detalhe mostra identificação, respostas, consentimento e pontuação, atualmente reunidos também em texto JSON. Peça ajuda para interpretar os nomes se necessário.
 
-Em “Pedidos” (`/admin`), use “Buscar” por nome, e-mail ou código e os filtros “Formulário”, “Versão”, “Recebido”, “Status”, “Entrega” e “Planilha”. A versão aparece quando um formulário foi escolhido. Abra o nome na linha para ler “Respostas do formulário”, “Contato e consentimentos” e a “Linha do tempo”.
+Em “Com PDF”, na lista de pedidos (`/admin`), use “Buscar” por nome, e-mail ou código e os filtros “Formulário”, “Versão”, “Recebido”, “Status”, “Entrega” e “Planilha”. A versão aparece quando um formulário foi escolhido. Abra o nome na linha para ler “Respostas do formulário”, “Contato e consentimentos” e a “Linha do tempo”.
 
 **Resultado:** você encontra o envio e sua versão, sem alterar o conteúdo respondido. No detalhe, “Jornada” abre os fatos locais e as declarações externas.
 

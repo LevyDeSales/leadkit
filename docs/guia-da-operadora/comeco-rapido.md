@@ -24,7 +24,7 @@ A finalidade determina o que será produzido. A conclusão determina o que a par
 5. Clique em “Salvar o rascunho”, faça a [validação local da captura](testar-e-publicar.md) e confira a conclusão salva.
 6. Quando estiver pronta para abrir o formulário ao público, siga [Publicar](testar-e-publicar.md).
 
-**Resultado:** após a publicação e um envio aceito, as respostas aparecem em “Capturas”. Não procure esse envio em “Pedidos” nem espere PDF.
+**Resultado:** após a publicação e um envio aceito, as respostas aparecem em “Respostas” → “Somente respostas”, na lista de capturas. Não espere PDF para esse envio.
 
 **Se houver erro:** confira “Geração” e “Conclusão” juntas. Falha de integração não exige que a participante responda novamente.
 
@@ -38,7 +38,7 @@ A finalidade determina o que será produzido. A conclusão determina o que a par
 4. Escolha como concluir o envio, salve, confira a aparência e [teste o rascunho](testar-e-publicar.md).
 5. Revise os destinos de integração antes de publicar. Quando estiver pronta, publique a versão e confirme que o formulário está ativo.
 
-**Resultado:** novos envios geram pedidos que você acompanha em “Pedidos”. O PDF depende da geração e dos serviços configurados na instalação.
+**Resultado:** novos envios geram pedidos que você acompanha em “Respostas” → “Com PDF”. O PDF depende da geração e dos serviços configurados na instalação.
 
 **Se houver erro:** confira o teste e peça ajuda técnica se a fila, a geração ou o armazenamento estiverem indisponíveis. Não use reprocessamento apenas para testar uma configuração externa.
 

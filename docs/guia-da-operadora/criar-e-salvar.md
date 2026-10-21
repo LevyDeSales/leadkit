@@ -10,7 +10,9 @@
 2. Em “Entrar no painel”, preencha “Usuário” e “Senha” e clique em “Entrar”.
 3. Confira a identificação do ambiente, quando exibida, e seu usuário no topo. A versão do sistema aparece no rodapé.
 
-**Resultado:** o menu oferece “Pedidos”, “Capturas”, “Formulários”, “Imagens” e “Integrações”, além das áreas avançadas. Para encerrar, clique em “Sair”.
+**Resultado:** quando você entra sem um destino específico, o painel abre “Formulários”. O menu oferece “Formulários”, “Respostas”, “Imagens”, “Integrações”, “Avançado” e “Guia de uso”. O nome da aplicação no topo também leva a “Formulários”. Se você abriu uma tela protegida antes de entrar, o login pode retornar a ela.
+
+“Guia de uso” abre o guia público de `develop` no GitHub; ele pode estar à frente da versão instalada. Para encerrar, clique em “Sair”.
 
 **Se não entrar:** confira suas credenciais. Tentativas repetidas podem causar bloqueio temporário; respeite a espera informada. Não há recuperação de senha por e-mail nessa tela: peça ajuda à administradora técnica. Se a sessão expirar durante uma edição, entre novamente e confira o que ficou salvo antes de repetir a ação.
 
