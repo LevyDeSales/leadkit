@@ -19,6 +19,12 @@ Para o trabalho diário, use o login do painel. Esta seção serve para quando u
 
 **Se perder ou suspeitar de uso indevido:** revogue a chave correspondente e combine outra com a administradora. Revogar interrompe os clientes que a usam; não há recuperação do valor original. A validade pode expirar, e o último uso não comprova que o cliente executou corretamente toda sua tarefa.
 
+## Consultar a referência da API (opcional)
+
+**Onde entrar:** “Avançado” → “Referência da API” (`/admin/api/v1/reference`). Consulte-a com a responsável técnica se precisar entender uma integração. Sua sessão do painel permite abrir a documentação; abrir e ler não executa operações nem concede permissão de escrita pela API.
+
+As chamadas exigem uma chave de API própria, com o papel exigido pela operação. O botão “Test Request” executa a operação na instalação real, com os efeitos descritos; não é uma simulação. Deixe a responsável técnica avaliar a operação e conduzir qualquer execução.
+
 ## Usar um assistente conectado
 
 **Onde entrar:** “Avançado” → “MCP” (`/admin/mcp`). MCP é a conexão que permite a um assistente usar ferramentas administrativas. A página contém orientações técnicas para o cliente; instalação, transporte e configuração cabem à administradora técnica.

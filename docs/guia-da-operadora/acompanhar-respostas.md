@@ -72,6 +72,8 @@ A liberação manual só vale para versões que optaram explicitamente por “Ma
 
 **Onde entrar:** formulário → “Retenção” → “Mudar os prazos…”.
 
-Leia os prazos antes de propor alteração. “Arquivo do PDF” trata a guarda do arquivo; “Pedido inteiro” trata respostas, plano, PDF e contato quando não há outro pedido. Campos vazios usam o padrão da instalação. Alterar prazo não exige publicar e alcança pedidos existentes. A rotina roda diariamente e respeita o vencimento do link da participante.
+Leia os prazos antes de propor alteração. “Arquivo do PDF” trata a guarda do arquivo; “Pedido inteiro” trata respostas, plano, PDF e contato quando não há outro pedido. “Pedido inteiro” também controla a guarda das respostas sem PDF (capturas), com prazo contado do aceite do envio. A validade do recibo e a repetição do envio (replay) não prolongam esse prazo.
+
+Campos vazios usam o padrão da instalação. Alterar prazo não exige publicar e alcança pedidos e capturas existentes, inclusive em reduções. A rotina roda diariamente. Nos pedidos com PDF, a exclusão do pedido e do arquivo espera também o vencimento do link da participante; essa proteção não se aplica às capturas. Cópias já enviadas a sistemas externos, como planilhas e CRM, têm guarda própria, sob responsabilidade de quem os opera.
 
 Se a mudança estiver aprovada, preencha os prazos e clique em “Salvar os prazos”. Em redução, leia o impacto, marque a confirmação e use “Confirmar e salvar os prazos”. O que for apagado não volta. Se o impacto não estiver claro, não confirme e consulte a responsável. Aumentar um prazo depois não recupera o que já foi excluído.
