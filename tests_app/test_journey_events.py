@@ -2,6 +2,7 @@
 
 import copy
 from datetime import timedelta
+from html.parser import HTMLParser
 from uuid import UUID, uuid4
 
 import pytest
@@ -427,6 +428,55 @@ def test_mcp_projection_confirmations_and_sensitive_opt_in(world, tmp_path):
         live.close()
 
 
+class EventSourcesPage(HTMLParser):
+    """Controles renderizados por formulário, sem capturar resposta de segredo."""
+
+    def __init__(self, html):
+        super().__init__()
+        self.forms = {}
+        self.current = None
+        self.ids = {}
+        self.error_target = None
+        self.in_errors = False
+        self.feed(html)
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        if attrs.get("id"):
+            self.ids[attrs["id"]] = attrs
+        if tag == "div" and attrs.get("id") == "event-errors":
+            self.in_errors = True
+        if tag == "a" and self.in_errors:
+            self.error_target = attrs.get("href")
+        if tag == "form":
+            self.current = self.forms.setdefault(attrs.get("action"), [])
+        if self.current is not None:
+            self.current.append((tag, attrs))
+
+    def handle_endtag(self, tag):
+        if tag == "form":
+            self.current = None
+        if tag == "div":
+            self.in_errors = False
+
+    def field(self, action, name):
+        return next(
+            attrs
+            for tag, attrs in self.forms[action]
+            if tag == "input" and attrs.get("name") == name
+        )
+
+    def policy(self, action):
+        return {
+            key: sorted(
+                attrs["value"]
+                for tag, attrs in self.forms[action]
+                if tag == "input" and attrs.get("name") == key and "checked" in attrs
+            )
+            for key in ("types", "channels", "evidence_kinds")
+        }
+
+
 def test_html_pages_native_controls_csrf_safe_retry_and_journey(world):
     from admin_api_support import ORIGIN
     from test_admin import csrf_token, login
@@ -443,10 +493,13 @@ def test_html_pages_native_controls_csrf_safe_retry_and_journey(world):
     assert login(client).status_code == 303
     csrf = csrf_token(client)
     source_path = "/admin/event-sources/" + world["source"]["id"]
+    source_before = client.get(url_of("get_event_source", source_id=world["source"]["id"])).json()
     page = client.get(source_path)
     assert page.status_code == 200, page.text
     assert "<fieldset>" in page.text and 'type="checkbox"' in page.text
     assert "Fonte sintética" in page.text and world["issued"]["secret"] not in page.text
+    credentials_path = "/admin/api/v1/event-sources/" + world["source"]["id"] + "/credentials"
+    credentials_before = client.get(credentials_path).json()
     refused = client.post(
         source_path + "/credential",
         data={
@@ -462,6 +515,17 @@ def test_html_pages_native_controls_csrf_safe_retry_and_journey(world):
         headers=ORIGIN,
     )
     assert refused.status_code == 422, refused.text
+    recovery = EventSourcesPage(refused.text)
+    assert recovery.field(source_path + "/update", "name")["value"] == "Fonte sintética"
+    assert recovery.policy(source_path + "/update") == world["source"]["policy"]
+    assert recovery.field(source_path + "/credential", "name")["value"] == "Credencial preservada"
+    assert recovery.error_target == "#new-date"
+    assert "new-date" in recovery.ids
+    assert (
+        client.get(url_of("get_event_source", source_id=world["source"]["id"])).json()
+        == source_before
+    )
+    assert client.get(credentials_path).json() == credentials_before
     assert 'value="Credencial preservada"' in refused.text
     assert 'value="2026-10-20T00:00"' in refused.text
     assert world["issued"]["secret"] not in refused.text
@@ -479,6 +543,173 @@ def test_html_pages_native_controls_csrf_safe_retry_and_journey(world):
     capture = client.get("/admin/captures/" + world["submission"])
     assert path in capture.text
     assert client.post(path + "/erase", data={"confirm": "true"}, headers=ORIGIN).status_code == 403
+
+
+@pytest.mark.parametrize("operation", ["create", "update"])
+def test_html_source_error_preserves_only_submitted_source_fields(world, operation):
+    from admin_api_support import ORIGIN
+    from test_admin import csrf_token, login
+
+    client = world["writer"]
+    assert login(client).status_code == 303
+    source_path = "/admin/event-sources/" + world["source"]["id"]
+    source_before = client.get(url_of("get_event_source", source_id=world["source"]["id"])).json()
+    path = (
+        "/admin/forms/synthetic/event-sources" if operation == "create" else source_path + "/update"
+    )
+    policy = {
+        "types": ["meeting.state_reported"],
+        "channels": [],
+        "evidence_kinds": ["calendar_record"],
+    }
+    response = client.post(
+        path,
+        data={
+            "csrf_token": csrf_token(client),
+            "expected_version": world["source"]["version"],
+            "receiver_revision": "1",
+            "idempotency_key": str(uuid4()),
+            "name": "Fonte em edição",
+            "namespace": "draft-source",
+            **policy,
+            "confirm": "true",
+        },
+        headers=ORIGIN,
+    )
+    assert response.status_code == 422
+    page = EventSourcesPage(response.text)
+    assert page.field(path, "name")["value"] == "Fonte em edição"
+    assert page.policy(path) == policy
+    assert page.error_target == "#source-name"
+    assert page.ids["event-errors"]["tabindex"] == "-1"
+    if operation == "create":
+        assert page.field(path, "namespace")["value"] == "draft-source"
+    else:
+        assert page.field(source_path + "/credential", "name")["value"] == ""
+        assert page.field(source_path + "/credential", "expires_at")["value"] == ""
+    assert (
+        client.get(url_of("get_event_source", source_id=world["source"]["id"])).json()
+        == source_before
+    )
+    assert len(client.get(url_of("list_event_sources", slug="synthetic")).json()["items"]) == 1
+    assert world["issued"]["secret"] not in response.text
+
+
+def test_html_rotation_error_is_scoped_to_exact_credential(world):
+    from admin_api_support import ORIGIN
+    from test_admin import csrf_token, login
+
+    client = world["writer"]
+    source_path = "/admin/event-sources/" + world["source"]["id"]
+    source_before = client.get(url_of("get_event_source", source_id=world["source"]["id"])).json()
+    second_response = client.post(
+        "/admin/api/v1/event-sources/" + world["source"]["id"] + "/credentials",
+        json=world["credential_body"]
+        | {
+            "name": "Segunda credencial",
+            "idempotency_key": str(uuid4()),
+            "expected_source_version": world["source"]["version"],
+        },
+    )
+    assert second_response.status_code == 201
+    second = second_response.json()["credential"]
+    credentials_path = "/admin/api/v1/event-sources/" + world["source"]["id"] + "/credentials"
+    before = client.get(credentials_path).json()
+    assert login(client).status_code == 303
+    target = world["issued"]["credential"]
+    rotation = source_path + "/credentials/" + target["id"] + "/rotate"
+    other = source_path + "/credentials/" + second["id"] + "/rotate"
+    response = client.post(
+        rotation,
+        data={
+            "csrf_token": csrf_token(client),
+            "expected_version": target["version"],
+            "idempotency_key": str(uuid4()),
+            "expiry_choice": "date",
+            "expires_at": "2020-01-02T13:00",
+            "confirm": "true",
+        },
+        headers=ORIGIN,
+    )
+    assert response.status_code == 422
+    page = EventSourcesPage(response.text)
+    assert page.field(rotation, "expires_at")["value"] == "2020-01-02T13:00"
+    assert page.field(other, "expires_at")["value"] == ""
+    assert page.field(source_path + "/credential", "expires_at")["value"] == ""
+    assert [
+        attrs["value"]
+        for tag, attrs in page.forms[rotation]
+        if tag == "option" and "selected" in attrs
+    ] == ["date"]
+    for untouched in (other, source_path + "/credential"):
+        assert not any(
+            tag == "option" and "selected" in attrs for tag, attrs in page.forms[untouched]
+        )
+    assert page.field(source_path + "/update", "name")["value"] == world["source"]["name"]
+    assert page.policy(source_path + "/update") == world["source"]["policy"]
+    target_id = "rotate-" + target["id"] + "-date"
+    assert page.error_target == "#" + target_id
+    assert page.ids[target_id]["name"] == "expires_at"
+    assert client.get(credentials_path).json() == before
+    assert (
+        client.get(url_of("get_event_source", source_id=world["source"]["id"])).json()
+        == source_before
+    )
+    assert world["issued"]["secret"] not in response.text
+    assert second_response.json()["secret"] not in response.text
+
+
+@pytest.mark.parametrize("operation", ["enabled", "revoke"])
+def test_html_state_command_error_keeps_editing_forms_untouched(world, operation):
+    from admin_api_support import ORIGIN
+    from test_admin import csrf_token, login
+
+    client = world["writer"]
+    assert login(client).status_code == 303
+    source_path = "/admin/event-sources/" + world["source"]["id"]
+    source_before = client.get(url_of("get_event_source", source_id=world["source"]["id"])).json()
+    credential = world["issued"]["credential"]
+    path = (
+        source_path + "/enabled"
+        if operation == "enabled"
+        else source_path + "/credentials/" + credential["id"] + "/revoke"
+    )
+    credentials_path = "/admin/api/v1/event-sources/" + world["source"]["id"] + "/credentials"
+    before = client.get(credentials_path).json()
+    response = client.post(
+        path,
+        data={
+            "csrf_token": csrf_token(client),
+            "expected_version": "2",
+            "enabled": "false",
+            "name": "Não deve preencher edição",
+            "expiry_choice": "date",
+            "expires_at": "2020-01-02T13:00",
+        },
+        headers=ORIGIN,
+    )
+    assert response.status_code == 422
+    page = EventSourcesPage(response.text)
+    assert page.field(source_path + "/update", "name")["value"] == world["source"]["name"]
+    assert page.policy(source_path + "/update") == world["source"]["policy"]
+    assert page.field(source_path + "/credential", "name")["value"] == ""
+    assert page.field(source_path + "/credential", "expires_at")["value"] == ""
+    assert (
+        page.field(source_path + "/credentials/" + credential["id"] + "/rotate", "expires_at")[
+            "value"
+        ]
+        == ""
+    )
+    target = "source-state" if operation == "enabled" else "revoke-" + credential["id"]
+    assert page.error_target == "#" + target
+    assert page.ids[target]["tabindex"] == "-1"
+    assert (
+        client.get(url_of("get_event_source", source_id=world["source"]["id"])).json()
+        == source_before
+    )
+    assert client.get(credentials_path).json() == before
+    assert "Não deve preencher edição" not in response.text
+    assert world["issued"]["secret"] not in response.text
 
 
 def test_credential_expiry_rotation_replay_and_policy_revision(world):

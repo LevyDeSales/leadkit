@@ -80,7 +80,16 @@ CHANNEL_LABELS = {
 
 
 def sources_page(
-    request, *, slug=None, source_id=None, status=200, message=None, values=None, created=None
+    request,
+    *,
+    slug=None,
+    source_id=None,
+    status=200,
+    message=None,
+    values=None,
+    created=None,
+    operation=None,
+    credential_id=None,
 ):
     from app.admin.routes import _page
 
@@ -112,6 +121,18 @@ def sources_page(
             if source
             else []
         )
+    prefix = "rotate-" + str(credential_id) if operation == "rotate" else "new"
+    expiry_target = prefix + (
+        "-date" if (values or {}).get("expiry_choice") == "date" else "-expiry"
+    )
+    error_target = {
+        "create": "source-name",
+        "update": "source-name",
+        "enabled": "source-state",
+        "credential": expiry_target,
+        "rotate": expiry_target,
+        "revoke": "revoke-" + str(credential_id),
+    }.get(operation, "source-name")
     return _page(
         request,
         "admin/event_sources.html",
@@ -122,6 +143,9 @@ def sources_page(
             "receiver": receiver_view,
             "credentials": credentials,
             "values": values or {},
+            "failed_operation": operation,
+            "failed_credential_id": str(credential_id) if credential_id else None,
+            "error_target": error_target,
             "created": created,
             "message": message,
             "type_labels": TYPE_LABELS,
@@ -235,14 +259,19 @@ def register(protected):
             result = raw.get(name, "")
             return result if isinstance(result, str) else ""
 
-        values = {
-            name: value(name) for name in ("name", "namespace", "expiry_choice", "expires_at")
-        }
-        values["types"] = [item for item in raw.getlist("types") if item in TYPE_LABELS]
-        values["channels"] = [item for item in raw.getlist("channels") if item in CHANNEL_LABELS]
-        values["evidence_kinds"] = [
-            item for item in raw.getlist("evidence_kinds") if item in EVIDENCE_LABELS
-        ]
+        values = {}
+        if operation in ("create", "update"):
+            values = {"name": value("name"), "namespace": value("namespace")}
+            for key, labels in (
+                ("types", TYPE_LABELS),
+                ("channels", CHANNEL_LABELS),
+                ("evidence_kinds", EVIDENCE_LABELS),
+            ):
+                values[key] = [item for item in raw.getlist(key) if item in labels]
+        elif operation in ("credential", "rotate"):
+            values = {name: value(name) for name in ("expiry_choice", "expires_at")}
+            if operation == "credential":
+                values["name"] = value("name")
         actor, now = request.state.admin_session.username, instant(request.app.state.admin_clock)
 
         def apply():
@@ -347,6 +376,8 @@ def register(protected):
                 status=status,
                 message=message,
                 values=values,
+                operation=operation,
+                credential_id=credential_id,
             )
 
     @protected.post("/forms/{slug}/event-sources")
