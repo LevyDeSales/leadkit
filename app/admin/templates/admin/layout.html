@@ -10,7 +10,7 @@
     <a href="/admin/captures"{% if section == "captures" %} aria-current="page"{% endif %}>Capturas</a>
     <a href="/admin/forms"{% if section == "forms" %} aria-current="page"{% endif %}>{{ m.icon('file') }}Formulários</a>
     <a href="/admin/assets"{% if section == "assets" %} aria-current="page"{% endif %}>{{ m.icon('image') }}Imagens</a>
-    <a href="/admin/destinations"{% if section == "destinations" %} aria-current="page"{% endif %}>{{ m.icon('send') }}Destinos</a>
+    <a href="/admin/integrations"{% if section in ("integrations", "destinations") %} aria-current="page"{% endif %}>{{ m.icon('send') }}Integrações</a>
     <a href="/admin/api-keys"{% if section == "api-keys" %} aria-current="page"{% endif %}>{{ m.icon('key') }}Chaves de API</a>
     <a href="/admin/mcp"{% if section == "mcp" %} aria-current="page"{% endif %}>{{ m.icon('terminal') }}MCP</a>
   </nav>
