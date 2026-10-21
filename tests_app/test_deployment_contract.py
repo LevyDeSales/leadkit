@@ -16,8 +16,17 @@ def rollout_engine():
     reset_test_schema(TEST_DATABASE_URL)
     command.upgrade(Config(str(Path(__file__).parents[1] / "app/alembic.ini")), "head")
     engine = make_engine(TEST_DATABASE_URL)
-    yield engine
-    engine.dispose()
+    # Estes cenários exercitam o piso1 histórico com o binário composto.
+    with engine.begin() as connection:
+        connection.exec_driver_sql("UPDATE deployment_contract SET minimum_contract = 1")
+    try:
+        yield engine
+    finally:
+        with engine.begin() as connection:
+            connection.exec_driver_sql(
+                "UPDATE deployment_contract SET minimum_contract = 2, phase = 'blocked', epoch = NULL, evidence = '{}'::jsonb, attested_at = NULL"
+            )
+        engine.dispose()
 
 
 @pytest.fixture
@@ -39,7 +48,7 @@ def test_migrated_database_blocks_participant_but_allows_compatible_runtime(cont
         assert_participant_contract(contract_session)
 
 
-def evidence():
+def evidence(*, contract=2):
     """Manifesto sintético calculado a partir de duas réplicas conhecidas."""
 
     def service(role, digit):
@@ -49,9 +58,9 @@ def evidence():
             "spec_version": 4,
             "observed_spec_version": 4,
             "image": image,
-            "contract": 1,
+            "contract": contract,
             "previous_image": image,
-            "previous_contract": 1,
+            "previous_contract": contract,
             "replicas": 1,
             "tasks": [
                 {
@@ -102,6 +111,9 @@ def test_attestation_requires_current_epoch_and_complete_fleet(contract_session)
     "change",
     [
         "old_current",
+        "boolean_capability",
+        "boolean_previous",
+        "boolean_schema",
         "old_previous",
         "running_old",
         "missing_replica",
@@ -122,6 +134,12 @@ def test_incomplete_or_mixed_evidence_never_enables_participant(contract_session
 
     manifest = evidence()
     service = manifest["services"]["worker"]
+    if change == "boolean_previous":
+        service["previous_contract"] = True
+    if change == "boolean_schema":
+        manifest["schema_version"] = True
+    if change == "boolean_capability":
+        service["contract"] = True
     if change == "old_current":
         service["contract"] = 0
     if change == "old_previous":
@@ -159,7 +177,7 @@ def test_capability_needs_neither_configuration_nor_database():
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    assert json.loads(result.stdout) == {"contract": 1}
+    assert json.loads(result.stdout) == {"contract": 2}
 
 
 @pytest.mark.parametrize(
@@ -217,7 +235,7 @@ def test_future_floor_blocks_runtime_without_lowering_it(contract_session):
     )
     from app.models import DeploymentContract
 
-    contract_session.execute(sa.update(DeploymentContract).values(minimum_contract=2))
+    contract_session.execute(sa.update(DeploymentContract).values(minimum_contract=3))
     with pytest.raises(DeploymentContractError):
         assert_runtime_contract(contract_session)
     with pytest.raises(DeploymentContractError):

@@ -194,6 +194,11 @@ class JobPdf(BaseModel):
 
 
 class JobDelivery(BaseModel):
+    event: str = "plano.concluido"
+    release_id: uuid.UUID | None = None
+    occurred_at: AwareDatetime | None = None
+    blocked_reason: str | None = None
+
     audience: Literal["internal", "participant"] = "internal"
     authorization_origin: Literal["legacy", "explicit"] = "legacy"
     config_version: int | None = None
@@ -416,6 +421,10 @@ def _delivery_of(delivery: queries.DeliveryState, run_url_template: str | None) 
         "config_version": delivery.config_version,
         "current_config_version": delivery.current_config_version,
         "dispatch_no": delivery.dispatch_no,
+        "event": delivery.event,
+        "release_id": delivery.release_id,
+        "occurred_at": utc(delivery.occurred_at),
+        "blocked_reason": delivery.blocked_reason,
         "id": delivery.id,
         "destination": delivery.destination,
         "status": delivery.status,
@@ -450,6 +459,9 @@ def _state_fields(state: queries.JobState, run_url_template: str | None) -> dict
     return {
         "current_pdf": availability_dict(state.current_pdf),
         "public_id": state.public_id,
+        "release": ReleaseStatus(
+            **{**state.release, "released_at": utc(state.release["released_at"])}
+        ),
         "status": state.status,
         "stage": state.stage,
         "attempt": state.attempt,
@@ -517,7 +529,20 @@ class CurrentPdf(BaseModel):
     )
 
 
+class ReleaseStatus(BaseModel):
+    form_version_number: int | None
+    policy: Literal["automatic", "manual", "unavailable"]
+    state: Literal["automatic", "held", "released", "unavailable"]
+    release_version: int
+    release_id: uuid.UUID | None
+    released_at: AwareDatetime | None
+    attempt: int
+    artifact_id: uuid.UUID | None
+
+
 class JobState(BaseModel):
+    release: ReleaseStatus
+
     """O estado de um pedido, sem nada que diga quem é a lead."""
 
     public_id: str = Field(
@@ -685,3 +710,43 @@ class JobPlanProjection(BaseModel):
     attempt: int
     audience: Literal["participant", "internal"]
     lead_data: JobProjectionData
+
+
+class ReleaseJobPdfRequest(ConfirmedInput):
+    expected_attempt: int = Field(ge=1)
+    expected_artifact_id: uuid.UUID
+    expected_form_version_number: int = Field(ge=1)
+    expected_release_version: int = Field(ge=0)
+    idempotency_key: uuid.UUID
+    mode: Literal["standard", "alternative"]
+    reason_code: Literal["operator_review", "participant_request", "alternative_channel", "other"]
+
+
+class ReleaseNotification(BaseModel):
+    id: uuid.UUID
+    event: str
+    status: DeliveryStatus
+
+
+class ReleasedJobPdf(BaseModel):
+    release_id: uuid.UUID
+    attempt: int
+    artifact_id: uuid.UUID
+    release_version: int
+    occurred_at: AwareDatetime
+    mode: Literal["standard", "alternative"]
+    reason_code: str
+    notification_decision: Literal["outbox", "no_participant_channel", "event_not_selected"]
+    current: bool
+    replay: bool
+    notifications: list[ReleaseNotification]
+    launched: bool
+
+    @classmethod
+    def of(cls, done):
+        from dataclasses import asdict
+
+        data = asdict(done.commit)
+        data.pop("delivery_ids")
+        data["occurred_at"] = utc(data["occurred_at"])
+        return cls(**data, notifications=list(done.notifications), launched=done.launched)

@@ -15,7 +15,7 @@ def test_migration_backfills_only_existing_destinations_and_preserves_revision(f
             (id, form_slug, url, secret_sealed, version, created_by, created_at, updated_by, updated_at, secret_created_at)
             VALUES ('00000000-0000-0000-0000-000000000001', NULL, 'https://example.test/hook', 'synthetic', 7, 'operadora', now(), 'operadora', now(), now())
         """)
-    command.upgrade(config(), "head")
+    command.upgrade(config(), "0016_plan_audiences")
     with fresh.begin() as connection:
         assert schema_signature(connection) == SIGNATURES["0016_plan_audiences"]
         assert connection.exec_driver_sql(

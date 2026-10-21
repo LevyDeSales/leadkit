@@ -148,6 +148,7 @@ SCREEN_FIELDS = (
     "scoring",
     "notices",
     "completion",
+    "release",
 )
 # O que o resto não traz: o endereço, que só muda antes da primeira publicação e no campo dele, e
 # a versão do texto do consentimento, que a publicação sobe sozinha. Salvar põe de volta os
@@ -681,6 +682,19 @@ def _rename_of(session: Session, draft: Draft, new_slug: str | None) -> str | No
     new_slug = (new_slug or "").strip() or None
     rename = new_slug if new_slug is not None and new_slug != draft.slug else None
     if rename is not None:
+        from app.models import HandoffReceiver
+
+        if session.scalar(
+            sa.select(HandoffReceiver.id).where(HandoffReceiver.form_slug == draft.slug)
+        ):
+            raise DefinitionError(
+                [
+                    Problem(
+                        "slug",
+                        "este endereço já tem receptor de encaminhamento; crie uma cópia para usar outro endereço",
+                    )
+                ]
+            )
         refused = SLUG_PUBLISHED if draft.published else slug_problem(session, rename)
         if refused is not None:
             raise DefinitionError([Problem("slug", refused)])
@@ -916,6 +930,11 @@ def _store(
     now = utc_now()
     try:
         with deps.sessions.begin() as session:
+            from app.forms.continuation_contract import assert_definition_contract
+            from app.integration_readiness import configuration_lock
+
+            configuration_lock(session, shared=True)
+            assert_definition_contract(session, document)
             # A linha do formulário serializa as mudanças do rascunho e a publicação.
             session.execute(sa.select(Form.id).where(Form.id == draft.form_id).with_for_update())
             latest = load(session, draft.slug)
@@ -947,6 +966,17 @@ def _rename(session: Session, draft: Draft, slug: str, *, actor: str) -> None:
     vai junto. Ninguém recebeu o endereço antigo: o formulário nunca esteve no ar."""
     if draft.published:
         raise DefinitionError([Problem("slug", SLUG_PUBLISHED)])
+    from app.models import HandoffReceiver
+
+    if session.scalar(sa.select(HandoffReceiver.id).where(HandoffReceiver.form_slug == draft.slug)):
+        raise DefinitionError(
+            [
+                Problem(
+                    "slug",
+                    "este endereço já tem receptor de encaminhamento; crie uma cópia para usar outro endereço",
+                )
+            ]
+        )
     session.execute(sa.update(Form).where(Form.id == draft.form_id).values(slug=slug))
     session.execute(
         sa.update(WebhookDestination)
@@ -1033,6 +1063,10 @@ def _origin(session: Session, source: str, *, slug: str, title: str) -> _Origin 
             return None
         base = draft.document
     document = {**base, "slug": slug, "title": title}
+    if isinstance(document.get("completion"), Mapping) and document["completion"].get("handoff"):
+        document["completion"] = {
+            key: value for key, value in document["completion"].items() if key != "handoff"
+        }
     if isinstance(document.get("consent"), Mapping):
         document["consent"] = {**document["consent"], "version": f"{slug}-v1"}
     return _Origin(document, version)
@@ -1123,6 +1157,9 @@ def _insert_form(
     digest = fingerprint(document)
     now = utc_now()
     with deps.sessions.begin() as session:
+        from app.forms.continuation_contract import assert_definition_contract
+
+        assert_definition_contract(session, document)
         form_id = session.scalar(
             insert(Form)
             .values(
@@ -1441,6 +1478,9 @@ def publish(
             from app.integration_readiness import problems as integration_problems
 
             configuration_lock(session)
+            from app.forms.continuation_contract import assert_definition_contract
+
+            assert_definition_contract(session, found.document)
             if issues := integration_problems(session, found.spec):
                 raise PublishRefused(found, ["Integrações incompatíveis com a finalidade."], issues)
             session.execute(sa.select(Form.id).where(Form.id == draft.form_id).with_for_update())

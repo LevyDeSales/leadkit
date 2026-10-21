@@ -1779,6 +1779,10 @@
             "title": "Prompt",
             "type": "null"
           },
+          "release": {
+            "title": "Release",
+            "type": "null"
+          },
           "scoring": {
             "anyOf": [
               {
@@ -2024,6 +2028,16 @@
             "title": "Button Label",
             "type": "string"
           },
+          "handoff": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HandoffDoc"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "message": {
             "default": "Recebemos suas respostas. Obrigada por participar.",
             "description": "Mensagem de confirmação em texto puro, de 1 a 2000 caracteres. HTML é escapado; não aceita interpolação de respostas.",
@@ -2055,7 +2069,7 @@
                 "type": "null"
               }
             ],
-            "description": "URL HTTPS exata autorizada pela configuração autenticada. Obrigatória em button/redirect e ausente em result/confirmation; sem usuário/senha, override público ou anexos automáticos de dados/token.",
+            "description": "URL HTTPS exata autorizada pela configuração autenticada. Obrigatória em button/redirect e ausente em result/confirmation; sem usuário/senha ou override público. Sem handoff conserva o endereço exato; com opt-in acrescenta somente a referência opaca, sem contato, respostas ou bearer PDF.",
             "examples": [
               "https://example.test/proximo-passo"
             ],
@@ -2391,6 +2405,58 @@
         "title": "CreateFormRequest",
         "type": "object"
       },
+      "CreateIntegrationCredentialRequest": {
+        "additionalProperties": false,
+        "description": "Escolha expires_at explicitamente; null significa sem vencimento.",
+        "properties": {
+          "confirm": {
+            "default": false,
+            "title": "Confirm",
+            "type": "boolean"
+          },
+          "expected_receiver_version": {
+            "title": "Expected Receiver Version",
+            "type": "string"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "idempotency_key": {
+            "format": "uuid",
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "receiver_revision": {
+            "minimum": 1.0,
+            "title": "Receiver Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name",
+          "receiver_revision",
+          "expected_receiver_version",
+          "expires_at",
+          "idempotency_key"
+        ],
+        "title": "CreateIntegrationCredentialRequest",
+        "type": "object"
+      },
       "CreatedApiKey": {
         "description": "A chave recém-criada: tudo de `ApiKey` e a chave inteira, que **não aparece de novo**.",
         "properties": {
@@ -2513,6 +2579,25 @@
           "key"
         ],
         "title": "CreatedApiKey",
+        "type": "object"
+      },
+      "CreatedIntegrationCredential": {
+        "properties": {
+          "credential": {
+            "$ref": "#/components/schemas/IntegrationCredentialInfo"
+          },
+          "secret": {
+            "format": "password",
+            "title": "Secret",
+            "type": "string",
+            "writeOnly": true
+          }
+        },
+        "required": [
+          "credential",
+          "secret"
+        ],
+        "title": "CreatedIntegrationCredential",
         "type": "object"
       },
       "CurrentPdf": {
@@ -2686,7 +2771,8 @@
             "items": {
               "enum": [
                 "plano.concluido",
-                "submissao.persistida"
+                "submissao.persistida",
+                "plano.liberado"
               ],
               "type": "string"
             },
@@ -4978,6 +5064,190 @@
         "title": "FormVersionInfo",
         "type": "object"
       },
+      "HandoffDoc": {
+        "additionalProperties": false,
+        "properties": {
+          "receiver_id": {
+            "format": "uuid",
+            "title": "Receiver Id",
+            "type": "string"
+          },
+          "receiver_revision": {
+            "minimum": 1.0,
+            "title": "Receiver Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "receiver_id",
+          "receiver_revision"
+        ],
+        "title": "HandoffDoc",
+        "type": "object"
+      },
+      "HandoffInfo": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "issuance_state": {
+            "title": "Issuance State",
+            "type": "string"
+          },
+          "projection": {
+            "const": "correlation.v1",
+            "title": "Projection",
+            "type": "string"
+          },
+          "purpose": {
+            "const": "support",
+            "title": "Purpose",
+            "type": "string"
+          },
+          "receiver_id": {
+            "format": "uuid",
+            "title": "Receiver Id",
+            "type": "string"
+          },
+          "receiver_revision": {
+            "title": "Receiver Revision",
+            "type": "integer"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked At"
+          },
+          "submission_id": {
+            "format": "uuid",
+            "title": "Submission Id",
+            "type": "string"
+          },
+          "unavailable_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unavailable Code"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "submission_id",
+          "receiver_id",
+          "receiver_revision",
+          "purpose",
+          "projection",
+          "issuance_state",
+          "unavailable_code",
+          "created_at",
+          "expires_at",
+          "revoked_at",
+          "version"
+        ],
+        "title": "HandoffInfo",
+        "type": "object"
+      },
+      "HandoffReceiverInfo": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "entry_url": {
+            "title": "Entry Url",
+            "type": "string"
+          },
+          "form_slug": {
+            "title": "Form Slug",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "projection": {
+            "const": "correlation.v1",
+            "title": "Projection",
+            "type": "string"
+          },
+          "purpose": {
+            "const": "support",
+            "title": "Purpose",
+            "type": "string"
+          },
+          "reference_ttl_seconds": {
+            "title": "Reference Ttl Seconds",
+            "type": "integer"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "form_slug",
+          "name",
+          "entry_url",
+          "purpose",
+          "projection",
+          "reference_ttl_seconds",
+          "revision",
+          "version",
+          "enabled",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "HandoffReceiverInfo",
+        "type": "object"
+      },
       "History": {
         "properties": {
           "capture": {
@@ -5274,6 +5544,154 @@
         "title": "ImportFormRequest",
         "type": "object"
       },
+      "IntegrationCredentialInfo": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "form_slug": {
+            "title": "Form Slug",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "key_id": {
+            "title": "Key Id",
+            "type": "string"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Used At"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "projection": {
+            "const": "correlation.v1",
+            "default": "correlation.v1",
+            "title": "Projection",
+            "type": "string"
+          },
+          "purpose": {
+            "const": "support",
+            "default": "support",
+            "title": "Purpose",
+            "type": "string"
+          },
+          "receiver_id": {
+            "format": "uuid",
+            "title": "Receiver Id",
+            "type": "string"
+          },
+          "receiver_revision": {
+            "title": "Receiver Revision",
+            "type": "integer"
+          },
+          "revoked_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revoked At"
+          },
+          "scope": {
+            "const": "handoffs:resolve",
+            "default": "handoffs:resolve",
+            "title": "Scope",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "active",
+              "expired",
+              "revoked"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "key_id",
+          "name",
+          "receiver_id",
+          "receiver_revision",
+          "form_slug",
+          "version",
+          "state",
+          "created_at",
+          "expires_at",
+          "revoked_at",
+          "last_used_at"
+        ],
+        "title": "IntegrationCredentialInfo",
+        "type": "object"
+      },
+      "IntegrationCredentialPage": {
+        "description": "Uma página de credenciais, sem hashes ou segredos.",
+        "properties": {
+          "items": {
+            "description": "Os itens desta página.",
+            "items": {
+              "$ref": "#/components/schemas/IntegrationCredentialInfo"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Passe em `cursor` para ler a página seguinte; nulo na última.",
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "IntegrationCredentialPage",
+        "type": "object"
+      },
       "IntegrationHubPage": {
         "properties": {
           "catalog": {
@@ -5442,6 +5860,17 @@
             "title": "Authorization Origin",
             "type": "string"
           },
+          "blocked_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blocked Reason"
+          },
           "config_version": {
             "anyOf": [
               {
@@ -5490,6 +5919,11 @@
             "title": "Dispatch No",
             "type": "integer"
           },
+          "event": {
+            "default": "plano.concluido",
+            "title": "Event",
+            "type": "string"
+          },
           "host": {
             "anyOf": [
               {
@@ -5510,6 +5944,30 @@
             "format": "uuid",
             "title": "Id",
             "type": "string"
+          },
+          "occurred_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Occurred At"
+          },
+          "release_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Release Id"
           },
           "run_url": {
             "anyOf": [
@@ -5671,6 +6129,9 @@
             "title": "Public Id",
             "type": "string"
           },
+          "release": {
+            "$ref": "#/components/schemas/ReleaseStatus"
+          },
           "run_url": {
             "anyOf": [
               {
@@ -5724,6 +6185,7 @@
           }
         },
         "required": [
+          "release",
           "public_id",
           "status",
           "stage",
@@ -7077,6 +7539,16 @@
             "title": "Prompt",
             "type": "string"
           },
+          "release": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReleaseDoc"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "scoring": {
             "anyOf": [
               {
@@ -8114,7 +8586,8 @@
             "items": {
               "enum": [
                 "plano.concluido",
-                "submissao.persistida"
+                "submissao.persistida",
+                "plano.liberado"
               ],
               "type": "string"
             },
@@ -8190,6 +8663,292 @@
           "credential_unreadable"
         ],
         "title": "Receiver",
+        "type": "object"
+      },
+      "ReleaseDoc": {
+        "additionalProperties": false,
+        "properties": {
+          "mode": {
+            "default": "automatic",
+            "enum": [
+              "automatic",
+              "manual"
+            ],
+            "title": "Mode",
+            "type": "string"
+          }
+        },
+        "title": "ReleaseDoc",
+        "type": "object"
+      },
+      "ReleaseJobPdfRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "confirm": {
+            "default": false,
+            "description": "Precisa ser `true` nesta operação, que tem efeito difícil de desfazer ou fora do sistema: é o jeito de dizer que você sabe qual é. Sem ele, a resposta é `422 confirmation_required` e nada acontece.",
+            "examples": [
+              true
+            ],
+            "title": "Confirm",
+            "type": "boolean"
+          },
+          "expected_artifact_id": {
+            "format": "uuid",
+            "title": "Expected Artifact Id",
+            "type": "string"
+          },
+          "expected_attempt": {
+            "minimum": 1.0,
+            "title": "Expected Attempt",
+            "type": "integer"
+          },
+          "expected_form_version_number": {
+            "minimum": 1.0,
+            "title": "Expected Form Version Number",
+            "type": "integer"
+          },
+          "expected_release_version": {
+            "minimum": 0.0,
+            "title": "Expected Release Version",
+            "type": "integer"
+          },
+          "idempotency_key": {
+            "format": "uuid",
+            "title": "Idempotency Key",
+            "type": "string"
+          },
+          "mode": {
+            "enum": [
+              "standard",
+              "alternative"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "reason_code": {
+            "enum": [
+              "operator_review",
+              "participant_request",
+              "alternative_channel",
+              "other"
+            ],
+            "title": "Reason Code",
+            "type": "string"
+          }
+        },
+        "required": [
+          "expected_attempt",
+          "expected_artifact_id",
+          "expected_form_version_number",
+          "expected_release_version",
+          "idempotency_key",
+          "mode",
+          "reason_code"
+        ],
+        "title": "ReleaseJobPdfRequest",
+        "type": "object"
+      },
+      "ReleaseNotification": {
+        "properties": {
+          "event": {
+            "title": "Event",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "succeeded",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "event",
+          "status"
+        ],
+        "title": "ReleaseNotification",
+        "type": "object"
+      },
+      "ReleaseStatus": {
+        "properties": {
+          "artifact_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Artifact Id"
+          },
+          "attempt": {
+            "title": "Attempt",
+            "type": "integer"
+          },
+          "form_version_number": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Form Version Number"
+          },
+          "policy": {
+            "enum": [
+              "automatic",
+              "manual",
+              "unavailable"
+            ],
+            "title": "Policy",
+            "type": "string"
+          },
+          "release_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Release Id"
+          },
+          "release_version": {
+            "title": "Release Version",
+            "type": "integer"
+          },
+          "released_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Released At"
+          },
+          "state": {
+            "enum": [
+              "automatic",
+              "held",
+              "released",
+              "unavailable"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "form_version_number",
+          "policy",
+          "state",
+          "release_version",
+          "release_id",
+          "released_at",
+          "attempt",
+          "artifact_id"
+        ],
+        "title": "ReleaseStatus",
+        "type": "object"
+      },
+      "ReleasedJobPdf": {
+        "properties": {
+          "artifact_id": {
+            "format": "uuid",
+            "title": "Artifact Id",
+            "type": "string"
+          },
+          "attempt": {
+            "title": "Attempt",
+            "type": "integer"
+          },
+          "current": {
+            "title": "Current",
+            "type": "boolean"
+          },
+          "launched": {
+            "title": "Launched",
+            "type": "boolean"
+          },
+          "mode": {
+            "enum": [
+              "standard",
+              "alternative"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "notification_decision": {
+            "enum": [
+              "outbox",
+              "no_participant_channel",
+              "event_not_selected"
+            ],
+            "title": "Notification Decision",
+            "type": "string"
+          },
+          "notifications": {
+            "items": {
+              "$ref": "#/components/schemas/ReleaseNotification"
+            },
+            "title": "Notifications",
+            "type": "array"
+          },
+          "occurred_at": {
+            "format": "date-time",
+            "title": "Occurred At",
+            "type": "string"
+          },
+          "reason_code": {
+            "title": "Reason Code",
+            "type": "string"
+          },
+          "release_id": {
+            "format": "uuid",
+            "title": "Release Id",
+            "type": "string"
+          },
+          "release_version": {
+            "title": "Release Version",
+            "type": "integer"
+          },
+          "replay": {
+            "title": "Replay",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "release_id",
+          "attempt",
+          "artifact_id",
+          "release_version",
+          "occurred_at",
+          "mode",
+          "reason_code",
+          "notification_decision",
+          "current",
+          "replay",
+          "notifications",
+          "launched"
+        ],
+        "title": "ReleasedJobPdf",
         "type": "object"
       },
       "RemovedDestination": {
@@ -8640,6 +9399,9 @@
             "title": "Public Id",
             "type": "string"
           },
+          "release": {
+            "$ref": "#/components/schemas/ReleaseStatus"
+          },
           "run_url": {
             "anyOf": [
               {
@@ -8693,6 +9455,7 @@
           }
         },
         "required": [
+          "release",
           "public_id",
           "status",
           "stage",
@@ -8825,6 +9588,17 @@
             "title": "Authorization Origin",
             "type": "string"
           },
+          "blocked_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blocked Reason"
+          },
           "config_version": {
             "anyOf": [
               {
@@ -8873,6 +9647,11 @@
             "title": "Dispatch No",
             "type": "integer"
           },
+          "event": {
+            "default": "plano.concluido",
+            "title": "Event",
+            "type": "string"
+          },
           "host": {
             "anyOf": [
               {
@@ -8898,6 +9677,30 @@
             "description": "`true`: o motor de execução (Hatchet) recebeu o disparo. `false`: ele não respondeu a tempo, o que **não é erro**: a ação vale, o item ficou pendente sem execução e o reconciliador o dispara em até poucos minutos. Não repita a chamada (seria `409 state_conflict`).",
             "title": "Launched",
             "type": "boolean"
+          },
+          "occurred_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Occurred At"
+          },
+          "release_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Release Id"
           },
           "run_url": {
             "anyOf": [
@@ -9241,6 +10044,46 @@
         "title": "RevokeApiKeyRequest",
         "type": "object"
       },
+      "RevokeIntegrationCredentialRequest": {
+        "additionalProperties": false,
+        "description": "Revogação permanente da capacidade de serviço.",
+        "properties": {
+          "confirm": {
+            "default": false,
+            "title": "Confirm",
+            "type": "boolean"
+          },
+          "expected_version": {
+            "title": "Expected Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "expected_version"
+        ],
+        "title": "RevokeIntegrationCredentialRequest",
+        "type": "object"
+      },
+      "RevokeSubmissionHandoffRequest": {
+        "additionalProperties": false,
+        "description": "Revoga a referência e remove sua cópia cifrada.",
+        "properties": {
+          "confirm": {
+            "default": false,
+            "title": "Confirm",
+            "type": "boolean"
+          },
+          "expected_version": {
+            "title": "Expected Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "expected_version"
+        ],
+        "title": "RevokeSubmissionHandoffRequest",
+        "type": "object"
+      },
       "RotateDestinationSecretRequest": {
         "additionalProperties": false,
         "description": "A troca do segredo. O antigo deixa de valer na hora, por isso a operação exige `confirm: true`.",
@@ -9267,6 +10110,45 @@
         "title": "RotateDestinationSecretRequest",
         "type": "object"
       },
+      "RotateIntegrationCredentialRequest": {
+        "additionalProperties": false,
+        "description": "Revoga a anterior atomicamente e mostra a sucessora uma vez.",
+        "properties": {
+          "confirm": {
+            "default": false,
+            "title": "Confirm",
+            "type": "boolean"
+          },
+          "expected_version": {
+            "title": "Expected Version",
+            "type": "string"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "idempotency_key": {
+            "format": "uuid",
+            "title": "Idempotency Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "expected_version",
+          "expires_at",
+          "idempotency_key"
+        ],
+        "title": "RotateIntegrationCredentialRequest",
+        "type": "object"
+      },
       "RotatedDestination": {
         "description": "O destino com o segredo novo, que **não aparece de novo**.",
         "properties": {
@@ -9289,7 +10171,8 @@
             "items": {
               "enum": [
                 "plano.concluido",
-                "submissao.persistida"
+                "submissao.persistida",
+                "plano.liberado"
               ],
               "type": "string"
             },
@@ -9471,7 +10354,8 @@
                 "items": {
                   "enum": [
                     "plano.concluido",
-                    "submissao.persistida"
+                    "submissao.persistida",
+                    "plano.liberado"
                   ],
                   "type": "string"
                 },
@@ -9689,6 +10573,46 @@
         "title": "SaveFormRetentionRequest",
         "type": "object"
       },
+      "SaveHandoffReceiverRequest": {
+        "additionalProperties": false,
+        "description": "Salvar pausa o receptor; não envia dados ou publica formulário.",
+        "properties": {
+          "confirm": {
+            "default": false,
+            "title": "Confirm",
+            "type": "boolean"
+          },
+          "entry_url": {
+            "maxLength": 2000,
+            "title": "Entry Url",
+            "type": "string"
+          },
+          "expected_version": {
+            "title": "Expected Version",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "reference_ttl_seconds": {
+            "default": 604800,
+            "maximum": 604800.0,
+            "minimum": 60.0,
+            "title": "Reference Ttl Seconds",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expected_version",
+          "name",
+          "entry_url"
+        ],
+        "title": "SaveHandoffReceiverRequest",
+        "type": "object"
+      },
       "SavedDestination": {
         "description": "O destino como ficou. Na criação, e só nela, traz o segredo, que **não aparece de novo**.",
         "properties": {
@@ -9716,7 +10640,8 @@
             "items": {
               "enum": [
                 "plano.concluido",
-                "submissao.persistida"
+                "submissao.persistida",
+                "plano.liberado"
               ],
               "type": "string"
             },
@@ -10059,6 +10984,31 @@
           "error"
         ],
         "title": "SentFormIntegrationTest",
+        "type": "object"
+      },
+      "SetHandoffReceiverEnabledRequest": {
+        "additionalProperties": false,
+        "description": "Habilitar autoriza somente referências futuras da revisão observada.",
+        "properties": {
+          "confirm": {
+            "default": false,
+            "title": "Confirm",
+            "type": "boolean"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "expected_version": {
+            "title": "Expected Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "expected_version",
+          "enabled"
+        ],
+        "title": "SetHandoffReceiverEnabledRequest",
         "type": "object"
       },
       "StartFormDraftTestRequest": {
@@ -10777,7 +11727,7 @@
   "info": {
     "description": "Tudo o que o painel admin faz, por chave de API com papel.\n\n**Autenticação.** Só `Authorization: Bearer <chave>`: a chave não vai na URL nem em cookie, e a\nsessão do painel não vale em nenhuma operação (ela só abre esta referência e o `openapi.json`). Cada\noperação diz o papel mínimo (`x-required-role`): `leitura` só consulta; `total` faz tudo o que o\nadmin logado faz. Toda escrita fica na auditoria em nome da chave (`chave:<nome>`).\n\n**Erros.** Um formato só, `{\"code\", \"detail\"}`, com `errors` (`field`, `message`, `line`) no `422`.\nA resposta nunca traz o valor recebido.\n\n**Operações marcadas.** As que apagam ou sobrescrevem algo difícil de desfazer (`x-destructive`) e\nas que mudam o que a lead vê, para onde os dados dela vão ou chamam um serviço de fora\n(`x-external-effect`) exigem `\"confirm\": true` em toda chamada (na query, em `DELETE`). Sem ele, a\nresposta é `422 confirmation_required` e nada acontece.\n\n**Limite de uso.** Cada chave tem um balde de chamadas por minuto; passou, `429 rate_limited` com\n`Retry-After`.\n\n**Fora das operações.** De qualquer endereço podem vir `404 not_found` (caminho sem operação),\n`405 method_not_allowed` (com `Allow`, os métodos do caminho), `413 payload_too_large`,\n`500 internal_error` e `503 unavailable` (banco fora do ar, com `Retry-After`).\n\n## MCP: usar a API pelo Claude\n\nO **MCP** (`python -m app.admin_mcp`) é um programa que roda no computador da operadora e deixa o\nClaude Desktop e o Claude Code chamarem esta API numa conversa. É um cliente HTTP desta API, só por\n`stdio` (não há MCP remoto), com a chave de quem o usa: nada novo sobe no servidor, e a autorização é\na da chave.\n\n**Configurar.** A tela [Configurar o MCP](/admin/mcp), no menu do painel, leva do zero ao servidor\nfuncionando: escolhe ou cria a chave (o segredo aparece uma vez), mostra a instalação, monta o comando\ndo Claude Code ou o bloco do Claude Desktop já com o endereço deste painel e confere a chave.\n\n**Ferramentas por papel.** Cada operação desta referência é uma ferramenta, com o `operationId` como\nnome, o `summary` e a `description` como texto, e os parâmetros e o corpo juntos num só objeto de\nentrada. Uma chave `leitura` recebe as operações de papel `leitura`; uma `total`, todas. Vêm além\ndelas algumas **compostas**, que juntam as chamadas de um fluxo (`attention_overview`,\n`diagnose_order`, `edit_form_draft`, `publish_form_with_review` e `connect_baserow_integration`) e só\nchamam ferramentas que a chave já tem. Para explorar, prefira `leitura`: são menos ferramentas.\n\n**Confirmações.** Uma operação marcada (`x-destructive` ou `x-external-effect`) não executa sozinha: o\nMCP mostra o efeito e o alvo e só chama a API com o sim da pessoa. O `confirm` que o modelo escrever\npor conta própria é ignorado.\n\n**Dado da lead.** Fica desligado: sem `GERADOR_MCP_LEAD_DATA=1`, o nome, o e-mail e as respostas das\nleads não chegam ao modelo, e o argumento `include_lead_data`, a busca `q` de `list_jobs` e a\n`download_job_pdf` não existem. Com a opção e uma chave `total` eles voltam, e o que o Claude ler vai\nao provedor do modelo.\n\n**Pastas.** PDFs e HTML vão para arquivo, em `GERADOR_MCP_DOWNLOAD_DIR` (ou numa pasta só do usuário\nno diretório temporário), e a ferramenta devolve o caminho, nunca os bytes. As imagens\n(`upload_asset` e `replace_asset`) só saem de `GERADOR_MCP_UPLOAD_DIR`, uma pasta que a pessoa\nescolhe e que não tem padrão. **A imagem enviada é servida sem login**: ponha nessa pasta só o que\npode ser público.\n\n**A chave.** Vai no ambiente do cliente (`GERADOR_API_URL` e `GERADOR_API_KEY`), nunca na linha de\ncomando do servidor, e só viaja no cabeçalho `Authorization: Bearer`: não aparece em retorno de\nferramenta, em erro nem em log.\n",
     "title": "Leadkit: API de admin",
-    "version": "1.62.0"
+    "version": "1.72.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -13215,7 +14165,7 @@
         "x-required-role": "leitura"
       },
       "post": {
-        "description": "Cria um formulário novo **sem versão publicada**: só o rascunho dele, que parte do modelo inicial do sistema ou, com `source`, da cópia de outro formulário (a versão publicada dele, ou o rascunho, se ele ainda não foi publicado). O formulário só vai ao ar na primeira publicação (`publish_form_draft`), que cria a versão 1: até lá a página pública dele não existe e nenhuma lead o vê. `title` é o nome do formulário; `slug`, o endereço (sai do título se faltar; antes da primeira publicação ele ainda muda, com `save_form_draft`). Se algo não vale (título em branco, endereço já usado ou reservado, formulário de origem que não existe), a resposta é `422` com o campo em `errors[].field` e nada é criado; repetir a chamada com o mesmo endereço também dá `422`, porque o endereço já existe. A criação fica na auditoria (`form.create`, ou `form.duplicate` com `source`) em nome da chave. Para editar o rascunho, use `get_form_draft`, `save_form_draft` e `patch_form_draft`.",
+        "description": "Cria um formulário novo **sem versão publicada**: só o rascunho dele, que parte do modelo inicial do sistema ou, com `source`, da cópia de outro formulário (a versão publicada dele, ou o rascunho, se ele ainda não foi publicado). A cópia preserva a política de liberação, mas remove o vínculo de encaminhamento: configure um receptor próprio no novo formulário. O formulário só vai ao ar na primeira publicação (`publish_form_draft`), que cria a versão 1: até lá a página pública dele não existe e nenhuma lead o vê. `title` é o nome do formulário; `slug`, o endereço (sai do título se faltar; antes da primeira publicação ele ainda muda, com `save_form_draft`). Se algo não vale (título em branco, endereço já usado ou reservado, formulário de origem que não existe), a resposta é `422` com o campo em `errors[].field` e nada é criado; repetir a chamada com o mesmo endereço também dá `422`, porque o endereço já existe. A criação fica na auditoria (`form.create`, ou `form.duplicate` com `source`) em nome da chave. Para editar o rascunho, use `get_form_draft`, `save_form_draft` e `patch_form_draft`.",
         "operationId": "create_form",
         "requestBody": {
           "content": {
@@ -15806,6 +16756,623 @@
         "x-required-role": "leitura"
       }
     },
+    "/forms/{slug}/handoff-receiver": {
+      "get": {
+        "description": "Consulta configuração operacional, sem emitir referência.",
+        "operationId": "get_handoff_receiver",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HandoffReceiverInfo"
+                }
+              }
+            },
+            "description": "O receptor configurado."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Sem chave, chave desconhecida ou de segredo errado (`invalid_credentials`: a mesma resposta nos três casos), ou chave vencida (`key_expired`) ou revogada (`key_revoked`). Leva `WWW-Authenticate: Bearer`.",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Sempre `Bearer`: o único esquema que a API aceita.",
+                "schema": {
+                  "examples": [
+                    "Bearer"
+                  ],
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "O recurso do caminho não existe (`not_found`)."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "O corpo ou a definição não valem (`validation_failed`; `errors` traz o caminho de cada campo) ou falta `confirm: true` numa operação marcada (`confirmation_required`; nada acontece)."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Limite de uso da chave ou bloqueio por chave errada (`rate_limited`), ou pausa entre os testes pagos do rascunho (`test_paused`). Leva `Retry-After`.",
+            "headers": {
+              "Retry-After": {
+                "description": "Quantos segundos esperar antes de tentar de novo.",
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "summary": "Consultar receptor de encaminhamento",
+        "tags": [
+          "Encaminhamentos"
+        ],
+        "x-required-role": "leitura"
+      },
+      "put": {
+        "description": "Salva e pausa a configuração. Uma mudança de endereço ou prazo cria revisão nova; não reendereça referências históricas nem publica formulário.",
+        "operationId": "save_handoff_receiver",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SaveHandoffReceiverRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HandoffReceiverInfo"
+                }
+              }
+            },
+            "description": "A configuração pausada."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Sem chave, chave desconhecida ou de segredo errado (`invalid_credentials`: a mesma resposta nos três casos), ou chave vencida (`key_expired`) ou revogada (`key_revoked`). Leva `WWW-Authenticate: Bearer`.",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Sempre `Bearer`: o único esquema que a API aceita.",
+                "schema": {
+                  "examples": [
+                    "Bearer"
+                  ],
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "A chave tem papel `leitura` e a operação pede `total` (`forbidden_role`)."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "O recurso do caminho não existe (`not_found`)."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "version_conflict: a versão observada mudou; nada foi salvo."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "O corpo ou a definição não valem (`validation_failed`; `errors` traz o caminho de cada campo) ou falta `confirm: true` numa operação marcada (`confirmation_required`; nada acontece)."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Limite de uso da chave ou bloqueio por chave errada (`rate_limited`), ou pausa entre os testes pagos do rascunho (`test_paused`). Leva `Retry-After`.",
+            "headers": {
+              "Retry-After": {
+                "description": "Quantos segundos esperar antes de tentar de novo.",
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "summary": "Salvar receptor de encaminhamento",
+        "tags": [
+          "Encaminhamentos"
+        ],
+        "x-external-effect": true,
+        "x-required-role": "total"
+      }
+    },
+    "/forms/{slug}/handoff-receiver/credentials": {
+      "get": {
+        "description": "Lista metadados de credenciais, inclusive revogadas, sem segredo ou hash.",
+        "operationId": "list_integration_credentials",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Quantos itens por página (de 1 a 200; padrão 50).",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "description": "Quantos itens por página (de 1 a 200; padrão 50).",
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "O `next_cursor` da página anterior. É opaco: não monte nem altere.",
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 300,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "O `next_cursor` da página anterior. É opaco: não monte nem altere.",
+              "title": "Cursor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntegrationCredentialPage"
+                }
+              }
+            },
+            "description": "Uma página de credenciais."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Sem chave, chave desconhecida ou de segredo errado (`invalid_credentials`: a mesma resposta nos três casos), ou chave vencida (`key_expired`) ou revogada (`key_revoked`). Leva `WWW-Authenticate: Bearer`.",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Sempre `Bearer`: o único esquema que a API aceita.",
+                "schema": {
+                  "examples": [
+                    "Bearer"
+                  ],
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "O recurso do caminho não existe (`not_found`)."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "O corpo ou a definição não valem (`validation_failed`; `errors` traz o caminho de cada campo) ou falta `confirm: true` numa operação marcada (`confirmation_required`; nada acontece)."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Limite de uso da chave ou bloqueio por chave errada (`rate_limited`), ou pausa entre os testes pagos do rascunho (`test_paused`). Leva `Retry-After`.",
+            "headers": {
+              "Retry-After": {
+                "description": "Quantos segundos esperar antes de tentar de novo.",
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "summary": "Listar credenciais do receptor",
+        "tags": [
+          "Encaminhamentos"
+        ],
+        "x-required-role": "leitura"
+      },
+      "post": {
+        "description": "Mostra o segredo utilizável uma única vez. expires_at é obrigatório e nullable: null permite sem vencimento. Repetir idempotency_key devolve409 credential_secret_already_issued com ID seguro, sem segredo; conteúdo divergente conflita. Se perder a resposta, revogue ou gire explicitamente.",
+        "operationId": "create_integration_credential",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateIntegrationCredentialRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreatedIntegrationCredential"
+                }
+              }
+            },
+            "description": "Credencial e segredo uma única vez."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Sem chave, chave desconhecida ou de segredo errado (`invalid_credentials`: a mesma resposta nos três casos), ou chave vencida (`key_expired`) ou revogada (`key_revoked`). Leva `WWW-Authenticate: Bearer`.",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Sempre `Bearer`: o único esquema que a API aceita.",
+                "schema": {
+                  "examples": [
+                    "Bearer"
+                  ],
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "A chave tem papel `leitura` e a operação pede `total` (`forbidden_role`)."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "O recurso do caminho não existe (`not_found`)."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "version_conflict: versão obsoleta; state_conflict: revisão incompatível; idempotency_conflict ou credential_secret_already_issued: comando já registrado."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "O corpo ou a definição não valem (`validation_failed`; `errors` traz o caminho de cada campo) ou falta `confirm: true` numa operação marcada (`confirmation_required`; nada acontece)."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Limite de uso da chave ou bloqueio por chave errada (`rate_limited`), ou pausa entre os testes pagos do rascunho (`test_paused`). Leva `Retry-After`.",
+            "headers": {
+              "Retry-After": {
+                "description": "Quantos segundos esperar antes de tentar de novo.",
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "summary": "Criar credencial de serviço",
+        "tags": [
+          "Encaminhamentos"
+        ],
+        "x-external-effect": true,
+        "x-required-role": "total"
+      }
+    },
+    "/forms/{slug}/handoff-receiver/enabled": {
+      "post": {
+        "description": "Autoriza uso futuro da revisão quando há cifra e credencial válidas; não faz transporte externo.",
+        "operationId": "set_handoff_receiver_enabled",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetHandoffReceiverEnabledRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HandoffReceiverInfo"
+                }
+              }
+            },
+            "description": "O estado confirmado."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Sem chave, chave desconhecida ou de segredo errado (`invalid_credentials`: a mesma resposta nos três casos), ou chave vencida (`key_expired`) ou revogada (`key_revoked`). Leva `WWW-Authenticate: Bearer`.",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Sempre `Bearer`: o único esquema que a API aceita.",
+                "schema": {
+                  "examples": [
+                    "Bearer"
+                  ],
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "A chave tem papel `leitura` e a operação pede `total` (`forbidden_role`)."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "O recurso do caminho não existe (`not_found`)."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "version_conflict: a versão mudou; state_conflict: o receptor ainda não está pronto."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "O corpo ou a definição não valem (`validation_failed`; `errors` traz o caminho de cada campo) ou falta `confirm: true` numa operação marcada (`confirmation_required`; nada acontece)."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Limite de uso da chave ou bloqueio por chave errada (`rate_limited`), ou pausa entre os testes pagos do rascunho (`test_paused`). Leva `Retry-After`.",
+            "headers": {
+              "Retry-After": {
+                "description": "Quantos segundos esperar antes de tentar de novo.",
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "summary": "Habilitar ou pausar encaminhamento",
+        "tags": [
+          "Encaminhamentos"
+        ],
+        "x-external-effect": true,
+        "x-required-role": "total"
+      }
+    },
     "/forms/{slug}/integrations/baserow": {
       "delete": {
         "description": "Remove a integração do formulário `slug`: apaga o **token** do Baserow e o **estado das sincronizações** (o que já foi sincronizado, o que está pendente e o que falhou: as falhas deixam de poder ser reenviadas). **As linhas que já estão na tabela do Baserow ficam**: o app não apaga nada lá. Não tem volta: para sincronizar de novo é preciso conectar (`connect_form_integration`, com o token de novo), mapear e ativar outra vez, por isso a operação é marcada e exige `confirm=true` na query (sem ele, `422 confirmation_required` e nada acontece). `expected_version` é a `version` que `get_form_integration` devolveu, também na query; se mudou, ou se a integração já foi removida (versão `0`), `409 version_conflict` e nada é removido. Não fala com o Baserow. A remoção fica na auditoria em nome da chave (`integration.remove`), sem o token.",
@@ -17381,6 +18948,269 @@
         "x-required-role": "total"
       }
     },
+    "/integration-credentials/{credential_id}/revoke": {
+      "post": {
+        "description": "Revoga permanentemente a capacidade de serviço; confirmação é obrigatória. Repetição devolve a revogação já registrada.",
+        "operationId": "revoke_integration_credential",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "credential_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Credential Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RevokeIntegrationCredentialRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntegrationCredentialInfo"
+                }
+              }
+            },
+            "description": "Metadados sem segredo."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Sem chave, chave desconhecida ou de segredo errado (`invalid_credentials`: a mesma resposta nos três casos), ou chave vencida (`key_expired`) ou revogada (`key_revoked`). Leva `WWW-Authenticate: Bearer`.",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Sempre `Bearer`: o único esquema que a API aceita.",
+                "schema": {
+                  "examples": [
+                    "Bearer"
+                  ],
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "A chave tem papel `leitura` e a operação pede `total` (`forbidden_role`)."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "O recurso do caminho não existe (`not_found`)."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "version_conflict: a versão observada mudou."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "O corpo ou a definição não valem (`validation_failed`; `errors` traz o caminho de cada campo) ou falta `confirm: true` numa operação marcada (`confirmation_required`; nada acontece)."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Limite de uso da chave ou bloqueio por chave errada (`rate_limited`), ou pausa entre os testes pagos do rascunho (`test_paused`). Leva `Retry-After`.",
+            "headers": {
+              "Retry-After": {
+                "description": "Quantos segundos esperar antes de tentar de novo.",
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "summary": "Revogar credencial de serviço",
+        "tags": [
+          "Encaminhamentos"
+        ],
+        "x-destructive": true,
+        "x-external-effect": true,
+        "x-required-role": "total"
+      }
+    },
+    "/integration-credentials/{credential_id}/rotate": {
+      "post": {
+        "description": "Cria sucessora na mesma revisão e revoga a anterior no mesmo commit. O segredo aparece uma vez; repetição nunca o reemite. Escolha o vencimento novamente, inclusive null.",
+        "operationId": "rotate_integration_credential",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "credential_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Credential Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RotateIntegrationCredentialRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreatedIntegrationCredential"
+                }
+              }
+            },
+            "description": "Sucessora e segredo uma vez."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Sem chave, chave desconhecida ou de segredo errado (`invalid_credentials`: a mesma resposta nos três casos), ou chave vencida (`key_expired`) ou revogada (`key_revoked`). Leva `WWW-Authenticate: Bearer`.",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Sempre `Bearer`: o único esquema que a API aceita.",
+                "schema": {
+                  "examples": [
+                    "Bearer"
+                  ],
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "A chave tem papel `leitura` e a operação pede `total` (`forbidden_role`)."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "O recurso do caminho não existe (`not_found`)."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "version_conflict: versão obsoleta; state_conflict: revisão incompatível; idempotency_conflict ou credential_secret_already_issued: comando já registrado."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "O corpo ou a definição não valem (`validation_failed`; `errors` traz o caminho de cada campo) ou falta `confirm: true` numa operação marcada (`confirmation_required`; nada acontece)."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Limite de uso da chave ou bloqueio por chave errada (`rate_limited`), ou pausa entre os testes pagos do rascunho (`test_paused`). Leva `Retry-After`.",
+            "headers": {
+              "Retry-After": {
+                "description": "Quantos segundos esperar antes de tentar de novo.",
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "summary": "Girar credencial de serviço",
+        "tags": [
+          "Encaminhamentos"
+        ],
+        "x-external-effect": true,
+        "x-required-role": "total"
+      }
+    },
     "/integrations": {
       "get": {
         "description": "Consulta somente o banco local: Baserow e Webhook, inclusive rascunhos, inativos e configurações órfãs conhecidas. Filtra por conector e formulário; um filtro de formulário não inclui a linha global do padrão. Ordena por conector, padrão primeiro e slug crescente. scope_kind e form_slug distinguem padrão de formulário; key é a identidade de paginação. receiver descreve o receptor efetivo, com revisão própria: não use a revisão herdada para criar um receptor de formulário. Contadores do catálogo são globais. Ativa indica apenas a configuração Baserow; mapeamento salvo não prova compatibilidade com a tabela atual. provider_verification é sempre not_checked. Histórico correlaciona identidade e formulário, separa captura/PDF e qualifica a revisão; Baserow PDF tem revisão unknown. O resumo do padrão não deve ser somado às linhas herdadas. Sucesso confirma transporte, sem provar leitura, atendimento ou liberação. Históricos legados PDF sem receptor ficam no pedido. Nunca expõe URL completa, token, segredo, payload ou texto bruto de erro, mesmo para total. Não consulta provedores, não dispara automação nem exige confirmação. Escritas continuam nas operações existentes de integração e destinos.",
@@ -18411,6 +20241,155 @@
         "x-required-role": "total"
       }
     },
+    "/jobs/{public_id}/release": {
+      "post": {
+        "description": "Autoriza somente a tentativa e o PDF observados, sem gerar plano, exigir compra ou reunião, nem renovar retenção. Replay exato retorna o fato histórico sem enviar novamente. Sem canal participante, libera acesso e informa que a notificação não foi enviada.",
+        "operationId": "release_job_pdf",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "public_id",
+            "required": true,
+            "schema": {
+              "title": "Public Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReleaseJobPdfRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleasedJobPdf"
+                }
+              }
+            },
+            "description": "Fato de liberação, tentativa, decisão de notificar e estados do transporte; nenhum documento ou link interno."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Sem chave, chave desconhecida ou de segredo errado (`invalid_credentials`: a mesma resposta nos três casos), ou chave vencida (`key_expired`) ou revogada (`key_revoked`). Leva `WWW-Authenticate: Bearer`.",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Sempre `Bearer`: o único esquema que a API aceita.",
+                "schema": {
+                  "examples": [
+                    "Bearer"
+                  ],
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "A chave tem papel `leitura` e a operação pede `total` (`forbidden_role`)."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Pedido não encontrado."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "state_conflict: tentativa, versão, idempotência ou PDF incompatíveis; nenhuma nova liberação."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "O corpo ou a definição não valem (`validation_failed`; `errors` traz o caminho de cada campo) ou falta `confirm: true` numa operação marcada (`confirmation_required`; nada acontece)."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Limite de uso da chave ou bloqueio por chave errada (`rate_limited`), ou pausa entre os testes pagos do rascunho (`test_paused`). Leva `Retry-After`.",
+            "headers": {
+              "Retry-After": {
+                "description": "Quantos segundos esperar antes de tentar de novo.",
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "A atualização ainda não habilitou a liberação.",
+            "headers": {
+              "Retry-After": {
+                "description": "Quantos segundos esperar antes de tentar de novo.",
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "summary": "Liberar acesso ao plano",
+        "tags": [
+          "Pedidos"
+        ],
+        "x-external-effect": true,
+        "x-required-role": "total"
+      }
+    },
     "/jobs/{public_id}/reprocess": {
       "post": {
         "description": "Cria uma **nova tentativa** do pedido e a dispara: o pedido volta para a fila (`queued`, ou já adiante, se o motor foi rápido), a IA escreve o plano de novo, o PDF é refeito e a entrega ao webhook corre outra vez. Só vale para um pedido concluído (`completed`) ou que falhou (`failed`); os planos e PDFs das tentativas anteriores ficam no histórico. Tem efeito para a lead e para fora do sistema (uma chamada paga à IA e o webhook de novo), por isso exige `\"confirm\": true`; sem ele a resposta é `422 confirmation_required` e nada acontece. A ação fica na auditoria em nome da chave que chamou, com o `reason`. `expected_attempt` é a tentativa que você leu em `get_job` (`attempt`): se o pedido já está noutra, ou está na fila ou gerando, a resposta é `409 state_conflict` e nada acontece. É isso que torna seguro repetir a chamada depois de uma resposta perdida: não cria uma segunda tentativa. A resposta é o pedido no estado novo (`attempt` é a tentativa criada) e `launched`: `true` se o motor de execução recebeu o disparo, `false` se não respondeu a tempo. `false` **não é erro**: a tentativa existe e o reconciliador a dispara em até poucos minutos; não reprocesse de novo.",
@@ -18754,6 +20733,238 @@
         ],
         "x-required-role": "leitura"
       }
+    },
+    "/submissions/{submission_id}/handoff": {
+      "get": {
+        "description": "Metadados operacionais; não recupera referência, endereço completo, contato ou respostas.",
+        "operationId": "get_submission_handoff",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "submission_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Submission Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HandoffInfo"
+                }
+              }
+            },
+            "description": "A intenção histórica sem segredo."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Sem chave, chave desconhecida ou de segredo errado (`invalid_credentials`: a mesma resposta nos três casos), ou chave vencida (`key_expired`) ou revogada (`key_revoked`). Leva `WWW-Authenticate: Bearer`.",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Sempre `Bearer`: o único esquema que a API aceita.",
+                "schema": {
+                  "examples": [
+                    "Bearer"
+                  ],
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "O recurso do caminho não existe (`not_found`)."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "O corpo ou a definição não valem (`validation_failed`; `errors` traz o caminho de cada campo) ou falta `confirm: true` numa operação marcada (`confirmation_required`; nada acontece)."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Limite de uso da chave ou bloqueio por chave errada (`rate_limited`), ou pausa entre os testes pagos do rascunho (`test_paused`). Leva `Retry-After`.",
+            "headers": {
+              "Retry-After": {
+                "description": "Quantos segundos esperar antes de tentar de novo.",
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "summary": "Consultar intenção de encaminhamento",
+        "tags": [
+          "Encaminhamentos"
+        ],
+        "x-required-role": "leitura"
+      }
+    },
+    "/submissions/{submission_id}/handoff/revoke": {
+      "post": {
+        "description": "Revoga a referência permanentemente e remove a cifra. Não apaga respostas nem altera autorização do PDF.",
+        "operationId": "revoke_submission_handoff",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "submission_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Submission Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RevokeSubmissionHandoffRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HandoffInfo"
+                }
+              }
+            },
+            "description": "Metadados da intenção revogada."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Sem chave, chave desconhecida ou de segredo errado (`invalid_credentials`: a mesma resposta nos três casos), ou chave vencida (`key_expired`) ou revogada (`key_revoked`). Leva `WWW-Authenticate: Bearer`.",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Sempre `Bearer`: o único esquema que a API aceita.",
+                "schema": {
+                  "examples": [
+                    "Bearer"
+                  ],
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "A chave tem papel `leitura` e a operação pede `total` (`forbidden_role`)."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "O recurso do caminho não existe (`not_found`)."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "version_conflict: a versão observada mudou."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "O corpo ou a definição não valem (`validation_failed`; `errors` traz o caminho de cada campo) ou falta `confirm: true` numa operação marcada (`confirmation_required`; nada acontece)."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Limite de uso da chave ou bloqueio por chave errada (`rate_limited`), ou pausa entre os testes pagos do rascunho (`test_paused`). Leva `Retry-After`.",
+            "headers": {
+              "Retry-After": {
+                "description": "Quantos segundos esperar antes de tentar de novo.",
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "summary": "Revogar encaminhamento",
+        "tags": [
+          "Encaminhamentos"
+        ],
+        "x-destructive": true,
+        "x-external-effect": true,
+        "x-required-role": "total"
+      }
     }
   },
   "servers": [
@@ -18801,6 +21012,10 @@
     {
       "description": "A integração de um formulário com uma tabela do Baserow: cada pedido concluído vira uma linha na tabela, com os campos que o mapeamento escolhe. Ler a integração (a tabela é lida agora no Baserow) é de `leitura`; conectar, mapear, ativar, desativar, remover, testar e reenviar são de `total`. O **token do Baserow só entra** (ao conectar): nenhuma resposta o devolve. Ativar, testar e reenviar escrevem na planilha do cliente, e remover apaga o token e o estado das sincronizações: as quatro exigem `confirm`.",
       "name": "Integração com o Baserow"
+    },
+    {
+      "description": "Receptores e credenciais de serviço para continuidade opcional, sem acesso a respostas ou PDF.",
+      "name": "Encaminhamentos"
     },
     {
       "description": "Central de Baserow e Webhook por formulário. Configuração, herança e histórico local, sem consultar provedores nem expor dados da participante ou credenciais.",

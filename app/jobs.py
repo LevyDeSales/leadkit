@@ -211,10 +211,14 @@ def resend_delivery(
             or expected_attempt != row.authorized_attempt
             or expected_attempt != job.attempt
             or destination.purpose != row.audience
-            or "plano.concluido" not in destination.events
+            or row.event not in destination.events
         ):
             return False
         row.config_version = destination.version
+    from app.plan_release import delivery_eligible
+
+    if not delivery_eligible(session, row, job=job):
+        return False
     row.dispatch_no += 1
     row.status, row.hatchet_run_id = "pending", None
     session.add(
@@ -277,16 +281,37 @@ def in_flight_jobs(session: Session, *, older_than: timedelta, limit: int) -> li
 
 
 def unlaunched_deliveries(session: Session, *, older_than: timedelta, limit: int) -> list[Delivery]:
+    """Avança por intenções inelegíveis sem mudá-las nem bloquear as seguintes."""
+    from app.integration_readiness import configuration_lock
+    from app.plan_release import delivery_eligible
+
+    if limit < 1:
+        return []
+    configuration_lock(session, shared=True)
     cutoff = utcnow() - older_than
-    statement = (
-        sa.select(Delivery)
-        .where(
+    cursor = None
+    eligible = []
+    while len(eligible) < limit:
+        statement = sa.select(Delivery).where(
             Delivery.status == "pending",
             Delivery.hatchet_run_id.is_(None),
             Delivery.created_at < cutoff,
         )
-        .order_by(Delivery.created_at)
-        .limit(limit)
-        .with_for_update(skip_locked=True)
-    )
-    return list(session.scalars(statement))
+        if cursor is not None:
+            statement = statement.where(sa.tuple_(Delivery.created_at, Delivery.id) > cursor)
+        rows = list(
+            session.scalars(
+                statement.order_by(Delivery.created_at, Delivery.id)
+                .limit(limit)
+                .with_for_update(skip_locked=True)
+            )
+        )
+        if not rows:
+            break
+        for row in rows:
+            cursor = (row.created_at, row.id)
+            if delivery_eligible(session, row):
+                eligible.append(row)
+                if len(eligible) == limit:
+                    break
+    return eligible

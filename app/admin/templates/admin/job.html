@@ -19,8 +19,31 @@
   {% if job.failure %}
   <div class="alert alert--error" role="status">{{ m.icon('alert-circle', 'icon--lg') }}<div><strong class="alert__title">A geração falhou: {{ job.failure }}</strong><p>Confira a linha do tempo. Se o problema já foi resolvido, reprocesse o pedido.</p></div></div>
   {% endif %}
+  <section aria-labelledby="release-title">
+    <h2 id="release-title">Acesso da participante</h2>
+    <p>{% if job.release.state == 'held' %}Retido: aguarda liberação.{% elif job.release.state == 'released' %}Liberado para esta tentativa.{% elif job.release.state == 'automatic' %}Automático, conforme a versão respondida.{% else %}Política histórica indisponível: acesso protegido.{% endif %}</p>
+    {% if errors.get('release') %}<div class="alert alert--error" role="alert" id="release-error" tabindex="-1"><a href="#release-confirm">{{ errors['release'] }}</a></div>{% endif %}
+    {% if job.release.state == 'held' and job.current_pdf.available %}
+    <form method="post" action="/admin/jobs/{{ job.public_id }}/release" aria-describedby="release-help{% if errors.get('release') %} release-error{% endif %}">
+      <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+      <input type="hidden" name="expected_attempt" value="{{ job.attempt }}">
+      <input type="hidden" name="expected_artifact_id" value="{{ job.release.artifact_id }}">
+      <input type="hidden" name="expected_form_version_number" value="{{ job.release.form_version_number }}">
+      <input type="hidden" name="expected_release_version" value="{{ job.release.release_version }}">
+      <input type="hidden" name="idempotency_key" value="{{ release_form.idempotency_key }}">
+      <p id="release-help">A geração do PDF não libera o acesso. Você pode liberar por outra jornada, sem compra ou reunião. A notificação depende do canal participante configurado.</p>
+      <label for="release-mode">Modo de liberação</label>
+      <select name="mode" id="release-mode"><option value="standard"{% if release_form.mode == 'standard' %} selected{% endif %}>Revisão padrão</option><option value="alternative"{% if release_form.mode == 'alternative' %} selected{% endif %}>Outra jornada</option></select>
+      <label for="release-reason">Motivo</label>
+      <select name="reason_code" id="release-reason">{% for value, label in [('operator_review', 'Revisão pela responsável'), ('participant_request', 'Solicitação da participante'), ('alternative_channel', 'Canal alternativo'), ('other', 'Outro motivo')] %}<option value="{{ value }}"{% if release_form.reason_code == value %} selected{% endif %}>{{ label }}</option>{% endfor %}</select>
+      <label for="release-confirm"><input id="release-confirm" type="checkbox" name="confirm" value="on" required>Confirmo a liberação desta tentativa</label>
+      <button class="btn btn--primary" type="submit">Liberar acesso</button>
+    </form>
+    {% endif %}
+  </section>
   <section class="acts" id="acoes" aria-label="Ações">
     <div class="acts__row">
+      <a class="btn btn--secondary" href="{{ handoff_url }}">Consultar encaminhamento</a>
       {% if job.current_pdf.available %}<a class="btn btn--primary" href="/admin/jobs/{{ job.public_id }}/pdf">{{ m.icon('download') }}Baixar PDF</a>{% endif %}
       {% if job.run_url %}<a class="btn btn--secondary" href="{{ job.run_url }}" target="_blank" rel="noopener noreferrer">{{ m.icon('external') }}Ver execução no Hatchet<span class="sr-only"> (abre em nova aba)</span></a>{% endif %}
     </div>
@@ -32,7 +55,7 @@
         <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
         <input type="hidden" name="attempt" value="{{ job.attempt }}">
         <h2 id="rep-titulo">Reprocessar este pedido</h2>
-        <div class="note">{{ m.icon('alert-triangle') }}<p>Isso cria a tentativa {{ job.attempt + 1 }} e uma nova chamada de IA. O PDF atual continua no histórico, e o lead passa a ver o novo plano quando ele ficar pronto. Fica registrado em seu nome.</p></div>
+        <div class="note">{{ m.icon('alert-triangle') }}<p>Isso cria a tentativa {{ job.attempt + 1 }} e uma nova chamada de IA. O PDF atual continua no histórico. {% if job.release.policy == 'manual' %}A participante aguardará uma nova liberação para acessar a nova tentativa.{% else %}A participante verá o novo plano quando ele ficar pronto.{% endif %} Fica registrado em seu nome.</p></div>
         <div class="field">
           <label for="rep-motivo">Motivo <span class="opt">(de 10 a 300 caracteres)</span></label>
           <textarea class="input" id="rep-motivo" name="reason" rows="3" required minlength="10" maxlength="300"{% if errors.get("reason") %} aria-invalid="true" aria-describedby="rep-motivo-erro"{% endif %}>{{ reason }}</textarea>
@@ -78,7 +101,7 @@
           <tbody>
           {% for delivery in job.deliveries %}
             <tr>
-              <td><b>{{ delivery.destination }}</b>{% if delivery.target %}<span class="sub mono">{{ delivery.target }}</span>{% endif %}{% if delivery.run_url %}<a class="sub" href="{{ delivery.run_url }}" target="_blank" rel="noopener noreferrer">execução{{ m.icon('external', 'icon--sm') }}<span class="sr-only"> (abre em nova aba)</span></a>{% endif %}</td>
+              <td><b>{{ delivery.destination }}</b><span class="sub">{{ "Liberação do plano" if delivery.event == "plano.liberado" else "Conclusão do plano" }}</span>{% if delivery.blocked_reason %}<span class="sub">Aguarda liberação da participante; nenhum envio realizado.</span>{% endif %}{% if delivery.target %}<span class="sub mono">{{ delivery.target }}</span>{% endif %}{% if delivery.run_url %}<a class="sub" href="{{ delivery.run_url }}" target="_blank" rel="noopener noreferrer">execução{{ m.icon('external', 'icon--sm') }}<span class="sr-only"> (abre em nova aba)</span></a>{% endif %}</td>
               <td class="num">{{ delivery.job_attempt }}</td>
               <td>{{ m.badge(delivery.badge) }}</td>
               <td class="num">{{ delivery.attempts }}</td>

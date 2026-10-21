@@ -30,11 +30,11 @@ from app.admin.api import errors as admin_api_errors
 from app.admin.api.application import create_admin_api
 from app.admin.api.schemas.jobs import CurrentPdf
 from app.admin.auth import instant
+from app.deployment_contract import DeploymentContractError, assert_contract
 from app.deps import Deps, get_deps
 from app.errors import RetryableError, TerminalError
 from app.forms import FormSpec, InactiveForm, UnknownForm
 from app.forms.data_notices import log_data_notices
-from app.forms.definition.document import CompletionDoc
 from app.forms.image_optimizer import MAX_UPLOAD_BYTES
 from app.intake import (
     CaptureAccepted,
@@ -47,8 +47,10 @@ from app.intake import (
     submission_spec,
 )
 from app.integrations import config as integration_config
-from app.models import Job
+from app.internal_links import ParticipantPdfAccess
+from app.models import Artifact, Job
 from app.pdf_availability import availability_dict, current_pdf
+from app.plan_release import PlanHeld, ReleaseRefused, participant_access
 from app.submission_launch import launch_after_commit, launch_capture_after_commit, stop_launches
 from app.tokens import TokenError
 from app.web import router as web_router
@@ -79,13 +81,24 @@ logger = logging.getLogger(__name__)
 Trigger = Callable[[uuid.UUID, int], Awaitable[str | None]]
 
 
-class SubmissionCompletion(CompletionDoc):
-    """Próximo passo fixado na versão do envio. O recibo é local; `url` nunca recebe dados anexos."""
+class SubmissionCompletion(BaseModel):
+    """Próximo passo pós-commit. Com opt-in, a URL inclui somente uma referência opaca autorizada."""
 
+    mode: Literal["result", "confirmation", "button", "redirect"]
+    message: str
+    button_label: str
+    url: str | None
+    handoff_status: Literal["not_configured", "ready", "unavailable"] = "not_configured"
     receipt_url: str
 
 
+class PublicReleaseStatus(BaseModel):
+    policy: Literal["automatic", "manual", "unavailable"]
+    state: Literal["automatic", "held", "released", "unavailable"]
+
+
 class SubmissionAccepted(BaseModel):
+    release: PublicReleaseStatus
     """Pedido persistido; geração e conclusão são independentes."""
 
     public_id: str
@@ -93,7 +106,7 @@ class SubmissionAccepted(BaseModel):
     status: str
     replay: bool
     status_url: str
-    pdf_url: str
+    pdf_url: str | None
     page_url: str
     completion: SubmissionCompletion
 
@@ -111,6 +124,7 @@ class CaptureSubmissionAccepted(BaseModel):
 
 
 class PublicJobStatus(BaseModel):
+    release: PublicReleaseStatus
     """Estado autenticado; disponibilidade técnica não concede nova autorização."""
 
     public_id: str
@@ -379,6 +393,10 @@ def create_app(
         environment=settings.app_env,
     )
     app.mount(admin_api_errors.PREFIX, app.state.admin_api, name="admin-api")
+    from app.api.handoffs import create_integration_api
+
+    app.state.integration_api = create_integration_api(clock=app.state.admin_clock)
+    app.mount("/integrations/v1", app.state.integration_api, name="integration-api")
     app.router.add_route(
         admin_api_errors.PREFIX, admin_api_errors.BarePrefix(), include_in_schema=False
     )
@@ -447,6 +465,7 @@ def create_app(
                     link_ttl=deps.link_ttl,
                     limits=deps.submission_limits,
                     forms=deps.forms,
+                    cipher=destinations.SecretCipher.from_settings(deps.settings),
                 )
                 return accepted
 
@@ -482,6 +501,11 @@ def create_app(
                 503, "queue_full", "há pedidos demais em andamento; tente de novo", exc.retry_after
             )
 
+        from app.web.completion import accepted_completion
+
+        completion = await run_in_threadpool(
+            accepted_completion, deps, accepted, now=instant(request.app.state.admin_clock)
+        )
         if isinstance(accepted, CaptureAccepted):
             if not accepted.replay:
                 launch_capture_after_commit(request.app, accepted.submission.id)
@@ -494,7 +518,7 @@ def create_app(
                     "receipt_token": accepted.token,
                     "receipt_url": receipt_url,
                     "replay": accepted.replay,
-                    "completion": {**vars(accepted.form.completion), "receipt_url": receipt_url},
+                    "completion": {**vars(completion), "receipt_url": receipt_url},
                 },
                 status_code=202,
                 headers=PRIVATE_HEADERS,
@@ -503,18 +527,27 @@ def create_app(
         if not accepted.replay:
             launch_after_commit(request.app, job_id, attempt)
         links = pipeline.lead_links(deps, accepted.job)
+        with deps.sessions() as session:
+            artifact = session.scalar(
+                sa.select(Artifact).where(
+                    Artifact.job_id == accepted.job.id,
+                    Artifact.version == accepted.job.attempt,
+                    Artifact.kind == "pdf",
+                )
+            )
+            access = participant_access(session, accepted.job, artifact)
+        if not access.allowed:
+            links["pdf_url"] = None
         return JSONResponse(
             {
                 "public_id": public_id,
+                "release": {"policy": access.policy, "state": access.state},
                 "token": accepted.token,
                 "status": accepted.job.status,
                 "replay": accepted.replay,
                 **links,
                 "completion": {
-                    "mode": accepted.form.completion.mode,
-                    "message": accepted.form.completion.message,
-                    "button_label": accepted.form.completion.button_label,
-                    "url": accepted.form.completion.url,
+                    **vars(completion),
                     "receipt_url": links["page_url"].replace("?t=", "/conclusao?t="),
                 },
             },
@@ -541,9 +574,29 @@ def create_app(
         }
         with deps.sessions() as session:
             availability = current_pdf(session, deps.storage, job)
+            artifact = session.scalar(
+                sa.select(Artifact).where(
+                    Artifact.job_id == job.id,
+                    Artifact.version == job.attempt,
+                    Artifact.kind == "pdf",
+                )
+            )
+            try:
+                access = participant_access(session, job, artifact)
+            except ReleaseRefused:
+                return JSONResponse(
+                    {"code": "access_unavailable"}, status_code=503, headers=PRIVATE_HEADERS
+                )
+            body["release"] = {"policy": access.policy, "state": access.state}
+            allowed = access.allowed
+            if access.policy == "manual":
+                try:
+                    assert_contract(session, required=2)
+                except DeploymentContractError:
+                    allowed = False
         body["attempt"] = job.attempt
         body["current_pdf"] = availability_dict(availability)
-        if availability.available:
+        if availability.available and allowed:
             body["pdf_url"] = pipeline.lead_links(deps, job)["pdf_url"]
         if status == "failed":
             body["failure"] = {"code": job.failure_code}
@@ -571,8 +624,14 @@ def create_app(
                 None,
                 signed_url=True,
                 filename=f"plano-{job.public_id}.pdf",
-                authorized_job=job,
+                access=ParticipantPdfAccess(job.id, job.attempt, job.token_version),
             )
+        except TokenError:
+            raise HTTPException(410, "link expirado", headers=PRIVATE_HEADERS) from None
+        except PlanHeld:
+            return JSONResponse({"code": "plan_held"}, status_code=403, headers=PRIVATE_HEADERS)
+        except (ReleaseRefused, DeploymentContractError):
+            raise HTTPException(503, "acesso indisponível", headers=PRIVATE_HEADERS) from None
         except NoPdf:
             raise HTTPException(404, "PDF não encontrado", headers=PRIVATE_HEADERS) from None
         except PdfRemoved:
@@ -594,6 +653,9 @@ def create_app(
             },
         )
 
+    from app.web.internal import router as internal_router
+
+    app.include_router(internal_router)
     return app
 
 

@@ -242,11 +242,13 @@ COMPLETION_NAMES = {
     "message": "mensagem de confirmação",
     "button_label": "rótulo do botão",
     "url": "destino HTTPS",
+    "handoff.selection": "referência de encaminhamento",
 }
 PLACE_NAMES_COMPLETION = {
     f"completion.{key}": f"Conclusão · {value}" for key, value in COMPLETION_NAMES.items()
 }
 PLACE_NAMES = {
+    "release.mode": "Liberação do plano",
     "title": "Título",
     "intro": "Introdução",
     "minutes": "Tempo para responder",
@@ -338,6 +340,10 @@ def place_of(problem: Problem, edit: FormEdit, *, slug_field: bool = False) -> s
     path = problem.path
     if path == "generation":
         return "generation"
+    if path.startswith("release"):
+        return "release.mode"
+    if path.startswith("completion.handoff"):
+        return "completion.handoff.selection"
     if path.startswith("completion"):
         return (
             path

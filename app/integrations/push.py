@@ -36,13 +36,16 @@ import sqlalchemy as sa
 from sqlalchemy.orm import Session
 
 from app import pipeline
+from app.deployment_contract import DeploymentContractError, assert_contract
 from app.deps import Deps
 from app.destinations import UnreadableSecret
 from app.errors import FailureCode, RetryableError, TerminalError
+from app.integration_readiness import configuration_lock
 from app.integrations import config, mapping
 from app.integrations.baserow import Connection
 from app.integrations.mapping import CaptureRowData, Entry, MappingProfile, RowData
-from app.models import Integration, IntegrationSync, Job, Submission, utcnow
+from app.internal_links import internal_links
+from app.models import Artifact, Integration, IntegrationSync, Job, Submission, utcnow
 from app.submission_identity import identity_from_answers, submission_form
 
 SAMPLE_PREFIX = (
@@ -68,54 +71,78 @@ class _Loaded:
 
 
 def push(deps: Deps, sync_id: uuid.UUID) -> str:
-    """Sincroniza um pedido com a planilha. Devolve "succeeded" ou "already_succeeded" (a
-    sincronização já estava feita, ou saiu com o pedido pela retenção). Levanta o erro traduzido,
-    depois de registrá-lo na sincronização."""
-    try:
-        loaded = _load(deps, sync_id)
-        if loaded is None:
-            return "already_succeeded"
-        written = upsert(
-            deps,
-            loaded.connection,
-            integration_id=loaded.integration_id,
-            key_field_id=loaded.key_field_id,
-            entries=loaded.entries,
-            data=loaded.data,
-        )
-    except Exception as exc:
-        _record_error(deps, sync_id, exc)
-        raise
+    """Mantém configuração, tentativa e artefato protegidos até o transporte limitado."""
+    failure = None
     with deps.sessions.begin() as session:
-        session.execute(
-            sa.update(IntegrationSync)
-            .where(IntegrationSync.id == sync_id)
-            .values(
-                status="succeeded",
-                outcome=written.outcome,
-                row_id=written.row_id,
-                synced_at=utcnow(),
-                last_error=None,
+        metadata = session.get(IntegrationSync, sync_id)
+        if metadata is None or metadata.status == "succeeded":
+            return "already_succeeded"
+        job_id = metadata.job_id
+        configuration_lock(session, shared=True)
+        job = session.scalar(sa.select(Job).where(Job.id == job_id).with_for_update())
+        artifact = session.scalar(
+            sa.select(Artifact)
+            .where(
+                Artifact.job_id == job_id, Artifact.version == job.attempt, Artifact.kind == "pdf"
             )
+            .with_for_update()
         )
+        sync = session.scalar(
+            sa.select(IntegrationSync)
+            .where(IntegrationSync.id == sync_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        if sync is None or sync.status == "succeeded":
+            return "already_succeeded"
+        sync.attempts += 1
+        try:
+            from app.jobs import delivery_retention_expired
+
+            if (
+                job is None
+                or artifact is None
+                or artifact.job_id != job.id
+                or artifact.version != job.attempt
+                or artifact.purged_at is not None
+                or job.status != "completed"
+                or job.expires_at <= utcnow()
+                or delivery_retention_expired(session, job, deps.settings.retention_days)
+            ):
+                raise TerminalError(
+                    FailureCode.INTEGRATION_REJECTED, "tentativa ou prazo não autorizados"
+                )
+            loaded = _load(deps, session, sync)
+            written = upsert(
+                deps,
+                loaded.connection,
+                integration_id=loaded.integration_id,
+                key_field_id=loaded.key_field_id,
+                entries=loaded.entries,
+                data=loaded.data,
+                session=session,
+            )
+            sync.status, sync.outcome, sync.row_id = "succeeded", written.outcome, written.row_id
+            sync.synced_at, sync.last_error = utcnow(), None
+        except Exception as exc:  # noqa: BLE001 — persiste erro seguro na mesma sessão protegida
+            sync.last_error = (
+                str(exc) if isinstance(exc, (RetryableError, TerminalError)) else type(exc).__name__
+            )[:300]
+            failure = exc
+    if failure is not None:
+        raise failure
     return "succeeded"
 
 
-def _load(deps: Deps, sync_id: uuid.UUID) -> _Loaded | None:
-    """O que a sincronização precisa, lido do banco; None se não há o que sincronizar. Conta a tentativa antes de
-    qualquer recusa, para o admin mostrar quantas vezes foi tentado."""
-    with deps.sessions.begin() as session:
-        sync = session.get(IntegrationSync, sync_id)
-        if sync is None or sync.status == "succeeded":
-            return None
-        sync.attempts += 1
-        integration = session.get_one(Integration, sync.integration_id)
-        if integration.purpose != "internal":
-            raise TerminalError(
-                FailureCode.INTEGRATION_UNCONFIGURED,
-                "O Baserow exige finalidade interna; corrija a conexão antes de repetir.",
-            )
-        data = _row_data(deps, session, sync)
+def _load(deps: Deps, session: Session, sync: IntegrationSync) -> _Loaded:
+    integration = session.scalar(
+        sa.select(Integration).where(Integration.id == sync.integration_id).with_for_update()
+    )
+    if integration is None or integration.purpose != "internal":
+        raise TerminalError(
+            FailureCode.INTEGRATION_UNCONFIGURED,
+            "O Baserow exige finalidade interna; corrija a conexão antes de repetir.",
+        )
     if not integration.active:
         raise RetryableError(
             FailureCode.INTEGRATION_UNCONFIGURED,
@@ -126,6 +153,7 @@ def _load(deps: Deps, sync_id: uuid.UUID) -> _Loaded | None:
         raise TerminalError(
             FailureCode.INTEGRATION_MAPPING, "o mapeamento está vazio ou sem o código do pedido"
         )
+    data = _row_data(deps, session, sync)
     try:
         connection = config.open_connection(deps.cipher, integration)
     except UnreadableSecret:
@@ -146,6 +174,27 @@ def _row_data(deps: Deps, session: Session, sync: IntegrationSync) -> RowData:
     # O mapeamento é do pedido/submissão, sem documento ou hash de uma tentativa antiga.
     # O link fixa a tentativa observada; se ficar obsoleto, o endpoint recusa outro PDF.
     links = pipeline.lead_links(deps, job, pdf_attempt=job.attempt)
+    try:
+        assert_contract(session, required=2)
+    except DeploymentContractError:
+        if spec.release_mode == "manual":
+            raise
+    else:
+        artifact = session.scalar(
+            sa.select(Artifact).where(
+                Artifact.job_id == job.id, Artifact.version == job.attempt, Artifact.kind == "pdf"
+            )
+        )
+        integration = session.get_one(Integration, sync.integration_id)
+        links = internal_links(
+            session,
+            deps,
+            job,
+            artifact,
+            receiver_kind="integration",
+            receiver_id=integration.id,
+            receiver_version=integration.version,
+        )
     return RowData(
         public_id=job.public_id,
         form_version=submission.form_version,

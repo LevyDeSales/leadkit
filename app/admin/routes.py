@@ -35,6 +35,7 @@ from app.admin.auth import COOKIE_NAME, COOKIE_PATH, AdminAuth, AdminSession, in
 from app.admin.form_editor import FormEdit
 from app.admin.queries import forms as form_queries
 from app.admin.queries import jobs as job_queries
+from app.deployment_contract import DeploymentContractError
 from app.deps import get_deps
 from app.errors import RetryableError, TerminalError
 from app.forms import GenerationUnavailable, UnknownForm, draft_previews, draft_tests, drafts
@@ -44,6 +45,7 @@ from app.forms import stored as stored_forms
 from app.forms.definition import DefinitionError, Problem
 from app.integrations import config as integration_config
 from app.integrations import mapping as integration_mapping
+from app.internal_links import AdminPdfAccess
 from app.models import utcnow
 from app.version import describe
 from app.web.origin import origin_of
@@ -136,6 +138,12 @@ class AdminRoute(APIRoute):
                     403,
                     "Não deu para confirmar que o pedido saiu deste painel. "
                     "Recarregue a página e tente de novo.",
+                )
+            except DeploymentContractError:
+                response = _error(
+                    request,
+                    503,
+                    "A atualização ainda não habilitou esta operação. Aguarde a conclusão.",
                 )
             except GenerationUnavailable:
                 response = _error(
@@ -246,6 +254,15 @@ def _page(
     session: AdminSession = request.state.admin_session
     flash, session.flash = session.flash, None
     settings = get_deps().settings
+    if name == "admin/form_draft.html":
+        from app.handoff_receivers import get_receiver
+        from app.handoff_types import HandoffError
+
+        try:
+            with get_deps().sessions() as db:
+                context["handoff_receiver"] = get_receiver(db, context["page"].nav.slug)
+        except HandoffError:
+            context["handoff_receiver"] = None
     return templates.TemplateResponse(
         request,
         name,
@@ -385,6 +402,7 @@ def _detail_page(
     errors: dict[str, str] | None = None,
     reason: str = "",
     status_code: int = 200,
+    release_form: dict | None = None,
 ) -> Response:
     deps = get_deps()
     with deps.sessions() as session:
@@ -398,10 +416,41 @@ def _detail_page(
         )
     if detail is None:
         return _error(request, 404, JOB_NOT_FOUND)
+    from urllib.parse import quote, urlencode
+
+    import sqlalchemy as sa
+
+    from app.models import Job, Submission
+
+    with deps.sessions() as db:
+        source = db.execute(
+            sa.select(Submission.id, Submission.form_slug)
+            .join(Job, Job.submission_id == Submission.id)
+            .where(Job.public_id == public_id)
+        ).first()
+    if source is None:
+        return _error(request, 404, JOB_NOT_FOUND)
+    handoff_url = (
+        "/admin/forms/"
+        + quote(source.form_slug, safe="")
+        + "/handoff?"
+        + urlencode({"submission_id": str(source.id)})
+    )
     return _page(
         request,
         "admin/job.html",
-        {"job": detail, "errors": errors or {}, "reason": reason},
+        {
+            "job": detail,
+            "handoff_url": handoff_url,
+            "errors": errors or {},
+            "reason": reason,
+            "release_form": release_form
+            or {
+                "idempotency_key": str(uuid.uuid4()),
+                "mode": "standard",
+                "reason_code": "operator_review",
+            },
+        },
         status_code=status_code,
     )
 
@@ -511,7 +560,11 @@ def job_pdf(request: Request, public_id: str, version: str = "") -> Response:
     """PDF de uma tentativa (a mais recente se `version` não vier), sempre como anexo."""
     try:
         pdf = job_actions.pdf_file(
-            get_deps(), public_id, int(version) if version.isdigit() else None, signed_url=True
+            get_deps(),
+            public_id,
+            int(version) if version.isdigit() else None,
+            access=AdminPdfAccess(),
+            signed_url=True,
         )
     except job_actions.NoPdf:
         return _error(request, 404, "Este pedido ainda não tem PDF.")
@@ -2450,6 +2503,10 @@ def capture_test_page(
     return _capture_tests_page(request, _draft(slug), answers=_given(answers), day=date)
 
 
+from app.admin import handoff_routes
+
+handoff_routes.register(protected)
+
 router.include_router(open_routes)
 router.include_router(protected)
 
@@ -2484,3 +2541,74 @@ def retry_capture_delivery_page(
             "Entrega ou configuração mudou; confira a revisão e a finalidade.", status_code=409
         )
     return RedirectResponse(f"/admin/captures/{submission_id}", status_code=303)
+
+
+@protected.post("/jobs/{public_id}/release")
+async def release_job_pdf(
+    request: Request, public_id: str, session: Annotated[AdminSession, Depends(require_session)]
+) -> Response:
+    from pydantic import ValidationError
+
+    from app.deployment_contract import DeploymentContractError
+    from app.plan_release import ReleasePdfCommand, ReleaseRefused
+
+    posted = await request.form()
+    allowed = {
+        "expected_attempt",
+        "expected_artifact_id",
+        "expected_form_version_number",
+        "expected_release_version",
+        "idempotency_key",
+        "mode",
+        "reason_code",
+    }
+    fields = {key: posted.get(key, "") for key in allowed}
+    try:
+        command = ReleasePdfCommand.model_validate(
+            {**fields, "confirm": posted.get("confirm") == "on"}
+        )
+        done = await job_actions.release_pdf(
+            get_deps(),
+            request.app.state.trigger,
+            public_id,
+            actor=session.username,
+            command=command,
+        )
+    except ValidationError:
+        return await run_in_threadpool(
+            _detail_page,
+            request,
+            public_id,
+            errors={"release": "Confira os campos e confirme a liberação desta tentativa."},
+            release_form=fields,
+            status_code=422,
+        )
+    except DeploymentContractError:
+        return await run_in_threadpool(
+            _detail_page,
+            request,
+            public_id,
+            errors={"release": "A liberação aguarda a verificação da atualização."},
+            release_form=fields,
+            status_code=503,
+        )
+    except ReleaseRefused as error:
+        if error.status == 404:
+            return _error(request, 404, JOB_NOT_FOUND)
+        return await run_in_threadpool(
+            _detail_page,
+            request,
+            public_id,
+            errors={
+                "release": "A tentativa, a versão ou o PDF mudou. Confira a situação antes de liberar."
+            },
+            release_form=fields,
+            status_code=error.status,
+        )
+    messages = {
+        "no_participant_channel": "Acesso liberado; notificação não enviada.",
+        "event_not_selected": "Acesso liberado; a comunicação de conclusão já autorizada foi mantida.",
+        "outbox": "Acesso liberado; notificação registrada para envio.",
+    }
+    session.flash = ("ok", messages[done.commit.notification_decision])
+    return RedirectResponse(f"/admin/jobs/{public_id}", status_code=303)

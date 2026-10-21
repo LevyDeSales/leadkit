@@ -27,11 +27,15 @@ from sqlalchemy.orm import Session
 from starlette.datastructures import FormData
 
 from app.admin.actions.jobs import NoPdf, PdfRemoved, pdf_file
+from app.admin.auth import instant
+from app.deployment_contract import DeploymentContractError
 from app.deps import Deps, get_deps
+from app.destinations import SecretCipher
 from app.errors import RetryableError, TerminalError
 from app.forms import FormSpec, InactiveForm, Notices, Screen, UnknownForm
 from app.forms.dates import long_date
 from app.forms.sandbox import TemplateProblem
+from app.handoffs import completion_view
 from app.intake import (
     Accepted,
     CaptureAccepted,
@@ -45,8 +49,10 @@ from app.intake import (
     clean_tracking,
     submission_spec,
 )
+from app.internal_links import ParticipantPdfAccess
 from app.models import Artifact, Job, Plan, Submission, utcnow
 from app.pdf_availability import PdfAvailability, current_pdf
+from app.plan_release import PlanHeld, ReleaseRefused, require_participant_access
 from app.submission_identity import resolve_identity
 from app.submission_launch import launch_after_commit, launch_capture_after_commit
 from app.tokens import TokenError
@@ -290,6 +296,7 @@ def _prepare_form_submission(
             link_ttl=deps.link_ttl,
             limits=deps.submission_limits,
             forms=deps.forms,
+            cipher=SecretCipher.from_settings(deps.settings),
         )
     except ValidationError as exc:
         # As respostas já passaram por `form_errors`: sobra o canal de marketing que a página não
@@ -411,10 +418,21 @@ class JobDetails:
     lead_name: str | None = None
     scores: dict[str, Any] = field(default_factory=dict)
     availability: PdfAvailability | None = None
+    held: bool = False
 
 
 def _details(deps: Deps, job: Job) -> JobDetails:
-    with deps.sessions() as session:
+    with deps.sessions.begin() as session:
+        from app.integration_readiness import configuration_lock
+
+        configuration_lock(session, shared=True)
+        observed = session.scalar(sa.select(Job).where(Job.id == job.id).with_for_update())
+        if (
+            observed is None
+            or observed.attempt != job.attempt
+            or observed.token_version != job.token_version
+        ):
+            raise NoPdf
         submission = session.get_one(Submission, job.submission_id)
         try:
             lead_name = resolve_identity(deps.forms, submission).name
@@ -422,7 +440,12 @@ def _details(deps: Deps, job: Job) -> JobDetails:
             lead_name = None
         plan = pdf = None
         availability = current_pdf(session, deps.storage, job)
-        if availability.available:
+        try:
+            access = require_participant_access(session, job, _current_pdf(session, job))
+            held = not access.allowed
+        except (ReleaseRefused, DeploymentContractError):
+            held = True
+        if availability.available and not held:
             plan = session.scalar(
                 sa.select(Plan.document).where(Plan.job_id == job.id, Plan.version == job.attempt)
             )
@@ -438,6 +461,7 @@ def _details(deps: Deps, job: Job) -> JobDetails:
         lead_name=lead_name,
         scores=submission.scores or {},
         availability=availability,
+        held=held,
     )
 
 
@@ -492,11 +516,18 @@ def completion_page(public_id: str, request: Request) -> Response:
             spec = deps.forms.get(submission.form_slug, submission.form_version_number)
         except UnknownForm:
             return _page(request, "unknown", 404)
+        completion = completion_view(
+            session,
+            submission,
+            spec,
+            cipher=SecretCipher.from_settings(deps.settings),
+            now=instant(request.app.state.admin_clock),
+        )
     if spec.completion.mode == "result":
         return RedirectResponse(f"/d/{job.public_id}", status_code=303)
     from fastapi.responses import HTMLResponse
 
-    return HTMLResponse(render_completion(spec))
+    return HTMLResponse(render_completion(spec, completion=completion))
 
 
 @router.get("/d/{public_id}")
@@ -508,7 +539,10 @@ def job_page(public_id: str, request: Request) -> Response:
     job = _lead_job(request, deps, public_id)
     if isinstance(job, Response):
         return job
-    details = _details(deps, job)
+    try:
+        details = _details(deps, job)
+    except NoPdf:
+        return _page(request, "plan_held", 409, job=job)
     if job.status == "failed":
         return _page(
             request, "failed", job=job, details=details, notice=_notices(deps, details).failed
@@ -522,6 +556,8 @@ def job_page(public_id: str, request: Request) -> Response:
             progress=progress(job, utcnow()),
             notice=_notices(deps, details).waiting,
         )
+    if details.held:
+        return _page(request, "plan_held", job=job)
     if details.pdf is None:
         return _page(
             request,
@@ -557,8 +593,14 @@ def download_pdf(public_id: str, request: Request) -> Response:
             None,
             signed_url=True,
             filename=f"plano-{job.public_id}.pdf",
-            authorized_job=job,
+            access=ParticipantPdfAccess(job.id, job.attempt, job.token_version),
         )
+    except TokenError:
+        return _page(request, "expired", 410, job=job, days=deps.settings.link_ttl_days)
+    except PlanHeld:
+        return _page(request, "plan_held", 403, job=job)
+    except (ReleaseRefused, DeploymentContractError):
+        return _page(request, "plan_held", 503, job=job)
     except NoPdf:
         return _page(request, "pdf_unavailable", 404, job=job)
     except PdfRemoved:
@@ -634,9 +676,16 @@ def capture_completion_page(public_id: str, request: Request) -> Response:
             spec = deps.forms.get(submission.form_slug, submission.form_version_number)
         except UnknownForm:
             return _page(request, "capture_unknown", 404)
+        completion = completion_view(
+            session,
+            submission,
+            spec,
+            cipher=SecretCipher.from_settings(deps.settings),
+            now=instant(request.app.state.admin_clock),
+        )
     headers = {"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"}
     if token is not None:
         response = RedirectResponse(f"/s/{public_id}/conclusao", status_code=303, headers=headers)
         _grant_capture_access(response, request, receipt, token)
         return response
-    return HTMLResponse(render_completion(spec), headers=headers)
+    return HTMLResponse(render_completion(spec, completion=completion), headers=headers)

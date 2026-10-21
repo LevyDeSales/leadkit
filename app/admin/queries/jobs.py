@@ -46,6 +46,7 @@ from app.models import (
     WebhookDestination,
 )
 from app.pdf_availability import PdfAvailability, current_pdf
+from app.plan_release import release_snapshot
 from app.submission_identity import resolve_identity
 
 
@@ -542,6 +543,10 @@ class DeliveryState:
     config_version: int | None = None
     current_config_version: int | None = None
     dispatch_no: int = 1
+    event: str = "plano.concluido"
+    release_id: uuid.UUID | None = None
+    occurred_at: datetime | None = None
+    blocked_reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -615,6 +620,7 @@ class JobState:
     link_expired: bool  # o link da lead já passou do prazo, no instante pedido
     hatchet_run_id: str | None
     current_pdf: PdfAvailability
+    release: dict[str, Any]
     pdfs: tuple[PdfState, ...]  # o mais novo primeiro
     deliveries: tuple[DeliveryState, ...]  # do mais antigo ao mais novo
     syncs: tuple[SyncState, ...]  # o mais novo primeiro
@@ -761,6 +767,10 @@ def read_job(
             if d.webhook_destination_id
             else None,
             dispatch_no=d.dispatch_no,
+            event=d.event,
+            release_id=d.release_id,
+            occurred_at=d.occurred_at or d.created_at,
+            blocked_reason=d.blocked_reason,
             scope=d.destination_scope,
             host=d.destination_host,
         )
@@ -782,6 +792,7 @@ def read_job(
         link_expired=now > job.expires_at,
         hatchet_run_id=job.hatchet_run_id,
         current_pdf=current_pdf(session, storage, job),
+        release=release_snapshot(session, job),
         pdfs=tuple(
             PdfState(a.version, a.byte_size, a.created_at, a.purged_at)
             for a in sorted(artifacts.values(), key=lambda a: a.version, reverse=True)

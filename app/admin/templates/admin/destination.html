@@ -62,6 +62,7 @@
     <fieldset id="eventos" aria-describedby="eventos-ajuda{% if errors.get('events') %} eventos-erro{% endif %}"{% if errors.get('events') %} aria-invalid="true"{% endif %}><legend>Eventos aceitos pelo receptor</legend>
     <p id="eventos-ajuda">Declare a finalidade autorizada. Capturas enviam respostas sem plano ou PDF. Confira também o destino padrão herdado ao remover uma configuração própria.</p>
     <label><input type="checkbox" name="events" value="plano.concluido"{% if 'plano.concluido' in selected_events %} checked{% endif %}>Planos concluídos (PDF)</label>
+    <label><input type="checkbox" name="events" value="plano.liberado"{% if 'plano.liberado' in selected_events %} checked{% endif %}>Liberação individual do plano</label>
     <label><input type="checkbox" name="events" value="submissao.persistida"{% if 'submissao.persistida' in selected_events %} checked{% endif %}>Capturas persistidas (sem PDF)</label>
     {% if errors.get("events") %}<p class="error" id="eventos-erro" role="alert">{{ errors["events"] }}</p>{% endif %}</fieldset>
     {% if needs_confirmation %}

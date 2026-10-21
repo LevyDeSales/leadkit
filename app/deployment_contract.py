@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.integration_readiness import configuration_lock
 from app.models import DeploymentContract
 
+BINARY_CONTRACT = 2
 PARTICIPANT_CONTRACT = 1
 
 
@@ -36,28 +37,35 @@ def assert_runtime_contract(session: Session) -> None:
     """Confere o piso antes de preparar destinos ou registrar workflows."""
     try:
         state = _state(session)
-        if state is not None and state.minimum_contract > PARTICIPANT_CONTRACT:
+        if state is not None and state.minimum_contract > BINARY_CONTRACT:
             raise DeploymentContractError
     except SQLAlchemyError:
         raise DeploymentContractError from None
 
 
-def assert_participant_contract(session: Session) -> None:
-    """A transação chamadora mantém a trava compartilhada até o fim do transporte."""
+def assert_contract(session: Session, *, required: int) -> None:
+    """Exige requisito habilitado; mantém a trava até o fim da transação chamadora."""
+    if type(required) is not int or required not in {1, 2}:
+        raise DeploymentContractError
     try:
         configuration_lock(session, shared=True)
         state = _state(session)
         if (
             state is None
-            or state.minimum_contract != PARTICIPANT_CONTRACT
+            or not required <= state.minimum_contract <= BINARY_CONTRACT
             or state.phase != "verified"
         ):
             raise DeploymentContractError
         if state.epoch is None or state.attested_at is None:
             raise DeploymentContractError
-        _validate_evidence(state.evidence)
+        _validate_evidence(state.evidence, required=state.minimum_contract)
     except SQLAlchemyError:
         raise DeploymentContractError from None
+
+
+def assert_participant_contract(session: Session) -> None:
+    """Preserva o requisito1 das projeções na frota composta compatível."""
+    assert_contract(session, required=PARTICIPANT_CONTRACT)
 
 
 def begin_rollout(session: Session, *, epoch) -> None:
@@ -73,7 +81,7 @@ def begin_rollout(session: Session, *, epoch) -> None:
         if state is None:
             state = DeploymentContract(id=1, minimum_contract=1)
             session.add(state)
-        if state.minimum_contract > PARTICIPANT_CONTRACT:
+        if state.minimum_contract > BINARY_CONTRACT:
             raise DeploymentContractError
         state.minimum_contract = max(1, state.minimum_contract)
         state.phase = "blocked"
@@ -100,11 +108,11 @@ def attest_rollout(session: Session, *, epoch, evidence) -> None:
             state is None
             or state.epoch != epoch
             or state.phase != "blocked"
-            or state.minimum_contract > PARTICIPANT_CONTRACT
+            or state.minimum_contract > BINARY_CONTRACT
         ):
             raise DeploymentContractError
         state.minimum_contract = max(1, state.minimum_contract)
-        state.evidence = manifest
+        state.evidence = _validate_evidence(manifest, required=state.minimum_contract)
         state.attested_at = utcnow()
         state.phase = "verified"
         session.flush()
@@ -112,7 +120,7 @@ def attest_rollout(session: Session, *, epoch, evidence) -> None:
         raise DeploymentContractError from None
 
 
-def _validate_evidence(evidence):
+def _validate_evidence(evidence, *, required: int = 1):
     """Aceita apenas o contrato fechado de metadados; nenhum campo arbitrário persiste."""
     from typing import Annotated, Literal
 
@@ -139,9 +147,9 @@ def _validate_evidence(evidence):
         spec_version: Annotated[int, Field(ge=1)]
         observed_spec_version: Annotated[int, Field(ge=1)]
         image: digest
-        contract: Literal[1]
+        contract: Annotated[int, Field(ge=1, le=2)]
         previous_image: digest
-        previous_contract: Literal[1]
+        previous_contract: Annotated[int, Field(ge=1, le=2)]
         replicas: Annotated[int, Field(ge=1)]
         tasks: list[Task]
         retired: list[Task]
@@ -151,7 +159,7 @@ def _validate_evidence(evidence):
         worker: Service
 
     class Evidence(Metadata):
-        schema_version: Literal[1]
+        schema_version: Annotated[int, Field(ge=1, le=1)]
         stack: identifier
         node_id: identifier
         services: Services
@@ -161,7 +169,9 @@ def _validate_evidence(evidence):
         seen = set()
         for service in (parsed.services.api, parsed.services.worker):
             if (
-                service.spec_version != service.observed_spec_version
+                service.contract < required
+                or service.previous_contract < required
+                or service.spec_version != service.observed_spec_version
                 or len(service.tasks) != service.replicas
             ):
                 raise DeploymentContractError
@@ -212,7 +222,7 @@ def main(argv=None) -> int:
             raise DeploymentContractError
         action = args[0]
         if action == "capability":
-            print(json.dumps({"contract": PARTICIPANT_CONTRACT}))
+            print(json.dumps({"contract": BINARY_CONTRACT}))
             return 0
         document = {}
         if action in {"begin", "attest"}:

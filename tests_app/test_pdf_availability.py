@@ -6,6 +6,7 @@ from test_intake import submit
 from app import jobs, pipeline
 from app.deps import Deps
 from app.errors import TerminalError
+from app.internal_links import AdminPdfAccess
 
 
 def test_completion_rejects_a_pdf_prefix_without_a_readable_document(deps: Deps) -> None:
@@ -98,14 +99,18 @@ def test_default_download_never_falls_back_to_a_previous_attempt(deps: Deps) -> 
     plan, _ = pipeline.generate_plan(deps, job.id, 1)
     artifact, _ = pipeline.render_pdf(deps, job.id, 1, plan)
     pipeline.finalize(deps, job.id, 1, artifact)
-    assert pdf_file(deps, job.public_id, None, signed_url=False).content.startswith(b"%PDF")
+    assert pdf_file(
+        deps, job.public_id, None, access=AdminPdfAccess(), signed_url=False
+    ).content.startswith(b"%PDF")
     with deps.sessions.begin() as session:
         jobs.reprocess(
             session, job.id, actor="synthetic", reason="nova tentativa", expected_attempt=1
         )
     with pytest.raises(NoPdf):
-        pdf_file(deps, job.public_id, None, signed_url=False)
-    assert pdf_file(deps, job.public_id, 1, signed_url=False).content.startswith(b"%PDF")
+        pdf_file(deps, job.public_id, None, access=AdminPdfAccess(), signed_url=False)
+    assert pdf_file(
+        deps, job.public_id, 1, access=AdminPdfAccess(), signed_url=False
+    ).content.startswith(b"%PDF")
 
 
 def test_duplicate_render_keeps_the_winners_bytes_and_evidence(deps: Deps) -> None:
@@ -246,7 +251,9 @@ def test_authorized_download_verifies_a_historical_pdf_without_regenerating_it(d
         artifact.verified_at = artifact.storage_revision = None
     with deps.sessions() as session:
         assert current_pdf(session, deps.storage, session.get_one(Job, job.id)).state == "unknown"
-    assert pdf_file(deps, job.public_id, None, signed_url=False).content.startswith(b"%PDF")
+    assert pdf_file(
+        deps, job.public_id, None, access=AdminPdfAccess(), signed_url=False
+    ).content.startswith(b"%PDF")
     with deps.sessions() as session:
         assert current_pdf(session, deps.storage, session.get_one(Job, job.id)).available
     assert llm.calls == 1

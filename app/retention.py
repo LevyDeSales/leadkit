@@ -62,6 +62,7 @@ from app.models import (
     Job,
     Lead,
     Plan,
+    PlanRelease,
     Submission,
     utcnow,
 )
@@ -84,6 +85,10 @@ def purge_expired(deps: Deps, *, now: datetime | None = None) -> RetentionReport
     """Uma passada completa. Idempotente: o que falhar fica para a próxima."""
     now = now or utcnow()
     report = RetentionReport()
+    from app.handoffs import expire_ciphertexts
+
+    with deps.sessions.begin() as session:
+        expire_ciphertexts(session, now=now)
     _purge_captures(deps, now, report)
     _purge_requests(deps, now, report)
     if not report.storage_errors:  # storage fora do ar: a próxima execução tenta de novo
@@ -260,6 +265,7 @@ def _delete_request(session: Session, job_id: uuid.UUID, submission_id: uuid.UUI
     """Apaga as linhas do pedido; devolve 1 se o lead também saiu (não tinha outro pedido)."""
     session.execute(sa.delete(Delivery).where(Delivery.job_id == job_id))
     session.execute(sa.delete(IntegrationSync).where(IntegrationSync.job_id == job_id))
+    session.execute(sa.delete(PlanRelease).where(PlanRelease.job_id == job_id))
     session.execute(sa.delete(Artifact).where(Artifact.job_id == job_id))
     session.execute(sa.delete(Plan).where(Plan.job_id == job_id))
     session.execute(sa.delete(Job).where(Job.id == job_id))

@@ -50,6 +50,8 @@ from app.admin.api.schemas.jobs import (
     JobPlanProjection,
     JobStatus,
     JobSummary,
+    ReleasedJobPdf,
+    ReleaseJobPdfRequest,
     ReprocessedJob,
     ReprocessJobRequest,
     ResendDeliveryRequest,
@@ -62,6 +64,7 @@ from app.admin.api.security import CurrentKey, ensure_role
 from app.admin.queries import jobs as job_queries
 from app.deps import get_deps
 from app.errors import RetryableError, TerminalError
+from app.internal_links import AdminPdfAccess
 
 logger = logging.getLogger(__name__)
 
@@ -409,7 +412,9 @@ def download_job_pdf(
     ] = None,
 ) -> PdfResponse:
     try:
-        pdf = job_actions.pdf_file(get_deps(), public_id, version, signed_url=False)
+        pdf = job_actions.pdf_file(
+            get_deps(), public_id, version, access=AdminPdfAccess(), signed_url=False
+        )
     except job_actions.NoPdf:
         raise ApiError(
             "not_found", "Este pedido não existe ou ainda não tem o PDF dessa tentativa."
@@ -671,3 +676,49 @@ def _resend_refused(what: str, refused: job_actions.ResendRefused) -> ApiError:
         f"Só dá para reenviar uma {what} que falhou (`failed`), e esta já não está nesse estado. "
         "Nada foi feito. " + CONFLICT_REPEATED,
     )
+
+
+@router.operation(
+    "POST",
+    "/jobs/{public_id}/release",
+    operation_id="release_job_pdf",
+    role="total",
+    external_effect=True,
+    response_model=ReleasedJobPdf,
+    errors={
+        404: "Pedido não encontrado.",
+        409: "state_conflict: tentativa, versão, idempotência ou PDF incompatíveis; nenhuma nova liberação.",
+        503: "A atualização ainda não habilitou a liberação.",
+    },
+    summary="Liberar acesso ao plano",
+    description="Autoriza somente a tentativa e o PDF observados, sem gerar plano, exigir compra ou reunião, nem renovar retenção. Replay exato retorna o fato histórico sem enviar novamente. Sem canal participante, libera acesso e informa que a notificação não foi enviada.",
+    returns="Fato de liberação, tentativa, decisão de notificar e estados do transporte; nenhum documento ou link interno.",
+)
+async def release_job_pdf(
+    request: Request, public_id: str, body: ReleaseJobPdfRequest, key: CurrentKey
+) -> ReleasedJobPdf:
+    from app.deployment_contract import DeploymentContractError
+    from app.plan_release import ReleasePdfCommand, ReleaseRefused
+
+    try:
+        done = await job_actions.release_pdf(
+            get_deps(),
+            request.app.state.trigger,
+            public_id,
+            actor=key.actor,
+            command=ReleasePdfCommand.model_validate(body.model_dump()),
+        )
+    except DeploymentContractError:
+        raise ApiError("unavailable", "A liberação aguarda a verificação da atualização.") from None
+    except ReleaseRefused as error:
+        code = (
+            "not_found"
+            if error.status == 404
+            else "validation_failed"
+            if error.status == 422
+            else "state_conflict"
+        )
+        raise ApiError(
+            code, "A liberação foi recusada.", errors=[ErrorItem("reason_code", error.code)]
+        ) from None
+    return ReleasedJobPdf.of(done)

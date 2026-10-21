@@ -48,6 +48,19 @@ PUBLIC_DETAIL_KEYS = frozenset(
         # senha; o `source` é o nome da variável de ambiente de onde o destino padrão veio; no teste,
         # o status e o tempo (o `error` fica de fora).
         # Entregas de captura: referências e finalidade autorizada, sem respostas nem credenciais.
+        # Continuidade/liberação: IDs, versões, códigos fechados, escolha booleana e instante.
+        # Nunca referência bearer, cifra, hash, segredo, contato ou motivo livre.
+        "artifact_id",
+        "credential_id",
+        "enabled",
+        "mode",
+        "notification_decision",
+        "occurred_at",
+        "projection",
+        "reason_code",
+        "receiver_id",
+        "release_id",
+        "revision",
         "submission_id",
         "config_version",
         "purpose",

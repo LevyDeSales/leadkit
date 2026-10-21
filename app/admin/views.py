@@ -352,6 +352,8 @@ class DeliveryView:
     audience: str = "internal"
     authorization_origin: str = "legacy"
     current_config_version: int | None = None
+    event: str = "plano.concluido"
+    blocked_reason: str | None = None
 
 
 SYNC_BADGES = {
@@ -489,6 +491,7 @@ class JobDetail:
     consents: list[ConsentView]
     plan: PlanView | None
     current_pdf: PdfAvailability
+    release: dict[str, Any]
     pdfs: list[PdfView]
     deliveries: list[DeliveryView]
     syncs: list[SyncView]
@@ -567,6 +570,7 @@ def job_detail(
         consents=_consents(lead.consent),
         plan=_plan_view(lead.plan, spec) if lead.plan else None,
         current_pdf=state.current_pdf,
+        release=state.release,
         pdfs=[
             PdfView(
                 version=pdf.version,
@@ -618,6 +622,8 @@ def _delivery_view(
         audience=delivery.audience,
         authorization_origin=delivery.authorization_origin,
         current_config_version=delivery.current_config_version,
+        event=delivery.event,
+        blocked_reason=delivery.blocked_reason,
     )
 
 

@@ -36,6 +36,7 @@ import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal, Protocol
+from uuid import UUID
 
 from pydantic import BaseModel, ValidationError
 from pydantic.fields import FieldInfo
@@ -221,6 +222,12 @@ def _check_screen(spec: FormSpec, screen: Screen) -> None:
 
 
 @dataclass(frozen=True)
+class Handoff:
+    receiver_id: UUID
+    receiver_revision: int
+
+
+@dataclass(frozen=True)
 class Completion:
     """Próximo passo após salvar respostas; não altera geração nem autorização do PDF."""
 
@@ -228,6 +235,7 @@ class Completion:
     message: str = "Recebemos suas respostas. Obrigada por participar."
     button_label: str = "Continuar"
     url: str | None = None
+    handoff: Handoff | None = None
 
 
 @dataclass(frozen=True)
@@ -247,6 +255,7 @@ class FormSpec:
     templates: FormTemplates | None
     generation: Literal["pdf", "none"] = "pdf"
     completion: Completion = Completion()
+    release_mode: Literal["automatic", "manual"] = "automatic"
     # As condições das perguntas e das opções: o avaliador que diz o que aparece para certas
     # respostas. O modelo das respostas já as aplica; quem lê o envio ou grava as respostas usa o
     # mesmo resultado (`Conditions.evaluate`).

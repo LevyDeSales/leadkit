@@ -55,7 +55,7 @@ class Destination(BaseModel):
 
     """Um destino do webhook guardado, como a API o mostra. **Nunca traz o segredo.**"""
 
-    events: list[Literal["plano.concluido", "submissao.persistida"]] = Field(
+    events: list[Literal["plano.concluido", "submissao.persistida", "plano.liberado"]] = Field(
         default_factory=lambda: ["plano.concluido"],
         description="Eventos que a operadora declarou aceitos pelo receptor.",
     )
@@ -265,10 +265,12 @@ class SaveDestinationRequest(ConfirmedInput, VersionedInput):
     mantém o segredo. Como o endereço decide para onde vão os dados das leads, a operação exige
     `confirm: true` em toda chamada."""
 
-    events: list[Literal["plano.concluido", "submissao.persistida"]] | None = Field(
-        default=None,
-        min_length=1,
-        description="Na criação, omitido mantém PDF legado; na atualização, omitido conserva os eventos atuais. Captura exige autorização explícita para submissao.persistida.",
+    events: list[Literal["plano.concluido", "submissao.persistida", "plano.liberado"]] | None = (
+        Field(
+            default=None,
+            min_length=1,
+            description="Na criação, omitido mantém PDF legado; na atualização, omitido conserva os eventos atuais. Captura exige autorização explícita para submissao.persistida.",
+        )
     )
     url: str = Field(
         max_length=destinations.MAX_URL_LENGTH,

@@ -239,6 +239,9 @@ def start(
     simulated = assembled.simulated
     try:
         with deps.sessions.begin() as session:
+            from app.forms.continuation_contract import assert_definition_contract
+
+            assert_definition_contract(session, draft.document)
             # A linha do formulário serializa dois cliques: o segundo vê o primeiro na fila.
             session.execute(sa.select(Form.id).where(Form.id == draft.form_id).with_for_update())
             _interrupt_overdue(session, draft.form_id, now)

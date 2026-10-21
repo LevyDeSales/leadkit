@@ -12,7 +12,7 @@ from test_plan_projections import SENTINEL, projection_definition
 from app import jobs, pipeline
 from app.admin_mcp.catalog import load, select
 from app.forms.definition import compile_definition
-from app.models import Plan
+from app.models import Plan, utcnow
 
 
 def generated(deps):
@@ -94,6 +94,7 @@ def test_participant_payload_contains_only_projected_document_and_allowed_refere
             job_id=job.id,
             artifact_id=artifact.id,
             event="plano.concluido",
+            created_at=utcnow(),
             audience="participant",
             authorization_origin="explicit",
             authorized_attempt=1,

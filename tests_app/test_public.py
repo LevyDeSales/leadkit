@@ -761,7 +761,7 @@ def test_preview_never_outlives_the_form_contract_it_was_compiled_from(
     [{"form_slug": "formulario-removido"}, {"form_version_number": 7}],
     ids=["slug", "versao"],
 )
-def test_result_page_of_a_form_that_left_the_registry_still_offers_the_pdf(
+def test_result_page_with_unresolvable_historical_policy_protects_the_pdf(
     client: TestClient, deps: Deps, gone: dict[str, object]
 ) -> None:
     page = enter(client)
@@ -772,10 +772,10 @@ def test_result_page_of_a_form_that_left_the_registry_still_offers_the_pdf(
     response = client.get(page)
     assert response.status_code == 200
     shown = text(response.text)
-    assert "Seu plano está pronto" in shown
+    assert "Seu plano aguarda liberação" in shown
     assert "Contadora" not in shown  # sem a versão exata, não presume o nome do cadastro
     assert "Organizar atividades do projeto" not in shown  # sem a prévia
-    assert tags(response.text, "a", href=f"{page}/pdf")
+    assert not tags(response.text, "a", href=f"{page}/pdf")
     assert_private(response)
 
 

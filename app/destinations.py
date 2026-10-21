@@ -384,10 +384,10 @@ def save(
     if events is not None and (
         not events
         or len(set(events)) != len(events)
-        or set(events) - {"plano.concluido", "submissao.persistida"}
+        or set(events) - {"plano.concluido", "submissao.persistida", "plano.liberado"}
     ):
         raise InvalidEvents(
-            "Selecione os eventos aceitos: plano.concluido e/ou submissao.persistida."
+            "Selecione os eventos aceitos: plano.concluido, plano.liberado e/ou submissao.persistida."
         )
     from app.integration_readiness import configuration_lock
 
@@ -407,6 +407,12 @@ def save(
     effective_events = (
         events if events is not None else (current.events if current else ["plano.concluido"])
     )
+    if "plano.liberado" in effective_events:
+        from app.deployment_contract import assert_contract
+
+        assert_contract(session, required=2)
+        if chosen != "participant":
+            raise InvalidEvents("A notificação de liberação exige finalidade participante.")
     if "submissao.persistida" in effective_events:
         require_internal(chosen, receiver="O webhook de captura")
     if chosen == "participant":

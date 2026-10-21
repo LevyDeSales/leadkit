@@ -276,7 +276,7 @@ def send(input: DeliverInput, ctx: Context) -> DeliverOutput:
     return DeliverOutput(
         delivery_id=input.delivery_id,
         delivered_count=int(status == "succeeded"),
-        skipped_count=int(status in ("obsolete", "already_succeeded")),
+        skipped_count=int(status in ("obsolete", "already_succeeded", "blocked")),
     )
 
 
@@ -483,8 +483,12 @@ def launch_delivery(delivery_id: uuid.UUID) -> str | None:
     from app.models import Delivery
 
     with get_deps().sessions() as session:
+        from app.integration_readiness import configuration_lock
+        from app.plan_release import delivery_eligible
+
+        configuration_lock(session, shared=True)
         row = session.get(Delivery, delivery_id)
-        if row is None or row.status != "pending":
+        if row is None or row.status != "pending" or not delivery_eligible(session, row):
             return None
         dispatch_no = row.dispatch_no
     try:

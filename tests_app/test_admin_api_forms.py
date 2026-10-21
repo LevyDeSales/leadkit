@@ -1315,7 +1315,7 @@ def test_compare_form_versions_reads_two_versions_section_by_section(
     assert any(line["kind"] == "hunk" for line in page_section["lines"])
     unchanged = [s for s in body["sections"] if not s["changed"]]
     assert unchanged and all(section["lines"] == [] for section in unchanged)
-    assert len(body["sections"]) == 19 and body["sections"][-1]["key"] == "outras"
+    assert len(body["sections"]) == 20 and body["sections"][-1]["key"] == "outras"
     completion = next(item for item in body["sections"] if item["key"] == "conclusao")
     assert completion["title"] == "Conclusão após salvar as respostas"
     assert completion["changed"] is False

@@ -405,6 +405,8 @@ class CompletionEdit:
     message: str = ""
     button_label: str = ""
     url: str = ""
+    receiver_id: str = ""
+    receiver_revision: str = ""
 
     @classmethod
     def of_document(cls, value: Any) -> CompletionEdit:
@@ -412,21 +414,49 @@ class CompletionEdit:
         return cls(
             **{key: _text(found.get(key)) for key in ("message", "button_label", "url")},
             mode=_text(found.get("mode")) or "result",
+            receiver_id=_text((found.get("handoff") or {}).get("receiver_id")),
+            receiver_revision=_text((found.get("handoff") or {}).get("receiver_revision")),
         )
 
     @classmethod
     def of_form(cls, form: FormFields) -> CompletionEdit:
+        selected = (form.getlist("completion.handoff.selection") or [""])[0]
+        prefix = "completion.handoff.current" if selected == "current" else "completion.handoff"
         return cls.of_document(
             {
-                key: form.getlist(f"completion.{key}")[0]
+                key: (
+                    (form.getlist("completion.handoff.current.entry_url") or [""])[0]
+                    if key == "url" and selected == "current"
+                    else form.getlist(f"completion.{key}")[0]
+                )
                 for key in ("mode", "message", "button_label", "url")
                 if form.getlist(f"completion.{key}")
+            }
+            | {
+                "handoff": {
+                    key: (form.getlist(f"{prefix}.{key}") or [""])[0]
+                    if selected in ("saved", "current")
+                    else ""
+                    for key in ("receiver_id", "receiver_revision")
+                }
             }
         )
 
     def document(self) -> dict[str, Any]:
         return {
             "mode": self.mode.strip(),
+            **(
+                {
+                    "handoff": {
+                        "receiver_id": self.receiver_id.strip(),
+                        "receiver_revision": int(self.receiver_revision)
+                        if self.receiver_revision.isdecimal()
+                        else self.receiver_revision,
+                    }
+                }
+                if self.receiver_id.strip() or self.receiver_revision.strip()
+                else {}
+            ),
             **{
                 key: _lines(value).strip()
                 for key, value in (
@@ -450,6 +480,7 @@ class FormEdit:
     OPERATIONS: ClassVar[tuple[str, ...]] = ()
 
     generation: str = "pdf"
+    release_mode: str = "automatic"
     title: str = ""
     intro: str = ""
     minutes: str = ""
@@ -502,6 +533,7 @@ class FormEdit:
             scoring=ScoringEdit.of_document(document.get("scoring")),
             notices=NoticesEdit.of_document(document.get("notices")),
             completion=CompletionEdit.of_document(document.get("completion")),
+            release_mode=(document.get("release") or {}).get("mode", "automatic"),
         )
 
     @classmethod
@@ -573,6 +605,7 @@ class FormEdit:
             scoring=ScoringEdit.of_form(form),
             notices=NoticesEdit.of_form(form),
             completion=CompletionEdit.of_form(form),
+            release_mode=first("release.mode") or "automatic",
         )
         for role in IDENTITY_ROLES:
             position = _POSITION.fullmatch(first(f"identity.{role}"))
@@ -659,6 +692,8 @@ class FormEdit:
             found["scoring"] = scoring
         if (notices := self.notices.document()) is not None:
             found["notices"] = notices
+        if self.release_mode != "automatic":
+            found["release"] = {"mode": self.release_mode}
         completion = self.completion.document()
         if completion != {"mode": "result"}:
             found["completion"] = completion

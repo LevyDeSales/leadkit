@@ -34,6 +34,7 @@ from app.forms.definition.document import (
     PdfDoc,
     PhasesDoc,
     PlanDoc,
+    ReleaseDoc,
     ScoringDoc,
     StepDoc,
     Text,
@@ -55,6 +56,7 @@ PARTS: dict[str, TypeAdapter[Any]] = {
     "notices": TypeAdapter(NoticesDoc),
     "completion": TypeAdapter(CompletionDoc),
     "pdf": TypeAdapter(PdfDoc),
+    "release": TypeAdapter(ReleaseDoc),
 }
 # As partes opcionais: ausentes, nulas ou vazias, dizem o mesmo (nada).
 OPTIONAL_PARTS = ("scoring", "phases", "notices", "data", "completion")
@@ -90,6 +92,8 @@ def normalized(document: Mapping[str, Any]) -> dict[str, Any]:
     for key in PARTS:
         if key in found and (minimal := part(key, found[key])) is not None:
             found[key] = minimal
+    if found.get("generation", "pdf") == "pdf" and found.get("release") in (None, {}):
+        found.pop("release", None)
     for key in OPTIONAL_PARTS:
         if key in found and found[key] in (None, {}):
             del found[key]

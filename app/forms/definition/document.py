@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
+from uuid import UUID
 
 from pydantic import (
     AfterValidator,
@@ -509,9 +510,19 @@ class ScoringDoc(_Strict):
     persona: list[RuleDoc] = Field(default=[], max_length=MAX_RULES)
 
 
+class HandoffDoc(_Strict):
+    receiver_id: UUID
+    receiver_revision: Annotated[int, Field(ge=1)]
+
+
+class ReleaseDoc(_Strict):
+    mode: Literal["automatic", "manual"] = "automatic"
+
+
 class CompletionDoc(_Strict):
     """Conclusão após persistência. Texto puro, sem HTML nem interpretação de template."""
 
+    handoff: HandoffDoc | None = None
     mode: Literal["result", "confirmation", "button", "redirect"] = Field(
         default="result",
         description="Próximo passo após commit: resultado PDF (padrão legado), confirmação local, botão ou encaminhamento com recibo de continuidade. Não altera geração nem autorização de PDF.",
@@ -526,7 +537,7 @@ class CompletionDoc(_Strict):
     )
     url: HttpsUrl | None = Field(
         default=None,
-        description="URL HTTPS exata autorizada pela configuração autenticada. Obrigatória em button/redirect e ausente em result/confirmation; sem usuário/senha, override público ou anexos automáticos de dados/token.",
+        description="URL HTTPS exata autorizada pela configuração autenticada. Obrigatória em button/redirect e ausente em result/confirmation; sem usuário/senha ou override público. Sem handoff conserva o endereço exato; com opt-in acrescenta somente a referência opaca, sem contato, respostas ou bearer PDF.",
         examples=["https://example.test/proximo-passo"],
     )
 
@@ -553,6 +564,7 @@ class FormDocument(_Strict):
     consent: ConsentDoc
     scoring: ScoringDoc | None = None
     generation: Literal["pdf", "none"] = "pdf"
+    release: ReleaseDoc | None = None
     instructions: str | None = None
     prompt: str | None = None
     plan: PlanDoc | None = None
@@ -584,6 +596,7 @@ class CaptureExamplesDoc(ExamplesDoc):
 
 
 class CaptureFormDocument(FormDocument):
+    release: None = None
     examples: CaptureExamplesDoc
     generation: Literal["none"]
     instructions: None = None
@@ -776,6 +789,8 @@ def parse(document: Mapping[str, Any] | str | bytes) -> FormDocument:
     if problems:
         raise DefinitionError(problems)
     problems = [Problem(key, message) for key, message in RESERVED.items() if key in document]
+    if document.get("generation") == "none" and "release" in document:
+        problems.append(Problem("release", "captura não usa política de liberação de PDF"))
     try:
         parsed = (
             CaptureFormDocument if document.get("generation") == "none" else PdfFormDocument
