@@ -204,3 +204,35 @@ Destinos existentes conservam a origem legada; girar o segredo mantém a finalid
 exige escolha explícita. Novas entregas PDF fixam receptor/revisão/audiência/tentativa e o reenvio
 exige confirmar as versões atuais. Habilitação participante e rollback dependem do roteiro de
 compatibilidade operacional, sem alterar o guard estrutural do banco.
+
+### Liberação individual do PDF
+
+Formulários PDF podem optar por `release: {mode: "manual"}` em uma nova versão. Ausência conserva
+a entrega automática. Capturas recusam esse bloco. Geração concluída e PDF disponível são estados
+separados do acesso: no manual a participante vê “Seu plano aguarda liberação”, sem prévia,
+conteúdo oculto ou URL de download. A política vem da publicação respondida; histórico irresolvível
+protege o acesso até investigação administrativa.
+
+A responsável libera a tentativa observada pelo admin, `release_job_pdf` na API de admin ou a
+mesma ferramenta MCP, com papel total, confirmação, versão e idempotência. Pode escolher outra
+jornada, sem compra ou reunião. Uma ação aceita grava fato e intenção de notificar na mesma
+transação, sem renovar retenção. Sem canal participante a resposta informa “acesso liberado;
+notificação não enviada”. Reprocessar mantém a nova tentativa retida; replay do comando anterior
+retorna o fato anterior, sem nova geração ou notificação.
+
+`plano.liberado` exige opt-in no destino participante. No PDF manual, o receptor pode selecionar
+conclusão, liberação ou ambos; conclusão só é criada quando selecionada e fica bloqueada até a
+liberação. Timeout de transporte significa resultado não confirmado, com o mesmo event_id no retry.
+
+Receptores internos usam links próprios `/i/jobs/…`, com capacidade `i1` revogável por receptor,
+revisão e tentativa. Página/status trocam o segredo de query por cookie HttpOnly de escopo restrito;
+PDF pode consumir a query diretamente. O token público nunca promove a audiência. O PDF continua
+sendo a projeção participante existente; o documento integral só segue pelas fronteiras internas
+já autorizadas. Baserow PDF mantém os locks de configuração, pedido e artefato atuais até o upsert
+limitado; a captura conserva seu fluxo próprio.
+
+URLs S3 já emitidas antes desta atualização podem continuar válidas por até24 horas. As novas
+emissões respeitam o prazo do pedido; revogação não retira URLs ou cópias já recebidas. A operadora
+continua responsável pela limpeza de dados nos receptores. O proxy precisa omitir query, headers
+Authorization e cookies das rotas de capacidade, e corpos do resolvedor de encaminhamento dos logs;
+o filtro Python de access log não configura nem comprova o proxy externo.

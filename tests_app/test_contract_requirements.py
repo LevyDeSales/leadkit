@@ -14,7 +14,7 @@ def test_verified_floor_one_does_not_enable_new_operations(deps):
         session.get_one(DeploymentContract, 1).minimum_contract = 1
         epoch = uuid4()
         contract.begin_rollout(session, epoch=epoch)
-        contract.attest_rollout(session, epoch=epoch, evidence=evidence())
+        contract.attest_rollout(session, epoch=epoch, evidence=evidence(contract=1))
         contract.assert_participant_contract(session)
         with pytest.raises(contract.DeploymentContractError):
             contract.assert_contract(session, required=2)
@@ -26,7 +26,7 @@ def test_floor_two_requires_both_current_and_previous_capabilities(deps):
         epoch = uuid4()
         contract.begin_rollout(session, epoch=epoch)
         with pytest.raises(contract.DeploymentContractError):
-            contract.attest_rollout(session, epoch=epoch, evidence=evidence())
+            contract.attest_rollout(session, epoch=epoch, evidence=evidence(contract=1))
         manifest = evidence()
         for service in manifest["services"].values():
             service["contract"] = 2

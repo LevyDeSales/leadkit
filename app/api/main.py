@@ -30,6 +30,7 @@ from app.admin.api import errors as admin_api_errors
 from app.admin.api.application import create_admin_api
 from app.admin.api.schemas.jobs import CurrentPdf
 from app.admin.auth import instant
+from app.deployment_contract import DeploymentContractError, assert_contract
 from app.deps import Deps, get_deps
 from app.errors import RetryableError, TerminalError
 from app.forms import FormSpec, InactiveForm, UnknownForm
@@ -47,8 +48,10 @@ from app.intake import (
     submission_spec,
 )
 from app.integrations import config as integration_config
-from app.models import Job
+from app.internal_links import ParticipantPdfAccess
+from app.models import Artifact, Job
 from app.pdf_availability import availability_dict, current_pdf
+from app.plan_release import PlanHeld, ReleaseRefused, participant_access
 from app.submission_launch import launch_after_commit, launch_capture_after_commit, stop_launches
 from app.tokens import TokenError
 from app.web import router as web_router
@@ -93,7 +96,7 @@ class SubmissionAccepted(BaseModel):
     status: str
     replay: bool
     status_url: str
-    pdf_url: str
+    pdf_url: str | None
     page_url: str
     completion: SubmissionCompletion
 
@@ -503,6 +506,8 @@ def create_app(
         if not accepted.replay:
             launch_after_commit(request.app, job_id, attempt)
         links = pipeline.lead_links(deps, accepted.job)
+        if accepted.form.release_mode == "manual":
+            links["pdf_url"] = None
         return JSONResponse(
             {
                 "public_id": public_id,
@@ -541,9 +546,29 @@ def create_app(
         }
         with deps.sessions() as session:
             availability = current_pdf(session, deps.storage, job)
+            artifact = session.scalar(
+                sa.select(Artifact).where(
+                    Artifact.job_id == job.id,
+                    Artifact.version == job.attempt,
+                    Artifact.kind == "pdf",
+                )
+            )
+            try:
+                access = participant_access(session, job, artifact)
+            except ReleaseRefused:
+                return JSONResponse(
+                    {"code": "access_unavailable"}, status_code=503, headers=PRIVATE_HEADERS
+                )
+            body["release"] = {"policy": access.policy, "state": access.state}
+            allowed = access.allowed
+            if access.policy == "manual":
+                try:
+                    assert_contract(session, required=2)
+                except DeploymentContractError:
+                    allowed = False
         body["attempt"] = job.attempt
         body["current_pdf"] = availability_dict(availability)
-        if availability.available:
+        if availability.available and allowed:
             body["pdf_url"] = pipeline.lead_links(deps, job)["pdf_url"]
         if status == "failed":
             body["failure"] = {"code": job.failure_code}
@@ -571,8 +596,12 @@ def create_app(
                 None,
                 signed_url=True,
                 filename=f"plano-{job.public_id}.pdf",
-                authorized_job=job,
+                access=ParticipantPdfAccess(job.id, job.attempt, job.token_version),
             )
+        except PlanHeld:
+            return JSONResponse({"code": "plan_held"}, status_code=403, headers=PRIVATE_HEADERS)
+        except (ReleaseRefused, DeploymentContractError):
+            raise HTTPException(503, "acesso indisponível", headers=PRIVATE_HEADERS) from None
         except NoPdf:
             raise HTTPException(404, "PDF não encontrado", headers=PRIVATE_HEADERS) from None
         except PdfRemoved:
@@ -594,6 +623,9 @@ def create_app(
             },
         )
 
+    from app.web.internal import router as internal_router
+
+    app.include_router(internal_router)
     return app
 
 

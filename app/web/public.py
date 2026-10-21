@@ -27,6 +27,7 @@ from sqlalchemy.orm import Session
 from starlette.datastructures import FormData
 
 from app.admin.actions.jobs import NoPdf, PdfRemoved, pdf_file
+from app.deployment_contract import DeploymentContractError
 from app.deps import Deps, get_deps
 from app.errors import RetryableError, TerminalError
 from app.forms import FormSpec, InactiveForm, Notices, Screen, UnknownForm
@@ -45,8 +46,10 @@ from app.intake import (
     clean_tracking,
     submission_spec,
 )
+from app.internal_links import ParticipantPdfAccess
 from app.models import Artifact, Job, Plan, Submission, utcnow
 from app.pdf_availability import PdfAvailability, current_pdf
+from app.plan_release import PlanHeld, ReleaseRefused, require_participant_access
 from app.submission_identity import resolve_identity
 from app.submission_launch import launch_after_commit, launch_capture_after_commit
 from app.tokens import TokenError
@@ -411,10 +414,21 @@ class JobDetails:
     lead_name: str | None = None
     scores: dict[str, Any] = field(default_factory=dict)
     availability: PdfAvailability | None = None
+    held: bool = False
 
 
 def _details(deps: Deps, job: Job) -> JobDetails:
-    with deps.sessions() as session:
+    with deps.sessions.begin() as session:
+        from app.integration_readiness import configuration_lock
+
+        configuration_lock(session, shared=True)
+        observed = session.scalar(sa.select(Job).where(Job.id == job.id).with_for_update())
+        if (
+            observed is None
+            or observed.attempt != job.attempt
+            or observed.token_version != job.token_version
+        ):
+            raise NoPdf
         submission = session.get_one(Submission, job.submission_id)
         try:
             lead_name = resolve_identity(deps.forms, submission).name
@@ -422,7 +436,12 @@ def _details(deps: Deps, job: Job) -> JobDetails:
             lead_name = None
         plan = pdf = None
         availability = current_pdf(session, deps.storage, job)
-        if availability.available:
+        try:
+            access = require_participant_access(session, job, _current_pdf(session, job))
+            held = not access.allowed
+        except (ReleaseRefused, DeploymentContractError):
+            held = True
+        if availability.available and not held:
             plan = session.scalar(
                 sa.select(Plan.document).where(Plan.job_id == job.id, Plan.version == job.attempt)
             )
@@ -438,6 +457,7 @@ def _details(deps: Deps, job: Job) -> JobDetails:
         lead_name=lead_name,
         scores=submission.scores or {},
         availability=availability,
+        held=held,
     )
 
 
@@ -522,6 +542,8 @@ def job_page(public_id: str, request: Request) -> Response:
             progress=progress(job, utcnow()),
             notice=_notices(deps, details).waiting,
         )
+    if details.held:
+        return _page(request, "plan_held", job=job)
     if details.pdf is None:
         return _page(
             request,
@@ -557,8 +579,12 @@ def download_pdf(public_id: str, request: Request) -> Response:
             None,
             signed_url=True,
             filename=f"plano-{job.public_id}.pdf",
-            authorized_job=job,
+            access=ParticipantPdfAccess(job.id, job.attempt, job.token_version),
         )
+    except PlanHeld:
+        return _page(request, "plan_held", 403, job=job)
+    except (ReleaseRefused, DeploymentContractError):
+        return _page(request, "plan_held", 503, job=job)
     except NoPdf:
         return _page(request, "pdf_unavailable", 404, job=job)
     except PdfRemoved:

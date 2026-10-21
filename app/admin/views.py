@@ -489,6 +489,7 @@ class JobDetail:
     consents: list[ConsentView]
     plan: PlanView | None
     current_pdf: PdfAvailability
+    release: dict[str, Any]
     pdfs: list[PdfView]
     deliveries: list[DeliveryView]
     syncs: list[SyncView]
@@ -567,6 +568,7 @@ def job_detail(
         consents=_consents(lead.consent),
         plan=_plan_view(lead.plan, spec) if lead.plan else None,
         current_pdf=state.current_pdf,
+        release=state.release,
         pdfs=[
             PdfView(
                 version=pdf.version,

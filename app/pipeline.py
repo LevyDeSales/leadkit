@@ -22,9 +22,11 @@ from app.deps import Deps
 from app.errors import FailureCode, RetryableError, TerminalError
 from app.forms import FormSpec
 from app.integrations import syncs
+from app.internal_links import internal_links
 from app.models import Artifact, Delivery, Job, Plan, Submission, WebhookDestination, utcnow
 from app.pdf_availability import current_pdf, verify_completion
 from app.pdf_validation import validate_pdf
+from app.plan_release import delivery_eligible, require_participant_access
 from app.submission_identity import identity_from_answers, resolve_identity, submission_form
 
 WEBHOOK_DESTINATION = "webhook"
@@ -192,7 +194,7 @@ def finalize(
             .order_by(WebhookDestination.form_slug.is_(None))
             .limit(1)
         )
-        if destination is None:
+        if destination is None or PLAN_COMPLETED_EVENT not in destination.events:
             return []
         if destination.purpose == "participant":
             from app.destination_purposes import require_participant_capability
@@ -217,13 +219,15 @@ def finalize(
 
 
 def _pending_delivery_ids(session: Any, artifact_id: uuid.UUID) -> list[uuid.UUID]:
-    return list(
-        session.scalars(
-            sa.select(Delivery.id).where(
+    return [
+        row.id
+        for row in session.scalars(
+            sa.select(Delivery).where(
                 Delivery.artifact_id == artifact_id, Delivery.status == "pending"
             )
         )
-    )
+        if delivery_eligible(session, row)
+    ]
 
 
 def pending_syncs(deps: Deps, artifact_id: uuid.UUID) -> list[uuid.UUID]:
@@ -262,6 +266,10 @@ def deliver(deps: Deps, delivery_id: uuid.UUID, dispatch_no: int = 1) -> str:
         if job_id is None:
             return "already_succeeded"
         job = session.scalar(sa.select(Job).where(Job.id == job_id).with_for_update())
+        artifact_id = session.scalar(
+            sa.select(Delivery.artifact_id).where(Delivery.id == delivery_id)
+        )
+        session.scalar(sa.select(Artifact).where(Artifact.id == artifact_id).with_for_update())
         delivery = session.scalar(
             sa.select(Delivery).where(Delivery.id == delivery_id).with_for_update()
         )
@@ -269,6 +277,10 @@ def deliver(deps: Deps, delivery_id: uuid.UUID, dispatch_no: int = 1) -> str:
             return "already_succeeded"
         if delivery.dispatch_no != dispatch_no or delivery.status != "pending":
             return "obsolete"
+        if not delivery_eligible(session, delivery, job=job):
+            delivery.blocked_reason = "participant_access_blocked"
+            return "blocked"
+        delivery.blocked_reason = None
         try:
             if jobs.delivery_retention_expired(session, job, deps.settings.retention_days):
                 raise TerminalError(
@@ -340,7 +352,7 @@ def _destination_of(session: Any, deps: Deps, delivery: Delivery) -> destination
             and row.version == delivery.config_version
             and row.purpose == delivery.audience
         )
-    if not valid or "plano.concluido" not in row.events:
+    if not valid or delivery.event not in row.events:
         raise RetryableError(
             FailureCode.DELIVERY_UNCONFIGURED,
             "destino, revisão ou finalidade não autorizados; confira a configuração e solicite repetição explícita",
@@ -382,6 +394,24 @@ def mark_delivery_failed(
 ) -> int:
     """Callback antigo nunca altera uma repetição nova nem um sucesso."""
     with deps.sessions.begin() as session:
+        from app.integration_readiness import configuration_lock
+
+        configuration_lock(session, shared=True)
+        metadata = session.get(Delivery, delivery_id)
+        if metadata is None:
+            return 0
+        session.scalar(sa.select(Job).where(Job.id == metadata.job_id).with_for_update())
+        session.scalar(
+            sa.select(Artifact).where(Artifact.id == metadata.artifact_id).with_for_update()
+        )
+        row = session.scalar(
+            sa.select(Delivery)
+            .where(Delivery.id == delivery_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        if row is None or not delivery_eligible(session, row):
+            return 0
         result = session.execute(
             sa.update(Delivery)
             .where(
@@ -408,9 +438,15 @@ def lead_links(deps: Deps, job: Job, *, pdf_attempt: int | None = None) -> dict[
 
 
 def build_payload(session: Any, deps: Deps, delivery: Delivery) -> dict[str, Any]:
-    job = session.get_one(Job, delivery.job_id)
+    from app.deployment_contract import DeploymentContractError, assert_contract
+    from app.integration_readiness import configuration_lock
+
+    configuration_lock(session, shared=True)
+    job = session.scalar(sa.select(Job).where(Job.id == delivery.job_id).with_for_update())
     submission = session.get_one(Submission, job.submission_id)
-    artifact = session.get_one(Artifact, delivery.artifact_id)
+    artifact = session.scalar(
+        sa.select(Artifact).where(Artifact.id == delivery.artifact_id).with_for_update()
+    )
     if (
         artifact.job_id != job.id
         or artifact.version != job.attempt
@@ -422,21 +458,64 @@ def build_payload(session: Any, deps: Deps, delivery: Delivery) -> dict[str, Any
         raise TerminalError(
             FailureCode.DELIVERY_REJECTED, "entrega de tentativa anterior não é atual"
         )
+    if delivery.audience == "participant":
+        require_participant_access(session, job, artifact)
+        if not delivery_eligible(session, delivery, job=job):
+            raise TerminalError(FailureCode.DELIVERY_REJECTED, "entrega não elegível")
     plan = session.get_one(Plan, artifact.plan_id)
     links = lead_links(deps, job, pdf_attempt=artifact.version)
+    if delivery.audience == "internal":
+        try:
+            assert_contract(session, required=2)
+        except DeploymentContractError:
+            # O formato legado permanece disponível somente nas versões sem política manual.
+            if _form_of(deps, submission).release_mode == "manual":
+                raise
+        else:
+            receiver = (
+                session.get(WebhookDestination, delivery.webhook_destination_id)
+                if delivery.authorization_origin == "explicit"
+                else session.scalar(
+                    sa.select(WebhookDestination)
+                    .where(destinations._serving(submission.form_slug))
+                    .order_by(WebhookDestination.form_slug.is_(None))
+                    .limit(1)
+                )
+            )
+            if (
+                receiver is None
+                or receiver.purpose != "internal"
+                or (
+                    delivery.authorization_origin == "explicit"
+                    and receiver.version != delivery.config_version
+                )
+            ):
+                raise TerminalError(FailureCode.DELIVERY_REJECTED, "receptor interno indisponível")
+            links = internal_links(
+                session,
+                deps,
+                job,
+                artifact,
+                receiver_kind="webhook",
+                receiver_id=receiver.id,
+                receiver_version=receiver.version,
+            )
     direct_url = (
         None  # a retenção já apagou o arquivo (reenvio feito muito depois)
         if artifact.version != job.attempt or not current_pdf(session, deps.storage, job).available
         else deps.storage.presigned_url(
             artifact.storage_key,
-            ttl_seconds=int(DIRECT_URL_TTL.total_seconds()),
+            ttl_seconds=min(
+                int(DIRECT_URL_TTL.total_seconds()),
+                max(1, int((job.expires_at - utcnow()).total_seconds())),
+            ),
             filename=f"plano-{job.public_id}.pdf",
         )
     )
     common = {
         "event": delivery.event,
         "event_id": str(delivery.id),
-        "occurred_at": utcnow().isoformat(),
+        "occurred_at": (delivery.occurred_at or delivery.created_at).astimezone(UTC).isoformat(),
         "form": {"slug": submission.form_slug, "version": submission.form_version},
         "job": {
             "public_id": job.public_id,
@@ -465,6 +544,17 @@ def build_payload(session: Any, deps: Deps, delivery: Delivery) -> dict[str, Any
                 FailureCode.DELIVERY_REJECTED,
                 "projeção participante indisponível para a versão histórica",
             ) from None
+        if delivery.event == "plano.liberado":
+            from app.models import PlanRelease
+
+            release = session.get_one(PlanRelease, delivery.release_id)
+            common["release"] = {
+                "id": str(release.id),
+                "version": release.version,
+                "mode": release.mode,
+                "reason_code": release.reason_code,
+                "occurred_at": release.occurred_at.astimezone(UTC).isoformat(),
+            }
         common["audience"] = "participant"
         common["form"]["version_number"] = submission.form_version_number
         return common

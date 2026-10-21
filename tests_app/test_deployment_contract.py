@@ -42,7 +42,7 @@ def test_migrated_database_blocks_participant_but_allows_compatible_runtime(cont
         assert_participant_contract(contract_session)
 
 
-def evidence():
+def evidence(*, contract=2):
     """Manifesto sintético calculado a partir de duas réplicas conhecidas."""
 
     def service(role, digit):
@@ -52,9 +52,9 @@ def evidence():
             "spec_version": 4,
             "observed_spec_version": 4,
             "image": image,
-            "contract": 1,
+            "contract": contract,
             "previous_image": image,
-            "previous_contract": 1,
+            "previous_contract": contract,
             "replicas": 1,
             "tasks": [
                 {

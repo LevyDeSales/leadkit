@@ -30,12 +30,13 @@ canal operacional comprovado; este script não cria SSH ou acesso remoto como al
 A migration `0016_plan_audiences` introduz o piso1 e deixa participante bloqueada. O código antigo
 não conhece audiência e pode enviar o plano integral. Portanto, na primeira adoção:
 
-1. O helper comprova capacidade1 executando a CLI da imagem pelo seu ID `sha256`, sem rede/env.
+1. O helper comprova a capacidade conhecida da imagem pelo ID `sha256`, sem rede/env. A distribuição
+   composta atual anuncia2; uma instalação nova chega ao piso2 ao aplicar toda a cadeia.
 2. Escala **API e worker para zero**, aguarda o fim real dos processos, inclusive tasks em saída,
    e confirma que não há container antigo executando. Atualiza os serviços ainda pausados para
    que também a **PreviousSpec tenha zero réplicas antes do DDL**. A pausa fica no Swarm se o
    comando for interrompido; não depende da memória de uma flag no script.
-3. Aplica a migration com os serviços parados. O piso1 persistido nunca diminui. Não há API antiga
+3. Aplica a cadeia de migrations com os serviços parados. O piso persistido nunca diminui. Não há API antiga
    capaz de criar/alterar/rotacionar destino nessa janela nem worker antigo com payload em memória.
 4. Sobe a imagem compatível ainda com o gate bloqueado e faz uma segunda atualização dos serviços.
    Só aceita habilitar participante quando **Spec e PreviousSpec de API e worker são compatíveis**,
@@ -69,7 +70,7 @@ ROLLBACK=1 IMAGE=leadkit:VERSAO_COMPATIVEL ./deploy.sh
 ```
 
 `ROLLBACK=1` pula migrations, mas **não pula o piso, as provas de capacidade, réplicas, saúde,
-PreviousSpec e atestação**. Imagem sem contrato1 é recusada antes de alterar a stack ou o banco.
+PreviousSpec e atestação**. Imagem abaixo do piso persistido é recusada antes de alterar a stack ou o banco.
 Depois da0016 não existe recuperação suportada que restaure imagem0 com réplicas ativas, mesmo
 sem participante criada ou com o gate bloqueado.
 
@@ -118,8 +119,8 @@ A evidência é gerada pelo helper, sem preenchimento manual no app:
 | `schema_version`, `stack`, `node_id` | Versão1, nome da stack e ID do manager local. |
 | `services.api`, `services.worker` | Ambos obrigatórios, com o mesmo contrato abaixo. |
 | `id`, `spec_version`, `observed_spec_version` | Serviço e versão observada novamente; versões precisam coincidir. |
-| `image`, `contract` | ID `sha256` real e capacidade1 executada na imagem. |
-| `previous_image`, `previous_contract` | ID/capacidade1 da imagem de retorno. |
+| `image`, `contract` | ID `sha256` real e capacidade conhecida executada na imagem. |
+| `previous_image`, `previous_contract` | ID/capacidade conhecida da imagem de retorno. |
 | `replicas`, `tasks` | Quantidade positiva e lista completa das tasks atuais saudáveis. |
 | `retired` | Tasks anteriores observadas com processo parado e estado terminal. |
 | Cada task | `id`, `node_id`, `container_id`, `image`, `state`, `healthy`, `running`. |
@@ -157,3 +158,30 @@ antes de retomar, sem apagar o piso ou forjar evidência.
 O [backup.sh](backup.sh) usa o serviço DB da stack e grava dump no diretório configurado. Agende e
 ensaie restauração em banco isolado. A baseline pública é para banco vazio; uma instalação existente
 exige ensaio de compatibilidade próprio antes de qualquer promoção autorizada.
+
+### Adoção composta de capacidade2
+
+A imagem2 contém continuidade e liberação juntas. Não use imagem parcial apenas porque sua CLI
+anuncia2. A `0017_continuation_release`, sucessora da0016, grava schema aditivo e piso2 bloqueado
+atomicamente, apagando epoch/evidência anteriores. Nunca altere assinaturas antigas nem use stamp.
+
+O helper compara a capacidade executada pelo ID imutável com o piso persistido antes de tag,
+migration, begin ou alteração da stack. Alvo abaixo do piso e rollback que elevaria o piso são
+recusados. Piso0 ou alvo acima do piso exigem pausa/drenagem antes do DDL. Recuperação com
+Current/Previous abaixo do piso também repete a prova, mesmo quando suas réplicas já estão em zero.
+Ausência de processo sem prova positiva, inventário desconhecido ou réplica antiga viva mantém
+os serviços bloqueados. A prova continua limitada ao manager local observado.
+
+Em1→2: begin fecha o gate sem elevar piso; quiesce persiste Current/Previous em zero; a única
+migration composta confirma piso2/blocked; begin instala novo epoch porque o DDL limpou o anterior;
+instalação/force normaliza Current2/Previous2; duas coletas coerentes precedem attest. Os campos
+contract/previous_contract do manifesto aceitam1/2 conhecidos e precisam ser pelo menos o piso
+persistido. Attest só confirma evidência/instante/fase, sem promover ou reduzir o piso.
+
+Falha antes do commit SQL permite retomar o upgrade ou reinstalar/atestar1 enquanto o piso seguir1.
+Commit desconhecido exige ler revisão/status antes de escolher imagem. Depois do commit0017,
+permaneça em0/blocked e recupere somente com imagem composta2; imagem1 está proibida inclusive
+como retorno automático ativo. Falha antes da atestação mantém2/blocked, com novo epoch na retomada.
+Depois da atestação, retorno usa imagem composta compatível2 e revalida ambas as funcionalidades.
+Atualizações2→2 com Current/Previous compatíveis preservam rolling. Nenhum /readyz substitui
+schema, piso, prova de saída ou atestação. Esta documentação não afirma ensaio de uma instalação.

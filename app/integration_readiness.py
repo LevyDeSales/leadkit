@@ -61,7 +61,14 @@ def problems_for(spec, *, destination, integrations):
                 "O webhook efetivo de captura exige finalidade interna. Escolha um destino interno autorizado ou remova o destino, conferindo o padrão herdado.",
             )
         )
-    if destination and event not in destination.events:
+    manual_participant = (
+        profile == "pdf"
+        and spec.release_mode == "manual"
+        and destination is not None
+        and destination.purpose == "participant"
+    )
+    accepted = {"plano.concluido", "plano.liberado"} if manual_participant else {event}
+    if destination and not accepted.intersection(destination.events):
         result.append(
             Problem(
                 "integrations",

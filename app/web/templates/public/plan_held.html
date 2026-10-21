@@ -1,0 +1,9 @@
+{% extends "public/base.html" %}
+{% block title %}Seu plano aguarda liberação{% endblock %}
+{% block main %}
+<main id="conteudo" class="container page">
+<h1>Seu plano aguarda liberação</h1>
+<p>A geração terminou. Você poderá consultar o plano depois da liberação pela responsável.</p>
+<a href="/d/{{ job.public_id }}">Atualizar situação</a>
+</main>
+{% endblock %}

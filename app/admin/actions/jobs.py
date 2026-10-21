@@ -30,9 +30,18 @@ from app import jobs
 from app.admin import launching
 from app.deps import Deps
 from app.errors import FailureCode, RetryableError
+from app.integration_readiness import configuration_lock
 from app.integrations import syncs as integration_syncs
-from app.models import Artifact, Delivery, IntegrationSync, Job
+from app.internal_links import (
+    AdminPdfAccess,
+    InternalPdfAccess,
+    ParticipantPdfAccess,
+    PdfAccess,
+    validate_internal_access,
+)
+from app.models import Artifact, Delivery, IntegrationSync, Job, utcnow
 from app.pdf_availability import artifact_availability, verified_content, verify_completion
+from app.plan_release import ReleaseCommit, ReleasePdfCommand, require_participant_access
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +80,7 @@ def pdf_file(
     *,
     signed_url: bool,
     filename: str | None = None,
-    authorized_job: Job | None = None,
+    access: PdfAccess,
 ) -> PdfFile:
     """O PDF da tentativa `version` do pedido (a atual, sem `version`).
 
@@ -81,23 +90,34 @@ def pdf_file(
 
     Levanta `NoPdf` (404) e `PdfRemoved` (410). Um storage que falha levanta o erro dele."""
     with deps.sessions.begin() as session:
+        configuration_lock(session, shared=True)
+        if isinstance(access, InternalPdfAccess):
+            internal_job, _ = validate_internal_access(session, deps, access.claims)
+            if internal_job.public_id != public_id or version not in (None, access.claims.attempt):
+                raise NoPdf
         job = session.scalar(sa.select(Job).where(Job.public_id == public_id).with_for_update())
         if job is None or (version is None and job.status != "completed"):
             raise NoPdf
-        if authorized_job is not None and (
-            job.id != authorized_job.id
-            or job.attempt != authorized_job.attempt
-            or job.token_version != authorized_job.token_version
+        if isinstance(access, ParticipantPdfAccess) and (
+            job.id != access.job_id
+            or job.attempt != access.attempt
+            or job.token_version != access.token_version
+            or job.expires_at <= utcnow()
+            or version not in (None, access.attempt)
         ):
+            raise NoPdf
+        if not isinstance(access, (AdminPdfAccess, ParticipantPdfAccess, InternalPdfAccess)):
             raise NoPdf
         attempt = job.attempt if version is None else version
         artifact = session.scalar(
-            sa.select(Artifact).where(
-                Artifact.job_id == job.id, Artifact.kind == "pdf", Artifact.version == attempt
-            )
+            sa.select(Artifact)
+            .where(Artifact.job_id == job.id, Artifact.kind == "pdf", Artifact.version == attempt)
+            .with_for_update()
         )
         if artifact is None:
             raise NoPdf
+        if isinstance(access, ParticipantPdfAccess):
+            require_participant_access(session, job, artifact)
         state = artifact_availability(deps.storage, artifact)
         if state.state == "removed":
             raise PdfRemoved
@@ -311,3 +331,38 @@ async def _requeue(
         raise JobNotFound
     if outcome != "requeued":
         raise ResendRefused(missing=outcome == "missing")
+
+
+@dataclass(frozen=True)
+class ReleasedPdf:
+    commit: ReleaseCommit
+    notifications: tuple[dict, ...]
+    launched: bool
+
+
+async def release_pdf(
+    deps: Deps, trigger, public_id: str, *, actor: str, command: ReleasePdfCommand
+) -> ReleasedPdf:
+    """Autoriza uma vez e dispara somente novas intenções depois do commit."""
+    from app.plan_release import release_pdf as commit_release
+
+    def create():
+        with deps.sessions.begin() as session:
+            return commit_release(session, deps, public_id, actor=actor, command=command)
+
+    committed = await run_in_threadpool(create)
+    launched = False
+    if not committed.replay:
+        for delivery_id in committed.delivery_ids:
+            launched = await launching.launch_delivery(deps, delivery_id) or launched
+
+    def read():
+        with deps.sessions() as session:
+            return tuple(
+                {"id": row.id, "event": row.event, "status": row.status}
+                for row in session.scalars(
+                    sa.select(Delivery).where(Delivery.release_id == committed.release_id)
+                )
+            )
+
+    return ReleasedPdf(committed, await run_in_threadpool(read), launched)

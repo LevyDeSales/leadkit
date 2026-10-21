@@ -450,6 +450,7 @@ def _state_fields(state: queries.JobState, run_url_template: str | None) -> dict
     return {
         "current_pdf": availability_dict(state.current_pdf),
         "public_id": state.public_id,
+        "release": ReleaseStatus(**state.release),
         "status": state.status,
         "stage": state.stage,
         "attempt": state.attempt,
@@ -517,7 +518,19 @@ class CurrentPdf(BaseModel):
     )
 
 
+class ReleaseStatus(BaseModel):
+    policy: Literal["automatic", "manual", "unavailable"]
+    state: Literal["automatic", "held", "released", "unavailable"]
+    release_version: int
+    release_id: uuid.UUID | None
+    released_at: AwareDatetime | None
+    attempt: int
+    artifact_id: uuid.UUID | None
+
+
 class JobState(BaseModel):
+    release: ReleaseStatus
+
     """O estado de um pedido, sem nada que diga quem é a lead."""
 
     public_id: str = Field(
@@ -685,3 +698,42 @@ class JobPlanProjection(BaseModel):
     attempt: int
     audience: Literal["participant", "internal"]
     lead_data: JobProjectionData
+
+
+class ReleaseJobPdfRequest(ConfirmedInput):
+    expected_attempt: int = Field(ge=1)
+    expected_artifact_id: uuid.UUID
+    expected_form_version_number: int = Field(ge=1)
+    expected_release_version: int = Field(ge=0)
+    idempotency_key: uuid.UUID
+    mode: Literal["standard", "alternative"]
+    reason_code: Literal["operator_review", "participant_request", "alternative_channel", "other"]
+
+
+class ReleaseNotification(BaseModel):
+    id: uuid.UUID
+    event: str
+    status: DeliveryStatus
+
+
+class ReleasedJobPdf(BaseModel):
+    release_id: uuid.UUID
+    attempt: int
+    artifact_id: uuid.UUID
+    release_version: int
+    occurred_at: AwareDatetime
+    mode: Literal["standard", "alternative"]
+    reason_code: str
+    notification_decision: Literal["outbox", "no_participant_channel", "event_not_selected"]
+    current: bool
+    replay: bool
+    notifications: list[ReleaseNotification]
+    launched: bool
+
+    @classmethod
+    def of(cls, done):
+        from dataclasses import asdict
+
+        data = asdict(done.commit)
+        data.pop("delivery_ids")
+        return cls(**data, notifications=list(done.notifications), launched=done.launched)

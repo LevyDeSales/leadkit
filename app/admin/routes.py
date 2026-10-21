@@ -44,6 +44,7 @@ from app.forms import stored as stored_forms
 from app.forms.definition import DefinitionError, Problem
 from app.integrations import config as integration_config
 from app.integrations import mapping as integration_mapping
+from app.internal_links import AdminPdfAccess
 from app.models import utcnow
 from app.version import describe
 from app.web.origin import origin_of
@@ -385,6 +386,7 @@ def _detail_page(
     errors: dict[str, str] | None = None,
     reason: str = "",
     status_code: int = 200,
+    release_form: dict | None = None,
 ) -> Response:
     deps = get_deps()
     with deps.sessions() as session:
@@ -401,7 +403,17 @@ def _detail_page(
     return _page(
         request,
         "admin/job.html",
-        {"job": detail, "errors": errors or {}, "reason": reason},
+        {
+            "job": detail,
+            "errors": errors or {},
+            "reason": reason,
+            "release_form": release_form
+            or {
+                "idempotency_key": str(uuid.uuid4()),
+                "mode": "standard",
+                "reason_code": "operator_review",
+            },
+        },
         status_code=status_code,
     )
 
@@ -511,7 +523,11 @@ def job_pdf(request: Request, public_id: str, version: str = "") -> Response:
     """PDF de uma tentativa (a mais recente se `version` não vier), sempre como anexo."""
     try:
         pdf = job_actions.pdf_file(
-            get_deps(), public_id, int(version) if version.isdigit() else None, signed_url=True
+            get_deps(),
+            public_id,
+            int(version) if version.isdigit() else None,
+            access=AdminPdfAccess(),
+            signed_url=True,
         )
     except job_actions.NoPdf:
         return _error(request, 404, "Este pedido ainda não tem PDF.")
@@ -2430,3 +2446,74 @@ def retry_capture_delivery_page(
             "Entrega ou configuração mudou; confira a revisão e a finalidade.", status_code=409
         )
     return RedirectResponse(f"/admin/captures/{submission_id}", status_code=303)
+
+
+@protected.post("/jobs/{public_id}/release")
+async def release_job_pdf(
+    request: Request, public_id: str, session: Annotated[AdminSession, Depends(require_session)]
+) -> Response:
+    from pydantic import ValidationError
+
+    from app.deployment_contract import DeploymentContractError
+    from app.plan_release import ReleasePdfCommand, ReleaseRefused
+
+    posted = await request.form()
+    allowed = {
+        "expected_attempt",
+        "expected_artifact_id",
+        "expected_form_version_number",
+        "expected_release_version",
+        "idempotency_key",
+        "mode",
+        "reason_code",
+    }
+    fields = {key: posted.get(key, "") for key in allowed}
+    try:
+        command = ReleasePdfCommand.model_validate(
+            {**fields, "confirm": bool(posted.get("confirm"))}
+        )
+        done = await job_actions.release_pdf(
+            get_deps(),
+            request.app.state.trigger,
+            public_id,
+            actor=session.username,
+            command=command,
+        )
+    except ValidationError:
+        return await run_in_threadpool(
+            _detail_page,
+            request,
+            public_id,
+            errors={"release": "Confira os campos e confirme a liberação desta tentativa."},
+            release_form=fields,
+            status_code=422,
+        )
+    except DeploymentContractError:
+        return await run_in_threadpool(
+            _detail_page,
+            request,
+            public_id,
+            errors={"release": "A liberação aguarda a verificação da atualização."},
+            release_form=fields,
+            status_code=503,
+        )
+    except ReleaseRefused as error:
+        if error.status == 404:
+            return _error(request, 404, JOB_NOT_FOUND)
+        return await run_in_threadpool(
+            _detail_page,
+            request,
+            public_id,
+            errors={
+                "release": "A tentativa, a versão ou o PDF mudou. Confira a situação antes de liberar."
+            },
+            release_form=fields,
+            status_code=error.status,
+        )
+    session.flash = (
+        "ok",
+        "Acesso liberado; notificação não enviada."
+        if done.commit.notification_decision != "outbox"
+        else "Acesso liberado; notificação registrada para envio.",
+    )
+    return RedirectResponse(f"/admin/jobs/{public_id}", status_code=303)

@@ -168,7 +168,7 @@ DEMO_ANSWERS: dict[str, Any] = {
 }
 DEMO_CONSENT: dict[str, Any] = {"privacy": True, "text_version": "demo-v1"}
 TABLES = (
-    "audit_log, api_keys, integration_syncs, integrations, deliveries, artifacts, plans, jobs, "
+    "plan_releases, handoff_references, integration_credentials, handoff_receivers, audit_log, api_keys, integration_syncs, integrations, deliveries, artifacts, plans, jobs, "
     "capture_receipts, submissions, leads, webhook_destinations, webhook_env_seed, draft_tests, form_drafts, "
     "form_version_assets, form_assets, form_versions, forms"
 )
@@ -193,6 +193,7 @@ def empty_asset_cache() -> None:
 # fica no cache (a mesma definição reprova de novo, com os problemas), e quem passa um relógio seu
 # (as fases com datas) compila sempre.
 _COMPILED: dict[tuple[str, int], FormSpec] = {}
+_COMPILED_DOCUMENTS: dict[tuple[str, int, str], dict[str, Any]] = {}
 
 
 def memoized_compile(original: Callable[..., FormSpec]) -> Callable[..., FormSpec]:
@@ -210,7 +211,9 @@ def memoized_compile(original: Callable[..., FormSpec]) -> Callable[..., FormSpe
         key = (hashlib.sha256(as_text.encode()).hexdigest(), version_number)
         if key not in _COMPILED:
             _COMPILED[key] = original(document, version_number=version_number, clock=clock)
-        return _COMPILED[key]
+        spec = _COMPILED[key]
+        _COMPILED_DOCUMENTS[(spec.slug, spec.version_number, spec.version)] = json.loads(as_text)
+        return spec
 
     compile_once.__wrapped__ = original  # type: ignore[attr-defined]
     return compile_once
@@ -943,4 +946,33 @@ def publish(deps: Deps, *versions: FormSpec) -> None:
     """Publica versões novas no registro do teste, ao lado dos três formulários migrados (a versão
     1 de cada um). A de maior número de cada formulário vira a atual; as outras continuam valendo
     para os envios delas."""
+    # A política de acesso lê a publicação histórica real. O registro de teste pode trocar
+    # renderizadores em memória, mas não pode inventar uma publicação ausente do banco.
+    from app.forms.definition import fingerprint
+    from app.models import Form, FormVersion
+
+    with deps.sessions.begin() as session:
+        for spec in versions:
+            document = _COMPILED_DOCUMENTS.get((spec.slug, spec.version_number, spec.version))
+            form_id = session.scalar(sa.select(Form.id).where(Form.slug == spec.slug))
+            exists = (
+                session.scalar(
+                    sa.select(FormVersion.id).where(
+                        FormVersion.form_id == form_id, FormVersion.number == spec.version_number
+                    )
+                )
+                if form_id
+                else None
+            )
+            if document is not None and form_id is not None and exists is None:
+                session.add(
+                    FormVersion(
+                        form_id=form_id,
+                        number=spec.version_number,
+                        definition=document,
+                        fingerprint=fingerprint(document),
+                        note="Publicação sintética do teste.",
+                        published_by="testes",
+                    )
+                )
     deps.forms = FixedRegistry([*(legacy_spec(slug) for slug in LEGACY_SLUGS), *versions])

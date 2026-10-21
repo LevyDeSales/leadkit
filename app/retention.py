@@ -62,6 +62,7 @@ from app.models import (
     Job,
     Lead,
     Plan,
+    PlanRelease,
     Submission,
     utcnow,
 )
@@ -260,6 +261,7 @@ def _delete_request(session: Session, job_id: uuid.UUID, submission_id: uuid.UUI
     """Apaga as linhas do pedido; devolve 1 se o lead também saiu (não tinha outro pedido)."""
     session.execute(sa.delete(Delivery).where(Delivery.job_id == job_id))
     session.execute(sa.delete(IntegrationSync).where(IntegrationSync.job_id == job_id))
+    session.execute(sa.delete(PlanRelease).where(PlanRelease.job_id == job_id))
     session.execute(sa.delete(Artifact).where(Artifact.job_id == job_id))
     session.execute(sa.delete(Plan).where(Plan.job_id == job_id))
     session.execute(sa.delete(Job).where(Job.id == job_id))

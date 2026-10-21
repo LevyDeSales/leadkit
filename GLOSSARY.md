@@ -62,3 +62,15 @@ integração. É distinta da finalidade de geração do formulário e do destino
 
 **Autorização da entrega:** vínculo entre o fato a entregar, sua tentativa, a audiência e a revisão
 do mesmo receptor. Repetir uma entrega não muda sua audiência nem a redireciona.
+
+**Política de liberação:** regra da versão respondida para conceder acesso ao plano de forma
+automática ou mediante autorização da responsável.
+
+**Liberação individual:** autorização de acesso da participante a uma tentativa e ao PDF dela.
+Uma nova tentativa tem sua própria autorização.
+
+**Notificação de liberação:** intenção de comunicar uma liberação individual a um canal participante
+autorizado. Sua confirmação de transporte não comprova leitura nem recebimento pela participante.
+
+**Capacidade interna de PDF:** permissão limitada a uma tentativa e a um receptor interno autorizado.
+Não concede acesso público nem altera a liberação da participante.

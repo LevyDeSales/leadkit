@@ -19,6 +19,28 @@
   {% if job.failure %}
   <div class="alert alert--error" role="status">{{ m.icon('alert-circle', 'icon--lg') }}<div><strong class="alert__title">A geração falhou: {{ job.failure }}</strong><p>Confira a linha do tempo. Se o problema já foi resolvido, reprocesse o pedido.</p></div></div>
   {% endif %}
+  <section aria-labelledby="release-title">
+    <h2 id="release-title">Acesso da participante</h2>
+    <p>{% if job.release.state == 'held' %}Retido: aguarda liberação.{% elif job.release.state == 'released' %}Liberado para esta tentativa.{% elif job.release.state == 'automatic' %}Automático, conforme a versão respondida.{% else %}Política histórica indisponível: acesso protegido.{% endif %}</p>
+    {% if errors.get('release') %}<div class="alert alert--error" role="alert" id="release-error" tabindex="-1"><a href="#release-confirm">{{ errors['release'] }}</a></div>{% endif %}
+    {% if job.release.state == 'held' and job.current_pdf.available %}
+    <form method="post" action="/admin/jobs/{{ job.public_id }}/release" aria-describedby="release-help{% if errors.get('release') %} release-error{% endif %}">
+      <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+      <input type="hidden" name="expected_attempt" value="{{ job.attempt }}">
+      <input type="hidden" name="expected_artifact_id" value="{{ job.release.artifact_id }}">
+      <input type="hidden" name="expected_form_version_number" value="{{ job.release.form_version_number }}">
+      <input type="hidden" name="expected_release_version" value="{{ job.release.release_version }}">
+      <input type="hidden" name="idempotency_key" value="{{ release_form.idempotency_key }}">
+      <p id="release-help">A geração do PDF não libera o acesso. Você pode liberar por outra jornada, sem compra ou reunião. A notificação depende do canal participante configurado.</p>
+      <label for="release-mode">Modo de liberação</label>
+      <select name="mode" id="release-mode"><option value="standard"{% if release_form.mode == 'standard' %} selected{% endif %}>Revisão padrão</option><option value="alternative"{% if release_form.mode == 'alternative' %} selected{% endif %}>Outra jornada</option></select>
+      <label for="release-reason">Motivo</label>
+      <select name="reason_code" id="release-reason">{% for value, label in [('operator_review', 'Revisão pela responsável'), ('participant_request', 'Solicitação da participante'), ('alternative_channel', 'Canal alternativo'), ('other', 'Outro motivo')] %}<option value="{{ value }}"{% if release_form.reason_code == value %} selected{% endif %}>{{ label }}</option>{% endfor %}</select>
+      <label for="release-confirm"><input id="release-confirm" type="checkbox" name="confirm" value="on" required>Confirmo a liberação desta tentativa</label>
+      <button class="btn btn--primary" type="submit">Liberar acesso</button>
+    </form>
+    {% endif %}
+  </section>
   <section class="acts" id="acoes" aria-label="Ações">
     <div class="acts__row">
       {% if job.current_pdf.available %}<a class="btn btn--primary" href="/admin/jobs/{{ job.public_id }}/pdf">{{ m.icon('download') }}Baixar PDF</a>{% endif %}

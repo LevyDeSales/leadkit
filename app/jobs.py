@@ -211,10 +211,14 @@ def resend_delivery(
             or expected_attempt != row.authorized_attempt
             or expected_attempt != job.attempt
             or destination.purpose != row.audience
-            or "plano.concluido" not in destination.events
+            or row.event not in destination.events
         ):
             return False
         row.config_version = destination.version
+    from app.plan_release import delivery_eligible
+
+    if not delivery_eligible(session, row, job=job):
+        return False
     row.dispatch_no += 1
     row.status, row.hatchet_run_id = "pending", None
     session.add(
@@ -277,6 +281,10 @@ def in_flight_jobs(session: Session, *, older_than: timedelta, limit: int) -> li
 
 
 def unlaunched_deliveries(session: Session, *, older_than: timedelta, limit: int) -> list[Delivery]:
+    from app.integration_readiness import configuration_lock
+    from app.plan_release import delivery_eligible
+
+    configuration_lock(session, shared=True)
     cutoff = utcnow() - older_than
     statement = (
         sa.select(Delivery)
@@ -289,4 +297,4 @@ def unlaunched_deliveries(session: Session, *, older_than: timedelta, limit: int
         .limit(limit)
         .with_for_update(skip_locked=True)
     )
-    return list(session.scalars(statement))
+    return [row for row in session.scalars(statement) if delivery_eligible(session, row)]
