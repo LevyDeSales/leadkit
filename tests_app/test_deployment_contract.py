@@ -19,8 +19,14 @@ def rollout_engine():
     # Estes cenários exercitam o piso1 histórico com o binário composto.
     with engine.begin() as connection:
         connection.exec_driver_sql("UPDATE deployment_contract SET minimum_contract = 1")
-    yield engine
-    engine.dispose()
+    try:
+        yield engine
+    finally:
+        with engine.begin() as connection:
+            connection.exec_driver_sql(
+                "UPDATE deployment_contract SET minimum_contract = 2, phase = 'blocked', epoch = NULL, evidence = '{}'::jsonb, attested_at = NULL"
+            )
+        engine.dispose()
 
 
 @pytest.fixture

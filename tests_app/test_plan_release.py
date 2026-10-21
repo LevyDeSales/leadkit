@@ -11,13 +11,16 @@ from test_intake import submit
 
 from app import deployment_contract, jobs, pipeline
 from app.forms.stored import import_definition
-from app.models import Artifact, Job, PlanRelease
+from app.models import Artifact, DeploymentContract, Job, PlanRelease
 from app.plan_release import ReleasePdfCommand, ReleaseRefused, participant_access, release_pdf
 
 
 @pytest.fixture
 def manual_pdf(deps, request):
+    table = DeploymentContract.__table__
     with deps.sessions.begin() as session:
+        previous = dict(session.execute(sa.select(table).where(table.c.id == 1)).one()._mapping)
+        session.get_one(DeploymentContract, 1).minimum_contract = 2
         epoch = uuid4()
         deployment_contract.begin_rollout(session, epoch=epoch)
         manifest = evidence()
@@ -52,7 +55,7 @@ def manual_pdf(deps, request):
     pipeline.finalize(deps, job.id, 1, artifact_id)
     yield job.id, artifact_id
     with deps.sessions.begin() as session:
-        deployment_contract.begin_rollout(session, epoch=uuid4())
+        session.execute(sa.update(table).where(table.c.id == 1).values(**previous))
 
 
 def command_for(artifact_id):
