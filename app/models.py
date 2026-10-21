@@ -852,3 +852,109 @@ class PlanRelease(Base):
     idempotency_key: Mapped[uuid.UUID] = mapped_column(sa.Uuid)
     command_fingerprint: Mapped[str] = mapped_column(sa.String(64))
     notification_decision: Mapped[str] = mapped_column(sa.String(32))
+
+
+class EventSource(Base):
+    """Autoridade histórica explícita para declarações externas de um diagnóstico."""
+
+    __tablename__ = "event_sources"
+    __table_args__ = (
+        sa.ForeignKeyConstraint(
+            ["receiver_id", "form_slug"], ["handoff_receivers.id", "handoff_receivers.form_slug"]
+        ),
+        sa.UniqueConstraint("receiver_id", "receiver_revision", "namespace"),
+        sa.UniqueConstraint("created_by", "idempotency_hash"),
+        sa.CheckConstraint(
+            "revision >= 1 AND version >= 1 AND receiver_revision >= 1", name="versions"
+        ),
+        sa.CheckConstraint("purpose = 'support'", name="purpose"),
+    )
+    id: Mapped[uuid.UUID] = _pk()
+    receiver_id: Mapped[uuid.UUID] = mapped_column(sa.Uuid)
+    receiver_revision: Mapped[int] = mapped_column(sa.Integer)
+    form_slug: Mapped[str] = mapped_column(sa.String(64))
+    purpose: Mapped[str] = mapped_column(sa.String(16), default="support", server_default="support")
+    namespace: Mapped[str] = mapped_column(sa.String(64))
+    name: Mapped[str] = mapped_column(sa.String(100))
+    policy: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    revision: Mapped[int] = mapped_column(sa.Integer, default=1, server_default="1")
+    version: Mapped[int] = mapped_column(sa.Integer, default=1, server_default="1")
+    enabled: Mapped[bool] = mapped_column(sa.Boolean, default=False, server_default=sa.false())
+    created_by: Mapped[str] = mapped_column(sa.Text)
+    created_at: Mapped[datetime] = _created_at()
+    updated_by: Mapped[str] = mapped_column(sa.Text)
+    updated_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), default=utcnow)
+    idempotency_hash: Mapped[str] = mapped_column(sa.String(64))
+    command_fingerprint: Mapped[str] = mapped_column(sa.String(64))
+
+
+class EventCredential(Base):
+    """Segredo de eventos independente das credenciais de resolução e administração."""
+
+    __tablename__ = "event_credentials"
+    __table_args__ = (
+        sa.UniqueConstraint("created_by", "operation", "idempotency_hash"),
+        sa.CheckConstraint("scope = 'journey:events:write'", name="scope"),
+        sa.CheckConstraint("source_revision >= 1 AND version >= 1", name="versions"),
+        sa.CheckConstraint("operation in ('create', 'rotate')", name="operation"),
+        sa.CheckConstraint("expires_at IS NULL OR expires_at > created_at", name="expiry"),
+    )
+    id: Mapped[uuid.UUID] = _pk()
+    source_id: Mapped[uuid.UUID] = mapped_column(sa.ForeignKey("event_sources.id"), index=True)
+    source_revision: Mapped[int] = mapped_column(sa.Integer)
+    scope: Mapped[str] = mapped_column(
+        sa.String(32), default="journey:events:write", server_default="journey:events:write"
+    )
+    key_id: Mapped[str] = mapped_column(sa.String(32), unique=True)
+    secret_hash: Mapped[str] = mapped_column(sa.String(64))
+    name: Mapped[str] = mapped_column(sa.String(100))
+    version: Mapped[int] = mapped_column(sa.Integer, default=1, server_default="1")
+    created_by: Mapped[str] = mapped_column(sa.Text)
+    created_at: Mapped[datetime] = _created_at()
+    expires_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    revoked_by: Mapped[str | None] = mapped_column(sa.Text)
+    last_used_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    operation: Mapped[str] = mapped_column(sa.String(16))
+    idempotency_hash: Mapped[str] = mapped_column(sa.String(64))
+    command_fingerprint: Mapped[str] = mapped_column(sa.String(64))
+    successor_id: Mapped[uuid.UUID | None] = mapped_column(sa.ForeignKey("event_credentials.id"))
+
+
+class JourneyEvent(Base):
+    """Snapshot declarado; o apagamento remove o conteúdo protegido sem cópia recuperável."""
+
+    __tablename__ = "journey_events"
+    __table_args__ = (
+        sa.UniqueConstraint("source_id", "event_id_digest", name="uq_journey_events_event"),
+        sa.UniqueConstraint(
+            "source_id",
+            "reference_id",
+            "entity_kind",
+            "entity_id_digest",
+            "entity_revision",
+            name="uq_journey_events_revision",
+        ),
+        sa.CheckConstraint("entity_revision >= 1 AND source_revision >= 1", name="revisions"),
+        sa.Index("ix_journey_events_history", "reference_id", "received_at", "id"),
+    )
+    id: Mapped[uuid.UUID] = _pk()
+    source_id: Mapped[uuid.UUID] = mapped_column(sa.ForeignKey("event_sources.id"))
+    credential_id: Mapped[uuid.UUID] = mapped_column(sa.ForeignKey("event_credentials.id"))
+    source_revision: Mapped[int] = mapped_column(sa.Integer)
+    reference_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("handoff_references.id", ondelete="CASCADE")
+    )
+    event_id_digest: Mapped[str] = mapped_column(sa.String(64))
+    entity_id_digest: Mapped[str] = mapped_column(sa.String(64))
+    fingerprint: Mapped[str] = mapped_column(sa.String(64))
+    type: Mapped[str] = mapped_column(sa.String(48))
+    entity_kind: Mapped[str] = mapped_column(sa.String(16))
+    entity_revision: Mapped[int] = mapped_column(sa.Integer)
+    occurred_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True))
+    received_at: Mapped[datetime] = _created_at()
+    safe_data: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    protected_data: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB, nullable=True, deferred=True
+    )
+    erased_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))

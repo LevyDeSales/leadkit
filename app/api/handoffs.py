@@ -126,6 +126,9 @@ def create_integration_api(*, clock=time.time):
     app.state.limiter = RateLimiter(60, clock, burst=60)
     app.state.invalid_limiter = RateLimiter(10, clock, burst=10)
     app.include_router(router)
+    from app.api.journey import router as journey_router
+
+    app.include_router(journey_router)
 
     @app.exception_handler(RequestValidationError)
     async def invalid_body(request, error):
@@ -134,8 +137,10 @@ def create_integration_api(*, clock=time.time):
                 "code": "validation_failed",
                 "errors": [
                     {
-                        "field": "reference",
-                        "message": "Informe uma referência válida em um objeto JSON.",
+                        "field": "body"
+                        if request.url.path.endswith("/journey/events")
+                        else "reference",
+                        "message": "Informe um objeto JSON válido conforme o contrato.",
                     }
                 ],
             },
@@ -153,6 +158,11 @@ def create_integration_api(*, clock=time.time):
             "type": "http",
             "scheme": "bearer",
             "description": "Credencial própria lki_ com escopo handoffs:resolve; chaves administrativas não são aceitas.",
+        }
+        schema["components"]["securitySchemes"]["EventCredentialAuth"] = {
+            "type": "http",
+            "scheme": "bearer",
+            "description": "Credencial exclusiva lke_, escopo journey:events:write. Fontes pausadas ou credenciais inválidas recebem401 antes do corpo.",
         }
         return schema
 

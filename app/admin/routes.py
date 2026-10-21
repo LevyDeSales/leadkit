@@ -442,6 +442,7 @@ def _detail_page(
         {
             "job": detail,
             "handoff_url": handoff_url,
+            "journey_url": f"/admin/submissions/{source.id}/journey" if source else None,
             "errors": errors or {},
             "reason": reason,
             "release_form": release_form
@@ -2503,9 +2504,10 @@ def capture_test_page(
     return _capture_tests_page(request, _draft(slug), answers=_given(answers), day=date)
 
 
-from app.admin import handoff_routes
+from app.admin import handoff_routes, journey_routes
 
 handoff_routes.register(protected)
+journey_routes.register(protected)
 
 router.include_router(open_routes)
 router.include_router(protected)

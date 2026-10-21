@@ -43,6 +43,7 @@
   </section>
   <section class="acts" id="acoes" aria-label="Ações">
     <div class="acts__row">
+      {% if journey_url %}<a class="btn btn--secondary" href="{{ journey_url }}">Jornada</a>{% endif %}
       <a class="btn btn--secondary" href="{{ handoff_url }}">Consultar encaminhamento</a>
       {% if job.current_pdf.available %}<a class="btn btn--primary" href="/admin/jobs/{{ job.public_id }}/pdf">{{ m.icon('download') }}Baixar PDF</a>{% endif %}
       {% if job.run_url %}<a class="btn btn--secondary" href="{{ job.run_url }}" target="_blank" rel="noopener noreferrer">{{ m.icon('external') }}Ver execução no Hatchet<span class="sr-only"> (abre em nova aba)</span></a>{% endif %}
