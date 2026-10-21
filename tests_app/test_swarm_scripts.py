@@ -186,6 +186,7 @@ elif head == ['stack','deploy']:
                 old=copy.deepcopy(svc['PreviousSpec'])
                 apply(state,role,old['TaskTemplate']['ContainerSpec']['Image'],old['Mode']['Replicated']['Replicas'])
                 svc['UpdateStatus']={'State':'rollback_completed'}
+                svc.pop('PreviousSpec', None)
 elif args[:1] == ['info']:
     out='different-node' if os.getenv('STUB_NODE_CHANGE') and state.get('destroyed') else node
 elif head == ['node','inspect']:
@@ -1135,3 +1136,24 @@ def test_paused_old_return_requires_quiescence_even_after_floor_commit(server):
     )
     assert result.returncode == 0, result.stderr
     assert any(call.startswith("service scale ") for call in server.calls)
+
+
+def test_contract_two_recovery_normalizes_return_consumed_by_automatic_rollback(server):
+    environment = {"STUB_NETWORK": "1", "STUB_CONTRACT_FLOOR": "2", "STUB_TARGET_CONTRACT": "2"}
+    failed = deploy(server, **environment, STUB_AUTO_ROLLBACK="1")
+    assert failed.returncode == 1
+    state = rollout_state(server)
+    assert state["floor"] == 2 and state["phase"] == "blocked"
+    assert all("PreviousSpec" not in service for service in state["services"].values())
+    checkpoint = len(server.calls)
+    recovered = deploy(server, **environment)
+    assert recovered.returncode == 0, recovered.stderr
+    calls = server.calls[checkpoint:]
+    assert next(i for i, call in enumerate(calls) if call.startswith("service scale ")) < next(
+        i for i, call in enumerate(calls) if call.endswith(" migrate")
+    )
+    state = rollout_state(server)
+    assert state["floor"] == 2 and state["phase"] == "verified"
+    for service in state["attested"]["services"].values():
+        assert service["contract"] == service["previous_contract"] == 2
+        assert service["retired"] and all(not row["running"] for row in service["retired"])

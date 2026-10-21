@@ -1410,16 +1410,31 @@ jobs:
           test "$(runtime verified)" = "$db_before"
           test "$(runtime snapshot)" = "$stable"
 
-      - name: Update, break and go back with deploy.sh without dropping requests
+      - name: Update, break and go back with deploy.sh, including drained recovery
         run: |
           cd "$CONF"
           probe="$RUNNER_TEMP/probe.txt"
-          : > "$probe"
-          ( while [ ! -e "$RUNNER_TEMP/stop-probe" ]; do
-              $CURL -o /dev/null -w '%{http_code}\n' "https://$DOMAIN/healthz" >> "$probe" || echo 000 >> "$probe"
-              sleep 0.2
-            done ) &
-          probe_pid=$!
+          start_probe() {
+            rm -f "$RUNNER_TEMP/stop-probe"
+            : > "$probe"
+            ( while [ ! -e "$RUNNER_TEMP/stop-probe" ]; do
+                $CURL -o /dev/null -w '%{http_code}\n' "https://$DOMAIN/healthz" >> "$probe" || echo 000 >> "$probe"
+                sleep 0.2
+              done ) &
+            probe_pid=$!
+          }
+          stop_probe() {
+            touch "$RUNNER_TEMP/stop-probe"
+            wait "$probe_pid"
+            echo "respostas durante as trocas rolling:"
+            sort "$probe" | uniq -c
+            test "$(grep -c . "$probe")" -gt 50
+            if grep -qv '^200$' "$probe"; then
+              echo "houve pedido sem 200 durante as trocas rolling"
+              return 1
+            fi
+          }
+          start_probe
           state() { docker service inspect --format '{{.UpdateStatus.State}}' "gerador-planos_$1"; }
           image() { docker service inspect --format '{{.Spec.TaskTemplate.ContainerSpec.Image}}' "gerador-planos_$1"; }
           running() {
@@ -1441,6 +1456,19 @@ jobs:
                 test "$(docker inspect --type container --format '{{.State.Health.Status}}' "$container")" = healthy
               done
             done
+          }
+          assert_return_image() {
+            expected=$(docker image inspect --format '{{.Id}}' "$1")
+            for role in api worker; do
+              previous=$(docker service inspect --format '{{.PreviousSpec.TaskTemplate.ContainerSpec.Image}}' "gerador-planos_$role")
+              test -n "$previous"
+              test "$(docker image inspect --format '{{.Id}}' "$previous")" = "$expected"
+              test "$(docker service inspect --format '{{.PreviousSpec.Mode.Replicated.Replicas}}' "gerador-planos_$role")" -gt 0
+            done
+          }
+          recovery_data() {
+            # Só a impressão digital fica na variável; nenhum dado sintético é publicado no log.
+            psql_db "select md5(jsonb_build_array((select jsonb_agg(to_jsonb(s) order by id) from submissions s), (select jsonb_agg(to_jsonb(f) order by id) from form_versions f), (select jsonb_agg(id order by id) from jobs), (select version_num from alembic_version))::text)"
           }
           versions() { docker service inspect --format '{{.Spec.Name}} {{.Version.Index}}' gerador-planos_api gerador-planos_worker; }
 
@@ -1477,10 +1505,53 @@ jobs:
           grep -F 'gerador-planos_worker (rollback_completed)' "$RUNNER_TEMP/broken.log"
           docker service inspect --format '{{json .Spec.TaskTemplate.ContainerSpec.Env}}' gerador-planos_api \
             | grep -q "PUBLIC_BASE_URL=https://$DOMAIN"
+          for role in api worker; do
+            test "$(docker service inspect --format '{{if .PreviousSpec}}present{{else}}absent{{end}}' "gerador-planos_$role")" = absent
+          done
           echo "::endgroup::"
 
-          echo "::group::3. de volta à configuração boa: nada é trocado e o rollback antigo não conta"
+          # A janela sem promessa de disponibilidade começa somente após validar o rolling.
+          stop_probe
+
+          echo "::group::3. recuperação drenada; só a chamada seguinte preserva as tasks"
+          # O rollback automático apaga PreviousSpec. O helper precisa pausar/drenar e
+          # normalizar o retorno antes de atestar; essa recuperação pode trocar tasks.
           cp "$RUNNER_TEMP/app.env.ok" app.env
+          db_before=$(role_tasks db)
+          test -n "$db_before"
+          data_before=$(recovery_data)
+          test -n "$data_before"
+          test "$(psql_db "select minimum_contract || ':' || phase from deployment_contract where id=1")" = 2:blocked
+          # O wrapper observa o checkpoint real antes de migrate; não substitui o daemon.
+          recovery_bin="$RUNNER_TEMP/recovery-bin"
+          mkdir -p "$recovery_bin"
+          export CI_RECOVERY_DOCKER="$(command -v docker)" CI_RECOVERY_PROOF="$RUNNER_TEMP/recovery-paused"
+          rm -f "$CI_RECOVERY_PROOF"
+          cat > "$recovery_bin/docker" <<'SH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          if [[ "$1" == run && "${@: -1}" == migrate ]]; then
+            for role in api worker; do
+              service="gerador-planos_$role"
+              test "$("$CI_RECOVERY_DOCKER" service inspect --format '{{.Spec.Mode.Replicated.Replicas}}' "$service")" = 0
+              test "$("$CI_RECOVERY_DOCKER" service inspect --format '{{.PreviousSpec.Mode.Replicated.Replicas}}' "$service")" = 0
+              containers=$("$CI_RECOVERY_DOCKER" ps -aq --no-trunc --filter "label=com.docker.swarm.service.name=$service")
+              for container in $containers; do
+                test "$("$CI_RECOVERY_DOCKER" inspect --type container --format '{{.State.Running}}:{{.State.Status}}' "$container")" = false:exited
+              done
+            done
+            printf '%s\n' paused_and_exited > "$CI_RECOVERY_PROOF"
+          fi
+          exec "$CI_RECOVERY_DOCKER" "$@"
+          SH
+          chmod 700 "$recovery_bin/docker"
+          PATH="$recovery_bin:$PATH" IMAGE=gerador-planos:ci-novo ./deploy.sh
+          test "$(cat "$CI_RECOVERY_PROOF")" = paused_and_exited
+          test "$(role_tasks db)" = "$db_before"
+          test "$(recovery_data)" = "$data_before"
+          assert_image gerador-planos:ci-novo
+          assert_return_image gerador-planos:ci-novo
+          test "$(psql_db "select minimum_contract || ':' || phase from deployment_contract where id=1")" = 2:verified
           before=$(running)
           IMAGE=gerador-planos:ci-novo ./deploy.sh
           after=$(running)
@@ -1491,7 +1562,14 @@ jobs:
           fi
           echo "::endgroup::"
 
+          test "$(recovery_data)" = "$data_before"
+          assert_image gerador-planos:ci-novo
+          assert_return_image gerador-planos:ci-novo
+          test "$(psql_db "select minimum_contract || ':' || phase from deployment_contract where id=1")" = 2:verified
+
           echo "::group::4. volta para a versão anterior com o banco à frente da imagem"
+          # A recuperação terminou com frota saudável, retorno normalizado e contrato2 verificado.
+          start_probe
           # Status/begin aceitam o piso compatível, mas migrate recusa a revisão desconhecida.
           # Os serviços não mudam e o gate fica bloqueado; o retorno explícito não roda migration.
           head=$(psql_db 'select version_num from alembic_version')
@@ -1566,15 +1644,7 @@ jobs:
           grep -F 'contrato participante verificado' "$RUNNER_TEMP/stale.log"
           echo "::endgroup::"
 
-          touch "$RUNNER_TEMP/stop-probe"
-          wait "$probe_pid"
-          echo "respostas durante as trocas:"
-          sort "$probe" | uniq -c
-          test "$(grep -c . "$probe")" -gt 50
-          if grep -qv '^200$' "$probe"; then
-            echo "houve pedido sem 200 durante as trocas"
-            exit 1
-          fi
+          stop_probe
 
       - name: Back up Postgres with backup.sh
         run: |
@@ -1616,7 +1686,7 @@ jobs:
           fi
           printf '{"stage":"stack_removal","reason":"removed"}\n'
           docker volume inspect --format '{{.Name}} continua' gerador-planos_pgdata
-          # O volume mantém piso1. Sem rede, o helper cria API/worker pausados, aguarda DB/migration
+          # O volume mantém piso2. Sem rede, o helper cria API/worker pausados, aguarda DB/migration
           # e só depois sobe os runtimes compatíveis; a limpeza anterior não ignora órfãos parados.
           cd "$CONF"
           IMAGE=gerador-planos:ci ./deploy.sh
