@@ -101,7 +101,7 @@ python -m app.deployment_contract begin
 python -m app.deployment_contract attest
 ```
 
-`capability` funciona sem configuração/rede e devolve `{"contract":1}`. Os outros comandos leem
+`capability` funciona sem configuração/rede e devolve `{"contract":2}` na imagem composta atual. Os outros comandos leem
 somente `DATABASE_URL` do ambiente; no roteiro, o Docker a recebe pelo `--env-file app.env`, sem
 valor em argv/log. `status` é somente leitura e devolve `minimum_contract`, `phase` e `epoch`.
 Tabela ausente é bootstrap0; tabela presente sem singleton é piso conservador1 e bloqueio.

@@ -147,9 +147,9 @@ def _validate_evidence(evidence, *, required: int = 1):
         spec_version: Annotated[int, Field(ge=1)]
         observed_spec_version: Annotated[int, Field(ge=1)]
         image: digest
-        contract: Literal[1, 2]
+        contract: Annotated[int, Field(ge=1, le=2)]
         previous_image: digest
-        previous_contract: Literal[1, 2]
+        previous_contract: Annotated[int, Field(ge=1, le=2)]
         replicas: Annotated[int, Field(ge=1)]
         tasks: list[Task]
         retired: list[Task]
@@ -159,7 +159,7 @@ def _validate_evidence(evidence, *, required: int = 1):
         worker: Service
 
     class Evidence(Metadata):
-        schema_version: Literal[1]
+        schema_version: Annotated[int, Field(ge=1, le=1)]
         stack: identifier
         node_id: identifier
         services: Services

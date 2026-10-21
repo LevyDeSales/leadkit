@@ -105,6 +105,9 @@ def test_attestation_requires_current_epoch_and_complete_fleet(contract_session)
     "change",
     [
         "old_current",
+        "boolean_capability",
+        "boolean_previous",
+        "boolean_schema",
         "old_previous",
         "running_old",
         "missing_replica",
@@ -125,6 +128,12 @@ def test_incomplete_or_mixed_evidence_never_enables_participant(contract_session
 
     manifest = evidence()
     service = manifest["services"]["worker"]
+    if change == "boolean_previous":
+        service["previous_contract"] = True
+    if change == "boolean_schema":
+        manifest["schema_version"] = True
+    if change == "boolean_capability":
+        service["contract"] = True
     if change == "old_current":
         service["contract"] = 0
     if change == "old_previous":

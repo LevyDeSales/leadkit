@@ -70,7 +70,12 @@ TOKEN_STATE = frozenset({"token_set", "token_unreadable", "token_changed_at"})
 # operações `total` que o geram (`SECRET_ONCE`: a criação e a troca), na raiz da resposta delas. Nenhum
 # corpo de entrada tem uma propriedade `secret*`.
 SECRET_STATE = frozenset({"secret_unreadable", "secret_created_at"})
-SECRET_ONCE = {"save_destination": "secret", "rotate_destination_secret": "secret"}
+SECRET_ONCE = {
+    "save_destination": "secret",
+    "rotate_destination_secret": "secret",
+    "create_integration_credential": "secret",
+    "rotate_integration_credential": "secret",
+}
 LEAD_FIELDS = frozenset(
     {
         "name",
@@ -145,6 +150,18 @@ LEAD_STATE: dict[str, frozenset[str]] = {
     ),
     "get_job": frozenset(
         {
+            "release",
+            "release.policy",
+            "release.state",
+            "release.release_version",
+            "release.release_id",
+            "release.released_at",
+            "release.attempt",
+            "release.artifact_id",
+            "deliveries.event",
+            "deliveries.release_id",
+            "deliveries.occurred_at",
+            "deliveries.blocked_reason",
             "deliveries.audience",
             "deliveries.authorization_origin",
             "deliveries.config_version",
@@ -489,7 +506,9 @@ def _errors(
     found = []
     responses = operation.get("responses", {})
     role = operation.get("x-required-role")
-    versioned = "expected_version" in _fields(document, operation)
+    versioned = bool(
+        {"expected_version", "expected_receiver_version"} & set(_fields(document, operation))
+    )
     takes_input = bool(operation.get("requestBody") or operation.get("parameters"))
     required = {"401": "toda operação", "429": "toda operação"}
     if role == "total":

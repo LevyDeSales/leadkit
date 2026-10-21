@@ -687,7 +687,7 @@ def _resend_refused(what: str, refused: job_actions.ResendRefused) -> ApiError:
     response_model=ReleasedJobPdf,
     errors={
         404: "Pedido não encontrado.",
-        409: "Tentativa, versão, idempotência ou PDF incompatíveis; nenhuma nova liberação.",
+        409: "state_conflict: tentativa, versão, idempotência ou PDF incompatíveis; nenhuma nova liberação.",
         503: "A atualização ainda não habilitou a liberação.",
     },
     summary="Liberar acesso ao plano",

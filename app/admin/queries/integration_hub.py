@@ -55,7 +55,7 @@ class Receiver:
     table_id: int | None
     purpose: Literal["internal", "participant"]
     purpose_origin: Literal["legacy", "explicit", "default"]
-    events: list[Literal["plano.concluido", "submissao.persistida"]]
+    events: list[Literal["plano.concluido", "submissao.persistida", "plano.liberado"]]
     active: bool | None
     credential_unreadable: bool
 

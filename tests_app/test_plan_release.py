@@ -365,3 +365,23 @@ def test_mcp_release_calls_the_real_api_after_confirmation(deps, manual_pdf, api
         assert replay["release_id"] == released["release_id"] and replay["replay"]
     finally:
         live.close()
+
+
+@pytest.mark.parametrize("manual_pdf", [["plano.liberado"]], indirect=True)
+def test_integrations_hub_accepts_release_event_without_exposing_capabilities(
+    deps, manual_pdf, api_client
+):
+    from test_admin_destinations import admin_client
+
+    response = api_client("leitura").get(
+        "/admin/api/v1/integrations", params={"form_slug": "manual"}
+    )
+    assert response.status_code == 200, response.text
+    receiver = next(
+        item["receiver"] for item in response.json()["items"] if item["connector"] == "webhook"
+    )
+    assert receiver["events"] == ["plano.liberado"]
+    page = admin_client(deps).get("/admin/integrations?form_slug=manual")
+    assert page.status_code == 200
+    assert "Liberação do plano" in page.text
+    assert "?k=i1." not in page.text

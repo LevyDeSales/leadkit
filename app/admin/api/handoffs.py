@@ -85,7 +85,7 @@ def get_handoff_receiver(slug: str):
     description="Salva e pausa a configuração. Uma mudança de endereço ou prazo cria revisão nova; não reendereça referências históricas nem publica formulário.",
     returns="A configuração pausada.",
     response_model=HandoffReceiverInfo,
-    errors={409: "Versão observada mudou; nada foi salvo."},
+    errors={409: "version_conflict: a versão observada mudou; nada foi salvo."},
 )
 def save_handoff_receiver(
     slug: str, body: SaveHandoffReceiverRequest, key: CurrentKey, request: Request
@@ -107,7 +107,9 @@ def save_handoff_receiver(
     description="Autoriza uso futuro da revisão quando há cifra e credencial válidas; não faz transporte externo.",
     returns="O estado confirmado.",
     response_model=HandoffReceiverInfo,
-    errors={409: "Versão mudou ou receptor ainda não está pronto."},
+    errors={
+        409: "version_conflict: a versão mudou; state_conflict: o receptor ainda não está pronto."
+    },
 )
 def set_handoff_receiver_enabled(
     slug: str, body: SetHandoffReceiverEnabledRequest, key: CurrentKey, request: Request
@@ -156,7 +158,9 @@ def list_integration_credentials(
     returns="Credencial e segredo uma única vez.",
     response_model=CreatedIntegrationCredential,
     status_code=201,
-    errors={409: "Versão obsoleta, idempotency_conflict ou credential_secret_already_issued."},
+    errors={
+        409: "version_conflict: versão obsoleta; state_conflict: revisão incompatível; idempotency_conflict ou credential_secret_already_issued: comando já registrado."
+    },
 )
 def create_integration_credential(
     slug: str, body: CreateIntegrationCredentialRequest, key: CurrentKey, request: Request
@@ -178,7 +182,9 @@ def create_integration_credential(
     description="Cria sucessora na mesma revisão e revoga a anterior no mesmo commit. O segredo aparece uma vez; repetição nunca o reemite. Escolha o vencimento novamente, inclusive null.",
     returns="Sucessora e segredo uma vez.",
     response_model=CreatedIntegrationCredential,
-    errors={409: "Versão obsoleta, idempotency_conflict ou credential_secret_already_issued."},
+    errors={
+        409: "version_conflict: versão obsoleta; state_conflict: revisão incompatível; idempotency_conflict ou credential_secret_already_issued: comando já registrado."
+    },
 )
 def rotate_integration_credential(
     credential_id: UUID, body: RotateIntegrationCredentialRequest, key: CurrentKey, request: Request
@@ -201,7 +207,7 @@ def rotate_integration_credential(
     description="Revoga permanentemente a capacidade de serviço; confirmação é obrigatória. Repetição devolve a revogação já registrada.",
     returns="Metadados sem segredo.",
     response_model=IntegrationCredentialInfo,
-    errors={409: "Versão observada mudou."},
+    errors={409: "version_conflict: a versão observada mudou."},
 )
 def revoke_integration_credential(
     credential_id: UUID, body: RevokeIntegrationCredentialRequest, key: CurrentKey, request: Request
@@ -238,7 +244,7 @@ def get_submission_handoff(submission_id: UUID):
     description="Revoga a referência permanentemente e remove a cifra. Não apaga respostas nem altera autorização do PDF.",
     returns="Metadados da intenção revogada.",
     response_model=HandoffInfo,
-    errors={409: "Versão observada mudou."},
+    errors={409: "version_conflict: a versão observada mudou."},
 )
 def revoke_submission_handoff(
     submission_id: UUID, body: RevokeSubmissionHandoffRequest, key: CurrentKey, request: Request

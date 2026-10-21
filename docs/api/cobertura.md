@@ -35,7 +35,7 @@ o OpenAPI e exigem uma operação ou justificativa para cada rota.
 | Recurso | Rotas | Funções | Operações da API | Fora |
 | --- | ---: | ---: | ---: | ---: |
 | Acesso (login e sessão) | 3 | 3 | 0 | 3 |
-| Pedidos | 7 | 7 | 7 | 0 |
+| Pedidos | 8 | 8 | 8 | 0 |
 | Projeções de plano | 1 | 1 | 1 | 0 |
 | Capturas | 3 | 3 | 3 | 0 |
 | Central de integrações | 1 | 1 | 1 | 0 |
@@ -50,14 +50,15 @@ o OpenAPI e exigem uma operação ou justificativa para cada rota.
 | Imagens dos formulários | 5 | 5 | 5 | 0 |
 | Chaves de API | 3 | 3 | 3 | 0 |
 | Configurar o MCP | 2 | 2 | 1 | 1 |
-| **Total** | **76** | **71** | **62** | **7** |
+| Continuidade e credenciais de serviço | 7 | 7 | 9 | 0 |
+| **Total** | **84** | **79** | **72** | **7** |
 
 O total considera operações únicas; recursos podem compartilhar a mesma operação.
 
-- **76 rotas** (`GET` e `POST`; o admin não usa outro método), de **71 funções**: as cinco ações dos
+- **84 rotas** (`GET` e `POST`; o admin não usa outro método), de **79 funções**: as cinco ações dos
   destinos (ver, endereço, segredo, remoção e teste) existem para o destino padrão e para o de um
   formulário, com a mesma função.
-- **69 rotas têm par na API**, em **60 operações** (algumas rotas dividem a operação: as duas dos
+- **77 rotas têm par na API**, em **70 operações** (algumas rotas dividem a operação: as duas dos
   destinos, o editor do PDF e o do formulário, que salvam o mesmo rascunho, a página do teste e o
   trecho do polling, e a criação de chave da página das chaves e a da tela do MCP). **7 rotas ficam
   fora**: o login e a saída (a chave substitui a sessão), três telas sem dado nem ação e a tela de
@@ -94,6 +95,7 @@ e-mail pede `total`; `leitura` busca só pelo código. `download_job_pdf` entreg
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `GET /admin` | Lista os pedidos (busca por nome, e-mail ou código; filtros de status, de formulário (`form=<endereço>`) e da versão dele (select "Versão", só com um formulário escolhido; `form_version=<texto>`, o texto que a coluna mostra; o mesmo parâmetro na API, que o recusa sem `form`), de quando o pedido chegou (select "Recebido", `period` com `today`, `7d` ou `30d`, em dias de calendário de Brasília; na API, `created_from` e `created_to`) e da entrega ao webhook da tentativa atual (select "Entrega", `delivery=failed` ou `pending`; o mesmo parâmetro na API) e da sincronização com a planilha da tentativa atual (select "Planilha", `sync=failed` ou `pending`; o mesmo parâmetro na API); 25 por página; a coluna Formulário mostra o título e a versão; a coluna "Entregas e planilha" mostra a entrega ao webhook e a sincronização com a planilha da tentativa atual, e na API cada item traz `deliveries` e `syncs`, só com destino ou tipo e estado) e avisa dos formulários sem destino e dos segredos que não abrem (o aviso vai para `list_destinations`). Na API, sem dado pessoal para `leitura` | `queries.jobs` (`JobFilters`, os filtros, e a consulta que `views.list_jobs` decora) e `views.destinations_overview` (consulta com rótulo) | `GET /jobs` | `list_jobs` | leitura | lead | feita · tests_app/test_admin_api_jobs.py::test_list_jobs_is_an_envelope_of_the_newest_first_with_the_state_and_no_lead_data |
 | `GET /admin/jobs/{public_id}` | O pedido: lead, respostas, pontuação, plano, PDFs, disponibilidade técnica da tentativa atual (`current_pdf`, com prova limitada de leitura; HEAD isolado não basta), entregas, sincronizações e linha do tempo das tentativas. Na API, a lead, as respostas, a pontuação e o plano ficam no bloco `lead_data`, só para `total` | `queries.jobs` (a consulta que `views.job_detail` decora) | `GET /jobs/{public_id}` | `get_job` | leitura | lead | feita · tests_app/test_admin_api_jobs.py::test_get_job_a_read_key_reads_the_state_of_every_order_and_no_lead_data |
+| `POST /admin/jobs/{public_id}/release` | Libera a tentativa e o PDF observados, com confirmação e replay histórico; não renova retenção nem exige compra ou reunião | `actions.jobs.release_pdf` e `plan_release.release_pdf` | `POST /jobs/{public_id}/release` | `release_job_pdf` | total | externo | feita · tests_app/test_plan_release.py::test_admin_release_requires_total_confirmation_and_replays_without_dispatch |
 | `POST /admin/jobs/{public_id}/reprocess` | Nova tentativa auditada, com motivo, disparada uma vez; recusa se a tentativa mudou | `actions.jobs.reprocess`: o motivo de 10 a 300 caracteres, o `confirm`, a tentativa esperada, `jobs.reprocess` e o disparo (`launching.launch_attempt`), com a diferença entre enfileirada e adiada para o reconciliador | `POST /jobs/{public_id}/reprocess` | `reprocess_job` | total | externo | feita · tests_app/test_admin_api_job_actions.py::test_reprocess_job_creates_the_next_attempt_and_answers_with_the_new_state |
 | `POST /admin/jobs/{public_id}/deliveries/{delivery_id}/resend` | Entrega que falhou volta para pendente e é disparada de novo | `actions.jobs.resend_delivery`: `jobs.resend_delivery` e o disparo (`launching.launch_delivery`, numa thread, com o limite de `HATCHET_TRIGGER_TIMEOUT_SECONDS`) | `POST /jobs/{public_id}/deliveries/{delivery_id}/resend` | `resend_job_delivery` | total | externo | feita · tests_app/test_admin_api_job_actions.py::test_resend_job_delivery_returns_the_failed_delivery_to_pending_and_launches_it |
 | `GET /admin/jobs/{public_id}/participant` | Plano projetado antes da serialização, sem documento interno oculto ou respostas | `queries.jobs.get_job_plan_projection` | `GET /jobs/{public_id}/plan-projection` | `get_job_plan_projection` | total | lead | feita · tests_app/test_admin_plan_projection.py::test_projection_http_and_html_have_no_hidden_internal_document |
