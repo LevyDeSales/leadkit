@@ -1527,6 +1527,72 @@ def test_composed_image_probe_is_isolated_and_checks_real_http_capabilities():
     assert 'validate_database(session.connection(), SIGNATURES) == "0018_journey_events"' in probe
 
 
+def test_composed_probe_creates_and_replays_both_capabilities_over_http(database_url, tmp_path):
+    """Executa o probe real com PG próprio; só caminhos de container e porta ficam locais."""
+    import json
+    import socket
+    from uuid import uuid4
+
+    from test_deployment_contract import evidence
+
+    from app import deployment_contract
+    from app.db import make_engine, make_session_factory
+
+    step = next(
+        step
+        for step in steps_of("swarm")
+        if step.get("name") == "Write the isolated continuation and release probe"
+    )
+    probe = step["run"].split("<<'PYPROBE'\n", 1)[1].split("\nPYPROBE", 1)[0]
+    with socket.socket() as reservation:
+        reservation.bind(("127.0.0.1", 0))
+        port = reservation.getsockname()[1]
+    probe = probe.replace('"/app/app/__init__.py"', repr(str(ROOT / "app/__init__.py")))
+    probe = probe.replace('"/app"', repr(str(ROOT)))
+    probe = probe.replace('"/proof"', repr(str(tmp_path)))
+    probe = probe.replace("18080", str(port))
+    script = tmp_path / "probe.py"
+    script.write_text(probe)
+    script.chmod(0o600)
+    engine = make_engine(database_url)
+    sessions = make_session_factory(engine)
+    with engine.connect() as connection:
+        original = dict(
+            connection.execute(sa.text("SELECT * FROM deployment_contract WHERE id=1"))
+            .one()
+            ._mapping
+        )
+    try:
+        for phase in ("baseline", "blocked", "create", "return"):
+            if phase == "create":
+                # Só a fixture local: o manifesto sintético não atesta uma frota Docker.
+                with sessions.begin() as session:
+                    epoch = uuid4()
+                    deployment_contract.begin_rollout(session, epoch=epoch)
+                    deployment_contract.attest_rollout(session, epoch=epoch, evidence=evidence())
+            result = subprocess.run(
+                [sys.executable, str(script), phase],
+                cwd=ROOT,
+                env={**os.environ, "DATABASE_URL": database_url},
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=90,
+            )
+            # O probe já reduz falhas a cenário/resultado; nunca publicar stderr bruto.
+            assert result.returncode == 0, result.stdout
+            assert json.loads(result.stdout) == {"scenario": phase, "result": "passed", "checks": 1}
+            assert not result.stderr
+    finally:
+        from app.models import DeploymentContract
+
+        with engine.begin() as connection:
+            connection.execute(
+                sa.update(DeploymentContract).where(DeploymentContract.id == 1).values(**original)
+            )
+        engine.dispose()
+
+
 @pytest.mark.parametrize(
     "operation,expected",
     [
@@ -1589,6 +1655,7 @@ raise SystemExit(subprocess.run([sys.executable,*sys.argv[1:]],input=code,text=T
     docker.write_text("""#!/usr/bin/env bash
 case "$1 ${2:-}" in
   "network inspect") exit 1 ;;
+  "volume ls") echo leadkit-compat_pgdata ;;
   "volume rm") rm "$SYNTHETIC_VOLUME" ;;
 esac
 """)
@@ -1611,6 +1678,108 @@ esac
     if not proof_exit:
         assert json.loads(result.stdout) == {"stage": "cleanup", "result": "proved"}
     assert "SYNTHETIC_PRIVATE_STATE" not in result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("cleanup_kind", ["trap", "always"])
+@pytest.mark.parametrize(
+    "fault",
+    ["delayed", "retired", "alive", "unknown", "foreign", "remove_refused", "volume_unknown"],
+)
+def test_adoption_cleanup_waits_for_database_exit_and_releases_only_observed_resources(
+    tmp_path, cleanup_kind, fault
+):
+    """A rede já sumiu, mas o banco ainda segura o volume; só Docker/sleep são substituídos."""
+    import json
+
+    folder = tmp_path / "swarm-compat"
+    (folder / "proof").mkdir(parents=True)
+    (folder / "proof/state.json").write_text("SYNTHETIC_PRIVATE_STATE")
+    (folder / "rollout.py").touch()
+    volume = tmp_path / "volume"
+    volume.touch()
+    attached = tmp_path / "attached"
+    attached.touch()
+    binary = tmp_path / "bin"
+    binary.mkdir()
+    (binary / "python3").write_text(
+        f"#!{sys.executable}\nimport subprocess,sys\ncode=sys.stdin.read()\n"
+        "if 'rollout.quiesce()' in code: raise SystemExit(0)\n"
+        "raise SystemExit(subprocess.run([sys.executable,*sys.argv[1:]],input=code,text=True).returncode)\n"
+    )
+    (binary / "sleep").write_text("#!/bin/sh\nexit 0\n")
+    (binary / "docker").write_text(
+        f"#!{sys.executable}\n"
+        + """import os,sys
+from pathlib import Path
+args=sys.argv[1:]; root=Path(os.environ['RUNNER_TEMP']); fault=os.environ['FAULT']
+attached=root/'attached'; volume=root/'volume'; polls=root/'polls'
+if args[:2]==['network','inspect']: raise SystemExit(1)
+if args[0]=='ps':
+    if fault=='retired' and any(a.startswith('volume=') for a in args): raise SystemExit(0)
+    if fault=='unknown': raise SystemExit(31)
+    if attached.exists(): print('synthetic-db')
+elif args[0]=='inspect':
+    count=int(polls.read_text())+1 if polls.exists() else 1
+    polls.write_text(str(count))
+    if fault=='alive' or count==1: print('true:running:leadkit-compat')
+    elif fault=='foreign': print('false:exited:other-stack')
+    else: print('false:exited:leadkit-compat')
+elif args[0]=='rm':
+    if fault=='remove_refused': raise SystemExit(32)
+    assert args==['rm','synthetic-db'] and int(polls.read_text())>=2
+    attached.unlink()
+elif args[:2]==['volume','ls']:
+    if fault=='volume_unknown': raise SystemExit(33)
+    if volume.exists(): print('leadkit-compat_pgdata')
+elif args[:2]==['volume','rm']:
+    if attached.exists() and fault!='retired': raise SystemExit(34)
+    assert args==['volume','rm','leadkit-compat_pgdata']
+    volume.unlink()
+"""
+    )
+    for path in binary.iterdir():
+        path.chmod(0o700)
+    if cleanup_kind == "always":
+        script = next(
+            s["run"]
+            for s in steps_of("swarm")
+            if s.get("name") == "Clean isolated adoption resources after proven exit"
+        )
+    else:
+        rehearsal = next(
+            s["run"]
+            for s in steps_of("swarm")
+            if s.get("name") == "Rehearse real pre-projection bootstrap and forward recovery"
+        )
+        script = 'folder="$RUNNER_TEMP/swarm-compat"; compat=leadkit-compat\n'
+        script += rehearsal[
+            rehearsal.index("cleanup_compat()") : rehearsal.index("trap cleanup_compat EXIT")
+        ]
+        script += "\ncleanup_compat\n"
+    result = subprocess.run(
+        ["bash", "-e", "-u", "-c", script],
+        env={
+            **os.environ,
+            "PATH": f"{binary}:{os.environ['PATH']}",
+            "RUNNER_TEMP": str(tmp_path),
+            "FAULT": fault,
+        },
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=20,
+    )
+    succeeds = fault in {"delayed", "retired"}
+    assert (result.returncode == 0) == succeeds
+    assert volume.exists() != succeeds
+    if succeeds:
+        assert not attached.exists()
+        if cleanup_kind == "always":
+            assert json.loads(result.stdout) == {"stage": "cleanup", "result": "proved"}
+            assert not (folder / "proof/state.json").exists()
+    else:
+        assert (folder / "proof/state.json").exists()
+    assert "SYNTHETIC_PRIVATE" not in result.stdout + result.stderr
 
 
 @pytest.mark.parametrize("phase", ["SYNTHETIC_PRIVATE_ARGUMENT", "create"])
