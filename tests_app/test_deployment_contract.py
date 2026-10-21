@@ -159,7 +159,7 @@ def test_capability_needs_neither_configuration_nor_database():
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    assert json.loads(result.stdout) == {"contract": 1}
+    assert json.loads(result.stdout) == {"contract": 2}
 
 
 @pytest.mark.parametrize(
@@ -217,7 +217,7 @@ def test_future_floor_blocks_runtime_without_lowering_it(contract_session):
     )
     from app.models import DeploymentContract
 
-    contract_session.execute(sa.update(DeploymentContract).values(minimum_contract=2))
+    contract_session.execute(sa.update(DeploymentContract).values(minimum_contract=3))
     with pytest.raises(DeploymentContractError):
         assert_runtime_contract(contract_session)
     with pytest.raises(DeploymentContractError):
