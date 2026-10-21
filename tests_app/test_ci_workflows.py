@@ -1801,3 +1801,148 @@ def test_temporary_probe_refuses_the_wrong_import_location_without_raw_errors(tm
         "result": "failed",
     }
     assert result.stderr == "" and "SYNTHETIC_PRIVATE_ARGUMENT" not in result.stdout
+
+
+@pytest.mark.parametrize(
+    "fault,status",
+    [
+        ("valid", 0),
+        ("db_changed", 1),
+        ("data_changed", 1),
+        ("blocked", 1),
+        ("wrong_previous", 1),
+        ("unhealthy", 1),
+        ("second_churn", 1),
+        ("not_paused", 1),
+        ("still_running", 1),
+    ],
+)
+def test_rollback_recovery_rehearsal_allows_normalization_before_asserting_no_churn(
+    tmp_path: Path,
+    fault: str,
+    status: int,
+) -> None:
+    import json
+
+    state = tmp_path / "recovery.json"
+    state.write_text(json.dumps({"deploys": 0}))
+    binary = tmp_path / "bin"
+    binary.mkdir()
+    docker = binary / "docker"
+    docker.write_text(f"#!{sys.executable}\n" + RECOVERY_DOCKER)
+    docker.chmod(0o700)
+    deploy = tmp_path / "deploy.sh"
+    deploy.write_text(
+        f"#!{sys.executable}\n"
+        + """import json,os,subprocess
+from pathlib import Path
+p=Path(os.environ['RECOVERY_STATE']); state=json.loads(p.read_text())
+if state['deploys']==0:
+    subprocess.run(['docker','run','synthetic','migrate'], check=True)
+state['deploys']+=1
+p.write_text(json.dumps(state))
+"""
+    )
+    deploy.chmod(0o700)
+    (tmp_path / "app.env.ok").write_text("PUBLIC_BASE_URL=https://example.test\n")
+    full = next(
+        step["run"]
+        for step in steps_of("swarm")
+        if step.get("name", "").startswith("Update, break and go back")
+    )
+    helpers = full[full.index("state() {") : full.index('echo "::group::1.')]
+    group = full[full.index('echo "::group::3.') : full.index('echo "::group::4.')]
+    result = subprocess.run(
+        ["bash", "-e", "-o", "pipefail", "-c", 'cd "$CONF"\n' + helpers + group],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={
+            **os.environ,
+            "CONF": str(tmp_path),
+            "RUNNER_TEMP": str(tmp_path),
+            "PATH": f"{binary}:{os.environ['PATH']}",
+            "RECOVERY_STATE": str(state),
+            "RECOVERY_FAULT": fault,
+        },
+    )
+    assert result.returncode == status, result.stdout + result.stderr
+    if status == 0:
+        assert json.loads(state.read_text())["deploys"] == 2
+
+
+RECOVERY_DOCKER = r"""
+import hashlib,json,os,sys
+from pathlib import Path
+s=json.loads(Path(os.environ['RECOVERY_STATE']).read_text()); a=sys.argv[1:]
+identity='sha256:'+'a'*64; fault=os.environ['RECOVERY_FAULT']
+if a[:2]==['service','ps']:
+    for name in a:
+        if name.startswith('gerador-planos_'):
+            role=name.rsplit('_',1)[-1]
+            tid=role+('-recovered'+str(s['deploys'] if fault=='second_churn' else 1) if s['deploys'] and (role!='db' or fault=='db_changed') else '-original')
+            print(tid if '-q' in a else name+'.1 '+tid)
+elif a[:2]==['image','inspect']: print('sha256:'+'b'*64 if a[-1]=='wrong-previous' else identity)
+elif a[:2]==['service','inspect']:
+    fmt=a[a.index('--format')+1]
+    print('completed' if 'UpdateStatus' in fmt else ('1' if s['deploys'] or fault=='not_paused' else '0') if 'Replicas' in fmt else 'wrong-previous' if 'PreviousSpec' in fmt and fault=='wrong_previous' else 'leadkit-local:'+identity.split(':')[1])
+elif a[:2]==['inspect','--type']:
+    fmt=a[a.index('--format')+1]
+    print(hashlib.sha256(a[-1].encode()).hexdigest() if a[2]=='task' else ('unhealthy' if fault=='unhealthy' else 'healthy') if 'Health.Status' in fmt else ('true:running' if fault=='still_running' else 'false:exited') if 'State.Running' in fmt else identity)
+elif a[:1]==['ps']: print('db-container' if 'gerador-planos_db' in ' '.join(a) else 'retired-container')
+elif a[:1]==['exec']:
+    print(('changed-data' if s['deploys'] and fault=='data_changed' else 'stable-data') if 'md5(' in a[-1] else '2:blocked' if not s['deploys'] or fault=='blocked' else '2:verified')
+elif a[:1]==['run']: pass
+else: raise SystemExit(2)
+"""
+
+
+@pytest.mark.parametrize(
+    "fault,status", [("valid", 0), ("http_error", 1), ("curl_error", 1), ("few", 1)]
+)
+def test_rolling_probe_requires_only_200_and_enough_samples_outside_recovery(
+    tmp_path: Path, fault: str, status: int
+) -> None:
+    full = next(
+        step["run"]
+        for step in steps_of("swarm")
+        if step.get("name", "").startswith("Update, break and go back")
+    )
+    helpers = full[full.index('probe="$RUNNER_TEMP/probe.txt"') : full.index("state() {")]
+    (tmp_path / "sleep").write_text("#!/bin/sh\nexit 0\n")
+    (tmp_path / "sleep").chmod(0o700)
+    curl = tmp_path / "curl"
+    curl.write_text(
+        f"#!{sys.executable}\n"
+        + """import os
+from pathlib import Path
+folder=Path(os.environ['RUNNER_TEMP']); counter=folder/'samples'
+n=int(counter.read_text())+1 if counter.exists() else 1
+counter.write_text(str(n))
+fault=os.environ['PROBE_FAULT']
+if n >= (2 if fault=='few' else 55): (folder/'stop-probe').touch()
+print('503' if n==1 and fault=='http_error' else '200')
+raise SystemExit(1 if n==1 and fault=='curl_error' else 0)
+"""
+    )
+    curl.chmod(0o700)
+    result = subprocess.run(
+        ["bash", "-e", "-o", "pipefail", "-c", helpers + '\nwait "$probe_pid"\nstop_probe'],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={
+            **os.environ,
+            "RUNNER_TEMP": str(tmp_path),
+            "CURL": str(curl),
+            "DOMAIN": "example.test",
+            "PATH": f"{tmp_path}:{os.environ['PATH']}",
+            "PROBE_FAULT": fault,
+        },
+    )
+    assert result.returncode == status, result.stdout + result.stderr
+    # A janela de pausa é limitada ao grupo3, depois do rolling validado e antes do retorno.
+    assert full.index('stop_probe\n\necho "::group::3.') < full.index('echo "::group::4.')
+    assert full.index('echo "::group::4.') < full.index(
+        "start_probe", full.index('echo "::group::4.')
+    )
