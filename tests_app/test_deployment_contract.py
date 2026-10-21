@@ -16,6 +16,9 @@ def rollout_engine():
     reset_test_schema(TEST_DATABASE_URL)
     command.upgrade(Config(str(Path(__file__).parents[1] / "app/alembic.ini")), "head")
     engine = make_engine(TEST_DATABASE_URL)
+    # Estes cenários exercitam o piso1 histórico com o binário composto.
+    with engine.begin() as connection:
+        connection.exec_driver_sql("UPDATE deployment_contract SET minimum_contract = 1")
     yield engine
     engine.dispose()
 

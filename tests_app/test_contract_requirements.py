@@ -11,6 +11,7 @@ from app.models import DeploymentContract
 
 def test_verified_floor_one_does_not_enable_new_operations(deps):
     with deps.sessions() as session:
+        session.get_one(DeploymentContract, 1).minimum_contract = 1
         epoch = uuid4()
         contract.begin_rollout(session, epoch=epoch)
         contract.attest_rollout(session, epoch=epoch, evidence=evidence())
@@ -44,6 +45,7 @@ def test_unknown_requirement_fails_closed(deps, required):
 
 def test_attestation_never_promotes_floor_from_fleet_capabilities(deps):
     with deps.sessions() as session:
+        session.get_one(DeploymentContract, 1).minimum_contract = 1
         epoch = uuid4()
         contract.begin_rollout(session, epoch=epoch)
         manifest = evidence()
