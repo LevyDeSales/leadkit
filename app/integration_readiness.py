@@ -18,12 +18,6 @@ def profile_for(spec):
 
 def problems(session, spec, *, check_integrations=True):
     """Sem rede: fontes e chave compatíveis com a versão candidata; erro orienta ação explícita."""
-    from app.forms.definition import Problem
-    from app.integrations import mapping
-
-    profile = profile_for(spec)
-    event = "submissao.persistida" if profile == "capture" else "plano.concluido"
-    result = []
     destination = session.scalar(
         sa.select(WebhookDestination)
         .where(
@@ -34,6 +28,32 @@ def problems(session, spec, *, check_integrations=True):
         .order_by(WebhookDestination.form_slug.is_(None))
         .limit(1)
     )
+    integrations = (
+        list(
+            session.scalars(
+                sa.select(Integration).where(
+                    Integration.form_slug == spec.slug, Integration.active.is_(True)
+                )
+            )
+        )
+        if check_integrations
+        else []
+    )
+    return problems_for(spec, destination=destination, integrations=integrations)
+
+
+def problems_for(spec, *, destination, integrations):
+    """As mesmas regras locais sobre configurações já carregadas, sem consulta nem mutação.
+
+    A central passa o receptor efetivo e as conexões do formulário no mesmo snapshot usado
+    nas suas colunas; ``problems`` conserva a leitura e a assinatura das ações existentes.
+    """
+    from app.forms.definition import Problem
+    from app.integrations import mapping
+
+    profile = profile_for(spec)
+    event = "submissao.persistida" if profile == "capture" else "plano.concluido"
+    result = []
     if destination and profile == "capture" and destination.purpose != "internal":
         result.append(
             Problem(
@@ -48,13 +68,9 @@ def problems(session, spec, *, check_integrations=True):
                 f"O webhook efetivo não aceita {event}. Configure os eventos aceitos ou remova o destino, conferindo o padrão herdado.",
             )
         )
-    if not check_integrations:
-        return result
-    for integration in session.scalars(
-        sa.select(Integration).where(
-            Integration.form_slug == spec.slug, Integration.active.is_(True)
-        )
-    ):
+    for integration in integrations:
+        if not integration.active:
+            continue
         if integration.purpose != "internal":
             result.append(
                 Problem(
