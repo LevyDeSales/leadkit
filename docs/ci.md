@@ -10,6 +10,12 @@ executa os ensaios aplicáveis de Compose e duas stacks Swarm, incluindo atualiz
 backup e isolamento de nomes. A agregação `ci-ready` exige que as validações do mesmo commit tenham
 passado; etapas obrigatórias não são substituídas por uma execução antiga de outro SHA.
 
+A imagem confere os hashes de Python, templates e assets da cópia de fontes e do pacote importado
+com `python -I`, sem rede. Arquivos ausentes, extras ou diferentes reprovam o gate. O build força
+a reconstrução apenas do projeto local, conservando o cache das dependências: mudar só um template
+precisa atualizar o wheel mesmo quando o metadado do projeto não muda. Isso evita que o cache quente
+instale um pacote antigo ao lado de fontes novas.
+
 Os nomes técnicos não precisam coincidir com os modelos públicos: `STACK` ausente/vazia conserva
 `gerador-planos` no YAML/scripts, enquanto `STACK_NAME=leadkit` no exemplo é uma escolha explícita.
 O prefixo `mcc-` dos arquivos de backup permanece compatível com `backup.sh`. Usuário e banco de

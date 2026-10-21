@@ -7,6 +7,7 @@ Não usa PYTHONPATH, o checkout, banco ou serviços externos para resolver recur
 from __future__ import annotations
 
 import base64
+import hashlib
 import importlib.metadata
 import json
 import os
@@ -29,6 +30,54 @@ def test_package_metadata_and_resource_patterns_cover_the_public_runtime() -> No
     assert "forms/**/*.json" in patterns
     assert "assets/**/*" in patterns
     assert "web/static/**/*" in patterns
+
+
+def check_image_package() -> None:
+    """Confere a imagem real, inclusive arquivos removidos e imports fora do checkout."""
+    import app
+
+    source = Path("/app/app")
+    installed = Path(app.__file__).resolve().parent
+    assert source.is_dir() and installed.is_relative_to(Path(sys.prefix)), installed
+    distribution = importlib.metadata.distribution("leadkit")
+    direct_url = json.loads(distribution.read_text("direct_url.json") or "{}")
+    assert not direct_url.get("dir_info", {}).get("editable", False)
+
+    def files(root: Path) -> dict[str, str]:
+        return {
+            path.relative_to(root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in root.rglob("*")
+            if path.is_file()
+            and "__pycache__" not in path.parts
+            and path.suffix not in {".pyc", ".pyo"}
+            and path.name != ".gitkeep"
+            and path != root / ".env.example"
+            and path != root / "README.md"
+        }
+
+    expected, actual = files(source), files(installed)
+    missing = sorted(expected.keys() - actual.keys())
+    extra = sorted(actual.keys() - expected.keys())
+    changed = sorted(
+        name for name in expected.keys() & actual.keys() if expected[name] != actual[name]
+    )
+    print(
+        json.dumps(
+            {
+                "source": str(source),
+                "installed": str(installed),
+                "source_files": len(expected),
+                "installed_files": len(actual),
+                "missing": missing,
+                "extra": extra,
+                "changed": changed,
+            },
+            sort_keys=True,
+        )
+    )
+    assert expected and not missing and not extra and not changed, (
+        "o pacote instalado difere da fonte"
+    )
 
 
 def check_installed_package() -> None:
@@ -118,6 +167,9 @@ def check_installed_package() -> None:
 
 
 if __name__ == "__main__":
-    if sys.argv[1:] != ["--installed"]:
-        raise SystemExit("use --installed para conferir o wheel instalado")
-    check_installed_package()
+    if sys.argv[1:] == ["--installed"]:
+        check_installed_package()
+    elif sys.argv[1:] == ["--image"]:
+        check_image_package()
+    else:
+        raise SystemExit("use --installed para conferir o wheel ou --image dentro da imagem")

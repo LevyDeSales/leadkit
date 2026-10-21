@@ -89,6 +89,11 @@ jobs:
           cache-from: type=gha,scope=leadkit
           cache-to: type=gha,mode=max,scope=leadkit,ignore-error=true
 
+      - name: Verify the installed image matches its sources
+        run: |
+          docker run --rm --network none --read-only -i leadkit:ci \
+            python -I - --image < tests_app/test_packaging.py
+
       - name: Render every form's example PDF inside the image
         run: |
           docker run --rm -i -v "$PWD/examples:/examples:ro" leadkit:ci python -I - <<'PY'
