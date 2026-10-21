@@ -32,6 +32,8 @@ class Rollout:
         self.stack = stack
         self.rollback = rollback
         self.target = ""
+        self.target_contract = 0
+        self.floor = 0
         self.pinned = ""
         self.node = ""
         self.tracked = {"api": {}, "worker": {}}
@@ -95,8 +97,14 @@ class Rollout:
         )
         try:
             value = json.loads(result.stdout)
-            if result.returncode == 0 and value == {"contract": 1}:
-                return 1
+            if (
+                result.returncode == 0
+                and isinstance(value, dict)
+                and set(value) == {"contract"}
+                and type(value["contract"]) is int
+                and value["contract"] in {1, 2}
+            ):
+                return value["contract"]
         except ValueError:
             pass
         return 0
@@ -472,11 +480,11 @@ class Rollout:
                     "A atualização não terminou; o Swarm voltou ou interrompeu a troca."
                 )
             identity = self.image_id(service["image_ref"])
-            if identity != self.target or self.capability(identity) < 1:
+            if identity != self.target or self.capability(identity) < self.floor:
                 raise RolloutError(
                     "Uma réplica continua com outra imagem; o gate permanece bloqueado."
                 )
-            if not service["previous_ref"] or self.capability(service["previous_ref"]) < 1:
+            if not service["previous_ref"] or self.capability(service["previous_ref"]) < self.floor:
                 raise RolloutError(
                     "PreviousSpec ainda permite imagem antiga; falta a segunda atualização compatível."
                 )
@@ -506,9 +514,9 @@ class Rollout:
                 "spec_version": service["spec_version"],
                 "observed_spec_version": service["spec_version"],
                 "image": identity,
-                "contract": 1,
+                "contract": self.capability(identity),
                 "previous_image": self.image_id(service["previous_ref"]),
-                "previous_contract": 1,
+                "previous_contract": self.capability(service["previous_ref"]),
                 "replicas": service["replicas"],
                 "tasks": active,
                 "retired": retired,
@@ -519,8 +527,9 @@ class Rollout:
 
     def execute(self):
         self.target = self.image_id(self.image)
-        if self.capability(self.target) < 1:
-            raise RolloutError("A imagem não comprova contrato1; nada foi alterado.")
+        self.target_contract = self.capability(self.target)
+        if self.target_contract < 1:
+            raise RolloutError("A imagem não comprova contrato conhecido; nada foi alterado.")
         self.node = self.docker("info", "--format", "{{.Swarm.NodeID}}").stdout.strip()
         if not re.fullmatch(r"[a-zA-Z0-9_-]{1,128}", self.node):
             raise RolloutError("O nó local do Swarm não pôde ser identificado.")
@@ -543,9 +552,10 @@ class Rollout:
                 "O banco não confirmou o contrato; a stack não foi mexida."
             ) from None
         floor = status.get("minimum_contract")
-        if type(floor) is not int or floor not in {0, 1}:
+        if type(floor) is not int or floor not in {0, 1, 2} or floor > self.target_contract:
             raise RolloutError("O piso do banco excede a capacidade da imagem; nada foi alterado.")
-        if self.rollback and floor == 0:
+        self.floor = floor
+        if self.rollback and (floor == 0 or self.target_contract > floor):
             raise RolloutError(
                 "Não há contrato compatível para rollback; use a primeira adoção com migration."
             )
@@ -558,7 +568,16 @@ class Rollout:
         os.environ["IMAGE"] = self.pinned
         initial = self.services() if network else {}
         bootstrap = floor == 0
-        if bootstrap:
+        incompatible_return = any(
+            self.capability(service["image_ref"]) < floor
+            or not service["previous_ref"]
+            or self.capability(service["previous_ref"]) < floor
+            for service in initial.values()
+        )
+        pause = bootstrap or self.target_contract > floor or incompatible_return
+        if floor:
+            self.contract("begin", {"epoch": self.epoch})
+        if pause:
             self.quiesce()
             if not network:
                 self.stack_deploy(paused=True)
@@ -572,21 +591,21 @@ class Rollout:
                         if time.monotonic() >= deadline:
                             raise
                         time.sleep(1)
-            self.migrate()
-            if self.contract("status").get("minimum_contract") != 1:
-                raise RolloutError("A migration não confirmou piso1; mantenha os serviços parados.")
         else:
-            for role, service in initial.items():
-                if self.capability(service["image_ref"]) < 1 and service["replicas"]:
-                    raise RolloutError(
-                        "Há imagem antiga com réplicas ativas após0016; mantenha a pausa para recuperação."
-                    )
+            for role in initial:
                 self.observe(role)
-        self.contract("begin", {"epoch": self.epoch})
         if self.rollback:
             print("deploy.sh: ROLLBACK=1, sem migrations; piso de compatibilidade preservado")
-        if not bootstrap and not self.rollback:
+        else:
             self.migrate()
+            migrated = self.contract("status")
+            if migrated.get("minimum_contract") != self.target_contract:
+                raise RolloutError(
+                    "A migration não confirmou o piso alvo; mantenha os serviços parados."
+                )
+            self.floor = self.target_contract
+        # A migration composta limpa o epoch; a retomada instala a tentativa atual.
+        self.contract("begin", {"epoch": self.epoch})
         self.baseline = self.services()
         self.stack_deploy()
         current = self.services()
@@ -607,8 +626,10 @@ class Rollout:
                 raise RolloutError(
                     "O Swarm não confirmou a imagem solicitada; mantenha o gate bloqueado."
                 )
-            previous_ok = service["previous_ref"] and self.capability(service["previous_ref"]) >= 1
-            if bootstrap or not previous_ok or service["previous_replicas"] == 0:
+            previous_ok = (
+                service["previous_ref"] and self.capability(service["previous_ref"]) >= self.floor
+            )
+            if pause or not previous_ok or service["previous_replicas"] == 0:
                 # Um retorno antigo aqui só é permitido se a Spec guardada realmente estiver pausada.
                 if not previous_ok and service["previous_replicas"] != 0:
                     raise RolloutError(

@@ -31,13 +31,14 @@ with calls.open('a') as file:
 state_path = Path(str(calls) + '.state')
 a = 'sha256:' + 'a' * 64
 b = 'sha256:' + 'b' * 64
+c = 'sha256:' + 'c' * 64
 node = 'local-node'
 
 def spec(image, replicas):
     return {'TaskTemplate':{'ContainerSpec':{'Image':image}}, 'Mode':{'Replicated':{'Replicas':replicas}}}
 
 def image_id(ref):
-    return b if ref in {b, 'leadkit:old'} else a
+    return b if ref in {b, 'leadkit:old'} else c if ref in {c, 'leadkit:one'} else a
 
 def apply(state, role, image, replicas):
     svc = state['services'].setdefault(role, {'ID':role + '-service', 'Version':{'Index':0}, 'Spec':spec(image, 0)})
@@ -89,7 +90,7 @@ else:
     state = {'floor':floor, 'network':bool(os.getenv('STUB_NETWORK')), 'services':{}, 'tasks':{}, 'containers':{}, 'epoch':None}
     if state['network']:
         for role in ('api','worker'):
-            apply(state, role, 'leadkit:old' if floor == 0 else 'gerador-planos:abc123', 1)
+            apply(state, role, 'leadkit:old' if floor == 0 else 'leadkit:one' if int(os.getenv('STUB_INITIAL_CONTRACT', str(floor))) == 1 and os.getenv('STUB_TARGET_CONTRACT') == '2' else 'gerador-planos:abc123', 1)
             state['services'][role]['PreviousSpec'] = copy.deepcopy(state['services'][role]['Spec'])
 
 code = 0
@@ -192,7 +193,7 @@ elif head == ['node','inspect']:
 elif args[:1] == ['inspect']:
     kind=args[args.index('--type')+1]
     names=args[args.index('--type')+2:]
-    if os.getenv('STUB_LATE_TASK') and kind=='container' and state.get('scaled') and state['floor']==0:
+    if os.getenv('STUB_LATE_TASK') and kind=='container' and state.get('scaled') and state['floor'] < int(os.getenv('STUB_TARGET_CONTRACT', '1')):
         for old_cid in names:
             prior=state.get('reaped_tasks',{}).get(old_cid)
             if prior and prior['role']=='api':
@@ -274,13 +275,15 @@ elif args[:1] == ['run']:
         if os.getenv('STUB_LATE_TASK'):
             late=state.get('late_live_cid')
             state['late_running_at_ddl']=bool(late and state['containers'].get(late,{}).get('State',{}).get('Running'))
-        state['floor']=1
+        state['floor']=int(os.getenv('STUB_TARGET_CONTRACT', '1'))
+        state['epoch']=None
+        state['phase']='blocked'
         if os.getenv('STUB_MIGRATE_FAIL'): code=1
     elif 'app.deployment_contract' in args:
         action=args[-1]
         if action=='capability':
             identity=args[args.index('python')-1]
-            out=json.dumps({'contract':0 if identity==b or os.getenv('STUB_TARGET_OLD') else 1})
+            out=json.dumps({'contract':0 if identity==b or os.getenv('STUB_TARGET_OLD') else 1 if identity==c else int(os.getenv('STUB_TARGET_CONTRACT', '1'))})
         elif action=='status':
             out=json.dumps({'minimum_contract':state['floor'],'phase':state.get('phase','blocked'),'epoch':state['epoch']})
         else:
@@ -1062,3 +1065,73 @@ def test_rollout_correlates_full_ids_when_docker_ps_truncates_by_default(server)
         for service in services.values()
         for task in service["tasks"]
     )
+
+
+def test_contract_upgrade_quiesces_before_ddl_and_attests_composed_return_path(server):
+    result = deploy(server, STUB_NETWORK="1", STUB_TARGET_CONTRACT="2")
+    assert result.returncode == 0, result.stderr
+    calls = server.calls
+    scale = next(i for i, call in enumerate(calls) if call.startswith("service scale "))
+    migration = next(i for i, call in enumerate(calls) if call.endswith(" migrate"))
+    assert scale < migration
+    begins = [i for i, call in enumerate(calls) if call.endswith(" begin")]
+    assert begins[0] < scale < migration < begins[-1]
+    state = rollout_state(server)
+    assert state["floor"] == 2 and state["phase"] == "verified"
+    for service in state["attested"]["services"].values():
+        assert service["contract"] == service["previous_contract"] == 2
+
+
+def test_rollback_cannot_upgrade_contract_floor(server):
+    result = deploy(server, STUB_NETWORK="1", STUB_TARGET_CONTRACT="2", ROLLBACK="1")
+    assert result.returncode == 1
+    assert not any(
+        call.startswith(("image tag", "service scale", "stack deploy", "service update"))
+        for call in server.calls
+    )
+    assert not any(call.endswith((" migrate", " begin", " attest")) for call in server.calls)
+
+
+def test_contract_two_rolling_update_preserves_floor(server):
+    result = deploy(server, STUB_NETWORK="1", STUB_CONTRACT_FLOOR="2", STUB_TARGET_CONTRACT="2")
+    assert result.returncode == 0, result.stderr
+    assert not any(call.startswith("service scale ") for call in server.calls)
+    assert rollout_state(server)["floor"] == 2
+
+
+@pytest.mark.parametrize("fault", ["STUB_STACK_FAIL", "STUB_AUTO_ROLLBACK"])
+def test_upgrade_failure_after_ddl_keeps_old_return_paused_and_resumes(server, fault):
+    failed = deploy(server, STUB_NETWORK="1", STUB_TARGET_CONTRACT="2", **{fault: "1"})
+    assert failed.returncode == 1
+    state = rollout_state(server)
+    assert state["floor"] == 2 and state["phase"] == "blocked"
+    for service in state["services"].values():
+        for spec in (service["Spec"], service.get("PreviousSpec")):
+            if spec and spec["TaskTemplate"]["ContainerSpec"]["Image"] == "leadkit:one":
+                assert spec["Mode"]["Replicated"]["Replicas"] == 0
+    result = deploy(server, STUB_NETWORK="1", STUB_TARGET_CONTRACT="2")
+    assert result.returncode == 0, result.stderr
+    assert rollout_state(server)["floor"] == 2
+    assert rollout_state(server)["phase"] == "verified"
+
+
+def test_contract_one_rollback_is_refused_at_floor_two_before_mutation(server):
+    result = deploy(server, STUB_NETWORK="1", STUB_CONTRACT_FLOOR="2", ROLLBACK="1")
+    assert result.returncode == 1
+    assert not any(
+        call.startswith(("image tag", "service scale", "stack deploy", "service update"))
+        for call in server.calls
+    )
+    assert not any(call.endswith((" migrate", " begin", " attest")) for call in server.calls)
+
+
+def test_paused_old_return_requires_quiescence_even_after_floor_commit(server):
+    result = deploy(
+        server,
+        STUB_NETWORK="1",
+        STUB_CONTRACT_FLOOR="2",
+        STUB_INITIAL_CONTRACT="1",
+        STUB_TARGET_CONTRACT="2",
+    )
+    assert result.returncode == 0, result.stderr
+    assert any(call.startswith("service scale ") for call in server.calls)
