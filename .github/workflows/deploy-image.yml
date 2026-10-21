@@ -1134,8 +1134,9 @@ jobs:
           headers=$($CURL -o /dev/null -D - -c "$jar" -H "Origin: https://$DOMAIN" \
             --data-urlencode username=ci-admin --data-urlencode "password@$RUNNER_TEMP/admin-password" \
             "https://$DOMAIN/admin/login" | tr -d '\r')
-          echo "$headers" | grep -qi '^location: /admin$'
+          echo "$headers" | grep -qi '^location: /admin/forms$'
           echo "$headers" | grep -i '^set-cookie: mcc_admin=' | grep -i 'httponly' | grep -qi 'secure'
+          test "$($CURL -o /dev/null -w '%{http_code}' -b "$jar" "https://$DOMAIN/admin/forms")" = 200
           test "$($CURL -o /dev/null -w '%{http_code}' -b "$jar" "https://$DOMAIN/admin")" = 200
           echo "login no admin: ok"
 
