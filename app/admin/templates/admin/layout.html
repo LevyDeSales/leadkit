@@ -4,15 +4,14 @@
 {% block body_attrs %} hx-headers='{"X-CSRF-Token": "{{ session.csrf_token }}"}' hx-history="false"{% endblock %}
 {% block body %}
 <header class="topbar">
-  <a class="brand" href="/admin">{{ site_brand() }}<span>Operação</span></a>
+  <a class="brand" href="/admin/forms">{{ site_brand() }}<span>Operação</span></a>
   <nav class="topnav" aria-label="Seções">
-    <a href="/admin"{% if section == "jobs" %} aria-current="page"{% endif %}>{{ m.icon('file-list') }}Pedidos</a>
-    <a href="/admin/captures"{% if section == "captures" %} aria-current="page"{% endif %}>Capturas</a>
     <a href="/admin/forms"{% if section == "forms" %} aria-current="page"{% endif %}>{{ m.icon('file') }}Formulários</a>
+    <a href="/admin/responses"{% if section in ("responses", "jobs", "captures") %} aria-current="page"{% endif %}>{{ m.icon('file-list') }}Respostas</a>
     <a href="/admin/assets"{% if section == "assets" %} aria-current="page"{% endif %}>{{ m.icon('image') }}Imagens</a>
     <a href="/admin/integrations"{% if section in ("integrations", "destinations") %} aria-current="page"{% endif %}>{{ m.icon('send') }}Integrações</a>
-    <a href="/admin/api-keys"{% if section == "api-keys" %} aria-current="page"{% endif %}>{{ m.icon('key') }}Chaves de API</a>
-    <a href="/admin/mcp"{% if section == "mcp" %} aria-current="page"{% endif %}>{{ m.icon('terminal') }}MCP</a>
+    <a href="/admin/advanced"{% if section in ("advanced", "api-keys", "mcp") %} aria-current="page"{% endif %}>Avançado</a>
+    <a href="https://github.com/LevyDeSales/leadkit/blob/develop/docs/guia-da-operadora/README.md" title="Guia público da versão em desenvolvimento (develop)">Guia de uso<span class="sr-only"> — no GitHub, versão em desenvolvimento</span></a>
   </nav>
   {% if env_label %}<span class="badge badge--warn" title="Ambiente">{{ env_label }}</span>{% endif %}
   <div class="topbar__user">

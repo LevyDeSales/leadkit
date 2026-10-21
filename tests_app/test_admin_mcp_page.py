@@ -108,7 +108,8 @@ def test_the_screen_needs_a_session(client: TestClient, deps: Deps) -> None:
 
 def test_the_menu_links_to_the_screen_and_marks_it_when_it_is_open(client: TestClient) -> None:
     assert '<a href="/admin/mcp">' in client.get("/admin/api-keys").text
-    assert '<a href="/admin/mcp" aria-current="page">' in client.get(MCP).text
+    assert '<a href="/admin/advanced" aria-current="page">' in client.get(MCP).text
+    assert '<a href="/admin/mcp">' in client.get("/admin/advanced").text
 
 
 def test_the_desktop_json_carries_the_address_of_this_admin_and_a_marker_for_the_key(

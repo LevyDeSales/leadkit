@@ -1,0 +1,16 @@
+{% extends "admin/layout.html" %}
+{% set section = "responses" %}
+{% block title %}Respostas{% endblock %}
+{% block content %}
+<div class="page-head"><div><h1>Respostas</h1>
+<p>Encontre as respostas recebidas e acompanhe o que aconteceu após cada envio.</p></div></div>
+{% if form %}<p>Formulário: <strong>{{ form_title or form }}</strong>{% if form_title %} <span class="mono">({{ form }})</span>{% endif %}. Os dois caminhos mantêm este filtro e incluem todas as versões.</p>{% endif %}
+<div class="stackcol">
+<section class="box"><h2><a href="{{ pdf_url }}">Com PDF</a></h2>
+<p>Respostas de formulários que geram plano e PDF. Acompanhe a situação da geração, a disponibilidade do PDF e as entregas. Um pedido recebido ainda pode estar aguardando ou ter falhado.</p></section>
+<section class="box"><h2><a href="{{ captures_url }}">Somente respostas</a></h2>
+<p>Respostas de formulários que apenas coletam informações, sem gerar plano ou PDF. Consulte as respostas salvas e acompanhe suas entregas.</p></section>
+<p class="muted">Se o formulário mudou de finalidade, consulte os dois históricos.</p>
+</div>
+{% if form %}<p><a href="/admin/responses">Ver respostas de todos os formulários</a></p>{% endif %}
+{% endblock %}
