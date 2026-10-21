@@ -1,5 +1,6 @@
 """Contrato fechado de declarações externas e comandos administrativos."""
 
+import re
 from datetime import UTC, datetime
 from typing import Annotated, Literal
 from uuid import UUID
@@ -8,6 +9,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from pydantic import (
     AwareDatetime,
     BaseModel,
+    BeforeValidator,
     Field,
     SecretStr,
     field_serializer,
@@ -17,6 +19,19 @@ from pydantic import (
 
 from app.handoff_types import Input
 
+
+def rfc3339(value):
+    if value is None or isinstance(value, datetime):
+        return value
+    if not isinstance(value, str) or not re.fullmatch(
+        r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})", value
+    ):
+        raise ValueError("Informe um instante RFC3339 com offset.")
+    return value
+
+
+EventDateTime = Annotated[AwareDatetime, BeforeValidator(rfc3339)]
+Revision = Annotated[int, Field(strict=True, ge=1, le=2147483647)]
 OpaqueId = Annotated[str, Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9._:-]+$")]
 EventType = Literal[
     "correlation.linked",
@@ -74,6 +89,9 @@ class Policy(Input):
             self.types and not self.channels
         ):
             raise ValueError("Escolha canais e evidências correspondentes.")
+        self.types = sorted(set(self.types))
+        self.channels = sorted(set(self.channels))
+        self.evidence_kinds = sorted(set(self.evidence_kinds))
         return self
 
 
@@ -86,7 +104,7 @@ class SaveEventSource(Input):
 
 class CreateEventSource(SaveEventSource):
     receiver_id: UUID
-    receiver_revision: int = Field(ge=1)
+    receiver_revision: Revision
     namespace: str = Field(pattern=r"^[a-z0-9][a-z0-9._-]{0,63}$")
     idempotency_key: UUID
 
@@ -100,7 +118,7 @@ class SetEventSourceEnabled(Input):
 class CreateEventCredential(Input):
     name: str = Field(min_length=1, max_length=100)
     expected_source_version: str
-    source_revision: int = Field(ge=1)
+    source_revision: Revision
     expires_at: AwareDatetime | None
     idempotency_key: UUID
     confirm: bool = False
@@ -122,7 +140,7 @@ class EraseJourney(Input):
 class Entity(Input):
     kind: EntityKind
     id: OpaqueId
-    revision: int = Field(ge=1)
+    revision: Revision
 
 
 class Author(Input):
@@ -156,8 +174,8 @@ class InvitationData(Input):
 
 class MeetingData(Input):
     status: Literal["scheduled", "cancelled"]
-    starts_at: AwareDatetime
-    ends_at: AwareDatetime | None
+    starts_at: EventDateTime
+    ends_at: EventDateTime | None
     timezone: str = Field(max_length=64)
     change: Literal["created", "rescheduled", "timezone_corrected", "corrected"]
 
@@ -179,7 +197,7 @@ class MeetingData(Input):
 
 class AttendanceData(Input):
     meeting_id: OpaqueId
-    meeting_revision: int = Field(ge=1)
+    meeting_revision: Revision
     status: Literal["attended", "no_show", "unknown"]
     change: Literal["attendance", "corrected"]
 
@@ -210,12 +228,12 @@ DATA_MODELS = {
 
 class JourneyEventInput(Input):
     schema_version: Literal[1]
-    source_revision: int = Field(ge=1)
+    source_revision: Revision
     event_id: OpaqueId
     reference_id: UUID
     type: EventType
     entity: Entity
-    occurred_at: AwareDatetime
+    occurred_at: EventDateTime
     evidence: Evidence
     data: (
         ContextData
@@ -227,6 +245,13 @@ class JourneyEventInput(Input):
         | WithdrawData
     )
 
+    @field_validator("schema_version", mode="before")
+    @classmethod
+    def exact_version(cls, value):
+        if type(value) is not int:
+            raise ValueError("Informe a versão inteira do contrato.")
+        return value
+
     @field_validator("occurred_at")
     @classmethod
     def utc(cls, value):
@@ -234,6 +259,8 @@ class JourneyEventInput(Input):
 
     @model_validator(mode="after")
     def matching_snapshot(self):
+        if self.entity.kind == "context" and self.entity.id != "context":
+            raise ValueError("A entidade de vínculos deve ser context.")
         if not isinstance(self.data, DATA_MODELS[self.type]) or (
             self.type != "entity.withdrawn" and BASE_TYPES[self.entity.kind] != self.type
         ):
@@ -318,6 +345,7 @@ class JourneyEventInfo(BaseModel):
     starts_at: datetime | None = None
     ends_at: datetime | None = None
     timezone: str | None = None
+    meeting_revision: int | None = None
     meeting_event_id: UUID | None = None
     lead_data: EventLeadData | None = None
 
@@ -344,3 +372,11 @@ class SubmissionJourney(BaseModel):
     job: LocalJob | None
     local_facts: list[LocalFact]
     external_declared: list[JourneyEventInfo]
+
+
+class ErasedJourney(BaseModel):
+    submission_id: UUID
+    reference_id: UUID
+    reference_version: str
+    journey_version: str
+    erased: Literal[True] = True

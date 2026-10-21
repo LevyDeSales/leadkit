@@ -16,6 +16,7 @@ from app.journey_types import (
     CreatedEventCredential,
     CreateEventCredential,
     CreateEventSource,
+    ErasedJourney,
     EraseJourney,
     EventCredentialInfo,
     EventSourceInfo,
@@ -305,7 +306,7 @@ def list_submission_journey_events(
     summary="Apagar dados externos da jornada",
     description="Apaga dados e evidências externas e revoga o encaminhamento individual na mesma transação. Não apaga respostas nem revoga PDF. Metadados mínimos duram até a retenção; cópias remotas dependem da fonte. Exige versões da jornada e referência.",
     returns="A jornada após o apagamento, sem dados externos recuperáveis.",
-    response_model=SubmissionJourney,
+    response_model=ErasedJourney,
     errors={409: "version_conflict: releia jornada e referência antes de confirmar."},
 )
 def erase_submission_journey(

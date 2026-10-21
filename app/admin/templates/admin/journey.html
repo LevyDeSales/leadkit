@@ -4,7 +4,7 @@
 {% block title %}Jornada · {{ slug }}{% endblock %}
 {% macro event(item) %}
 <article><h3>{{ type_labels[item.type] }} · revisão {{ item.entity_revision }}</h3><p>{{ state_labels[item.state] }} · {% for source in sources if source.id == item.source_id %}{{ source.name }}{% endfor %} · revisão da fonte {{ item.source_revision }}</p>
-{% if item.state == 'declared' %}{% if item.status %}<p>{{ state_labels.get(item.status, 'Não informado') }}</p>{% endif %}{% if item.starts_at %}<p>{{ scheduled(item) }}{% if item.ends_at %} · término {{ m.when(moment(item.ends_at)) }} (Brasília){% endif %}</p>{% endif %}{% if item.entity_kind == 'attendance' %}<p>{{ 'Associada à revisão exata da agenda declarada.' if item.meeting_event_id else 'A revisão correspondente da agenda ainda não foi declarada.' }}</p>{% endif %}{% endif %}
+{% if item.state == 'declared' %}{% if item.status %}<p>{{ state_labels.get(item.status, 'Não informado') }}</p>{% endif %}{% if item.starts_at %}<p>{{ scheduled(item) }}{% if item.ends_at %} · término {{ m.when(moment(item.ends_at)) }} (Brasília){% endif %}</p>{% endif %}{% if item.entity_kind == 'attendance' %}<p>Presença referente à revisão {{ item.meeting_revision }} da agenda. Não se transfere para remarcações. {{ 'Associada à revisão exata da agenda declarada.' if item.meeting_event_id else 'A revisão correspondente da agenda ainda não foi declarada.' }}</p>{% endif %}{% endif %}
 <p>Ocorrência {{ m.when(moment(item.occurred_at)) }} · recebida {{ m.when(moment(item.received_at)) }} (Brasília)</p>
 {% if item.lead_data %}<details><summary>Identificadores externos e evidência autorizados</summary>{{ m.value(item.lead_data.model_dump(mode='json')) }}</details>{% endif %}</article>
 {% endmacro %}

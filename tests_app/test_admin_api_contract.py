@@ -75,6 +75,8 @@ SECRET_ONCE = {
     "rotate_destination_secret": "secret",
     "create_integration_credential": "secret",
     "rotate_integration_credential": "secret",
+    "create_event_credential": "secret",
+    "rotate_event_credential": "secret",
 }
 LEAD_FIELDS = frozenset(
     {
@@ -140,7 +142,48 @@ _CAPTURE_ITEM = (
     "deliveries.outcome",
     "deliveries.delivered_at",
 )
+_JOURNEY_EVENT_STATE = (
+    "id",
+    "origin",
+    "source_id",
+    "source_revision",
+    "type",
+    "entity_kind",
+    "entity_revision",
+    "occurred_at",
+    "received_at",
+    "state",
+    "status",
+    "starts_at",
+    "ends_at",
+    "timezone",
+    "meeting_revision",
+    "meeting_event_id",
+)
 LEAD_STATE: dict[str, frozenset[str]] = {
+    "get_submission_journey": frozenset(
+        {
+            "submission_id",
+            "reference_id",
+            "reference_version",
+            "journey_version",
+            "job",
+            "job.id",
+            "job.attempt",
+            "job.status",
+            "local_facts",
+            "local_facts.origin",
+            "local_facts.type",
+            "local_facts.state",
+            "local_facts.occurred_at",
+            "local_facts.attempt",
+            "external_declared",
+            *(f"external_declared.{field}" for field in _JOURNEY_EVENT_STATE),
+        }
+    ),
+    "list_submission_journey_events": frozenset(
+        {"items", "next_cursor", *(f"items.{field}" for field in _JOURNEY_EVENT_STATE)}
+    ),
     "list_captures": frozenset(
         {"items", "next_cursor", *(f"items.{field}" for field in _CAPTURE_ITEM)}
     ),
@@ -507,7 +550,14 @@ def _errors(
     responses = operation.get("responses", {})
     role = operation.get("x-required-role")
     versioned = bool(
-        {"expected_version", "expected_receiver_version"} & set(_fields(document, operation))
+        {
+            "expected_version",
+            "expected_receiver_version",
+            "expected_source_version",
+            "expected_journey_version",
+            "expected_handoff_version",
+        }
+        & set(_fields(document, operation))
     )
     takes_input = bool(operation.get("requestBody") or operation.get("parameters"))
     required = {"401": "toda operação", "429": "toda operação"}

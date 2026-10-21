@@ -227,7 +227,7 @@ def register(protected):
                     data = common | {
                         "name": value("name"),
                         "policy": {
-                            key: values[key] for key in ("types", "channels", "evidence_kinds")
+                            key: raw.getlist(key) for key in ("types", "channels", "evidence_kinds")
                         },
                     }
                     if operation == "create":
@@ -269,7 +269,7 @@ def register(protected):
                             **data,
                             name=value("name"),
                             expected_source_version=common["expected_version"],
-                            source_revision=value("source_revision"),
+                            source_revision=int(value("source_revision")),
                         )
                         result = event_sources.issue_credential(
                             session, source_id, command=command, actor=actor, now=now
@@ -324,27 +324,38 @@ def register(protected):
     async def source_create(slug: str, request: Request):
         return await source_command(request, operation="create", slug=slug)
 
-    @protected.post("/event-sources/{source_id}/{operation}")
-    async def source_update(source_id: UUID, operation: str, request: Request):
-        if operation not in ("update", "enabled", "credential"):
-            raise HandoffError("not_found", status=404)
-        return await source_command(request, operation=operation, source_id=source_id)
+    @protected.post("/event-sources/{source_id}/update")
+    async def source_update(source_id: UUID, request: Request):
+        return await source_command(request, operation="update", source_id=source_id)
 
-    @protected.post("/event-sources/{source_id}/credentials/{credential_id}/{operation}")
-    async def credential_update(
-        source_id: UUID, credential_id: UUID, operation: str, request: Request
-    ):
-        if operation not in ("rotate", "revoke"):
-            raise HandoffError("not_found", status=404)
+    @protected.post("/event-sources/{source_id}/enabled")
+    async def source_enabled(source_id: UUID, request: Request):
+        return await source_command(request, operation="enabled", source_id=source_id)
+
+    @protected.post("/event-sources/{source_id}/credential")
+    async def source_credential(source_id: UUID, request: Request):
+        return await source_command(request, operation="credential", source_id=source_id)
+
+    async def credential_command(source_id, credential_id, request, operation):
         with get_deps().sessions() as session:
             from app.models import EventCredential
 
             credential = session.get(EventCredential, credential_id)
             if credential is None or credential.source_id != source_id:
-                raise HandoffError("not_found", status=404)
+                from app.admin.routes import _error
+
+                return _error(request, 404, "Credencial não encontrada nesta fonte.")
         return await source_command(
             request, operation=operation, source_id=source_id, credential_id=credential_id
         )
+
+    @protected.post("/event-sources/{source_id}/credentials/{credential_id}/rotate")
+    async def credential_rotate(source_id: UUID, credential_id: UUID, request: Request):
+        return await credential_command(source_id, credential_id, request, "rotate")
+
+    @protected.post("/event-sources/{source_id}/credentials/{credential_id}/revoke")
+    async def credential_revoke(source_id: UUID, credential_id: UUID, request: Request):
+        return await credential_command(source_id, credential_id, request, "revoke")
 
     @protected.get("/submissions/{submission_id}/journey")
     def submission_journey(submission_id: UUID, request: Request):

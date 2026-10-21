@@ -573,3 +573,28 @@ nunca devolvem referência bruta, cifra, hash, respostas ou URL com referência.
 | --- | --- | --- | --- | --- | --- |
 | `list_integration_credentials` | `GET /forms/{slug}/handoff-receiver/credentials` | Lista credenciais sem segredo | leitura | — | feita · tests_app/test_admin_api_handoffs.py::test_manage_receiver_and_credentials_requires_total_confirmation_and_explicit_expiry |
 | `get_submission_handoff` | `GET /submissions/{submission_id}/handoff` | Consulta intenção pelo identificador da submissão | leitura | — | feita · tests_app/test_admin_api_handoffs.py::test_get_and_revoke_submission_handoff_do_not_expose_pii_or_reference |
+
+## Jornada e fontes de eventos
+
+Fontes e credenciais de eventos são distintas da resolução de encaminhamentos. A ingestão
+`POST /integrations/v1/journey/events` é serviço com autenticação EventCredentialAuth própria e
+schema em `integrations-openapi.json`, fora do catálogo administrativo: o admin autoriza fontes,
+mas não declara fatos comerciais em nome delas. Toda gestão e consulta abaixo integra o MCP.
+
+| Rota atual | O que faz | Serviço hoje | Operação da API | `operation_id` | Papel | Marcas | Status |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `GET /admin/forms/{slug}/event-sources` | Lista fontes e autoridades | `event_sources.list_sources` | `GET /forms/{slug}/event-sources` | `list_event_sources` | leitura | — | feita · tests_app/test_journey_events.py::test_html_pages_native_controls_csrf_safe_retry_and_journey |
+| `POST /admin/forms/{slug}/event-sources` | Cria fonte pausada | `event_sources.create_source` | `POST /forms/{slug}/event-sources` | `create_event_source` | total | externo | feita · tests_app/test_journey_events.py::test_paused_source_specific_credential_and_capture_ingestion |
+| `GET /admin/event-sources/{source_id}` | Consulta configuração histórica | `event_sources.source_info` | `GET /event-sources/{source_id}` | `get_event_source` | leitura | — | feita · tests_app/test_journey_events.py::test_html_pages_native_controls_csrf_safe_retry_and_journey |
+| `POST /admin/event-sources/{source_id}/update` | Altera permissões e pausa revisão nova | `event_sources.update_source` | `PUT /event-sources/{source_id}` | `update_event_source` | total | externo | feita · tests_app/test_journey_events.py::test_credential_expiry_rotation_replay_and_policy_revision |
+| `POST /admin/event-sources/{source_id}/enabled` | Habilita ou pausa fonte | `event_sources.set_enabled` | `POST /event-sources/{source_id}/enabled` | `set_event_source_enabled` | total | externo | feita · tests_app/test_journey_events.py::test_blocked_gate_refuses_ingestion_and_enable_but_allows_pause_revoke |
+| `POST /admin/event-sources/{source_id}/credential` | Emite segredo uma vez | `event_sources.issue_credential` | `POST /event-sources/{source_id}/credentials` | `create_event_credential` | total | externo | feita · tests_app/test_journey_events.py::test_paused_source_specific_credential_and_capture_ingestion |
+| `POST /admin/event-sources/{source_id}/credentials/{credential_id}/rotate` | Substitui credencial na mesma revisão | `event_sources.rotate_credential` | `POST /event-credentials/{credential_id}/rotate` | `rotate_event_credential` | total | externo | feita · tests_app/test_journey_events.py::test_credential_expiry_rotation_replay_and_policy_revision |
+| `POST /admin/event-sources/{source_id}/credentials/{credential_id}/revoke` | Revoga autenticação | `event_sources.revoke_credential` | `POST /event-credentials/{credential_id}/revoke` | `revoke_event_credential` | total | destrutiva, externo | feita · tests_app/test_journey_events.py::test_blocked_gate_refuses_ingestion_and_enable_but_allows_pause_revoke |
+| `GET /admin/submissions/{submission_id}/journey` | Consulta fatos locais e externos | `journey.read_journey` | `GET /submissions/{submission_id}/journey` | `get_submission_journey` | leitura | lead | feita · tests_app/test_journey_events.py::test_mcp_projection_confirmations_and_sensitive_opt_in |
+| `POST /admin/submissions/{submission_id}/journey/erase` | Apaga dados externos e revoga encaminhamento | `journey.erase_journey` | `POST /submissions/{submission_id}/journey/erase` | `erase_submission_journey` | total | destrutiva, externo | feita · tests_app/test_journey_events.py::test_external_ids_are_opt_in_and_erasure_revokes_atomically |
+
+| `operation_id` | Operação da API | O que faz | Papel | Marcas | Status |
+| --- | --- | --- | --- | --- | --- |
+| `list_event_credentials` | `GET /event-sources/{source_id}/credentials` | Metadados de credenciais sem segredo ou hash | leitura | — | feita · tests_app/test_journey_events.py::test_credential_expiry_rotation_replay_and_policy_revision |
+| `list_submission_journey_events` | `GET /submissions/{submission_id}/journey/events` | Histórico paginado por recebimento e ID local, com filtros GET na tela de jornada | leitura | lead | feita · tests_app/test_journey_events.py::test_history_paginates_and_multiple_sources_do_not_merge |

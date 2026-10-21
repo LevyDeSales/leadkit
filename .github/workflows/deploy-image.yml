@@ -946,7 +946,7 @@ jobs:
           test -s before-ddl
           test -e ddl-committed-launcher-failed
           cat before-ddl
-          test "$(psql_compat 'select version_num from alembic_version')" = 0017_continuation_release
+          test "$(psql_compat 'select version_num from alembic_version')" = 0018_journey_events
           test "$(psql_compat "select minimum_contract || ':' || phase from deployment_contract where id=1")" = 2:blocked
           for role in api worker; do
             bootstrap_role="$role"
@@ -961,7 +961,7 @@ jobs:
           contract_before=$(psql_compat "select md5(row_to_json(d)::text) from deployment_contract d where id=1")
           : > "$folder/operation-trace"
           if env -u DOMAIN -u STACK PATH="$folder/bin:$PATH" IMAGE="$old_image" ./deploy.sh > refuse-old.log 2>&1; then
-            echo 'Imagem antiga não pode voltar após0017'; exit 1
+            echo 'Imagem antiga não pode voltar após0018'; exit 1
           fi
           test "$(versions)" = "$before"
           test "$(psql_compat "select minimum_contract || ':' || phase from deployment_contract where id=1")" = 2:blocked

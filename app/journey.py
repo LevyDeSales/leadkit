@@ -230,6 +230,7 @@ def event_info(session, row, *, with_lead=False):
         starts_at=safe.get("starts_at"),
         ends_at=safe.get("ends_at"),
         timezone=safe.get("timezone"),
+        meeting_revision=safe.get("meeting_revision"),
         meeting_event_id=meeting,
         lead_data=row.protected_data if with_lead and not row.erased_at else None,
     )

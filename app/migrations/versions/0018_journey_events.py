@@ -168,4 +168,4 @@ def upgrade():
 
 
 def downgrade():
-    raise RuntimeError("Migration aditiva: retorno usa imagem compatível com o piso2.")
+    raise RuntimeError("downgrade indisponível: retorno usa imagem compatível com o piso2.")

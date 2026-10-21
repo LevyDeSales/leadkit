@@ -1,5 +1,6 @@
 """Eventos declarados nas interfaces públicas, com PostgreSQL e dados sintéticos."""
 
+from admin_api_support import url_of
 from fastapi.testclient import TestClient
 
 from app.api.handoffs import create_integration_api
@@ -31,7 +32,7 @@ def test_paused_source_specific_credential_and_capture_ingestion(deps, api_clien
         receiver_id, reference_id, submission_id = receiver.id, reference.id, accepted.submission.id
     writer = api_client("total")
     created = writer.post(
-        "/admin/api/v1/forms/synthetic/event-sources",
+        url_of("create_event_source", slug="synthetic"),
         json={
             "name": "Agenda sintética",
             "receiver_id": str(receiver_id),
@@ -51,7 +52,7 @@ def test_paused_source_specific_credential_and_capture_ingestion(deps, api_clien
     source = created.json()
     assert source["enabled"] is False
     issued = writer.post(
-        f"/admin/api/v1/event-sources/{source['id']}/credentials",
+        url_of("create_event_credential", source_id=source["id"]),
         json={
             "name": "Sintética",
             "source_revision": 1,
@@ -103,6 +104,7 @@ def test_paused_source_specific_credential_and_capture_ingestion(deps, api_clien
     assert journey.json()["external_declared"][0]["starts_at"] == "2026-10-25T13:00:00Z"
 
 
+import copy
 from datetime import timedelta
 from uuid import UUID, uuid4
 
@@ -120,14 +122,18 @@ class SyntheticWorld(dict):
 
 
 @pytest.fixture
-def world(deps, api_client):
+def world(deps, api_client, request):
     with deps.sessions.begin() as session:
-        spec, resolver = configured(session)
-        accepted = accept(session, spec, deps)
+        spec, resolver = configured(session, **getattr(request, "param", {}))
+        accept(session, spec, deps)
         reference = session.scalar(sa.select(HandoffReference))
         receiver = session.scalar(sa.select(HandoffReceiver))
-        ids = (reference.id, accepted.submission.id, receiver.id)
-    writer, reader = api_client("total"), api_client("leitura")
+        ids = (reference.id, reference.submission_id, receiver.id)
+    from test_admin import FakeClock
+
+    clock = FakeClock()
+    clock.now = NOW.timestamp()
+    writer, reader = api_client("total", clock=clock), api_client("leitura", clock=clock)
     body = {
         "name": "Fonte sintética",
         "receiver_id": str(ids[2]),
@@ -193,6 +199,7 @@ def world(deps, api_client):
                 "reference": str(ids[0]),
                 "submission": str(ids[1]),
                 "resolver": resolver,
+                "spec": spec,
             }
         )
 
@@ -283,6 +290,7 @@ def test_out_of_order_calendar_and_attendance_are_independent(world):
     projected = {row["entity_kind"]: row for row in read(world)["external_declared"]}
     assert projected["meeting"]["entity_revision"] == 3
     assert projected["attendance"]["meeting_event_id"] == one.json()["id"]
+    assert projected["attendance"]["meeting_revision"] == 1
     withdrawal = event(world, 4)
     withdrawal.update(type="entity.withdrawn", data={"reason_code": "incorrect"})
     withdrawal["evidence"]["kind"] = "operator_correction"
@@ -304,22 +312,7 @@ def test_replays_conflicts_and_reference_collisions_are_distinct(world, deps):
     conflict["event_id"] = "different-event"
     assert post(world, conflict).json() == {"code": "entity_revision_conflict"}
     with deps.sessions.begin() as session:
-        from app.forms.definition import compile_definition
-        from app.models import FormVersion
-
-        spec = compile_definition(
-            session.scalar(
-                sa.select(FormVersion).where(
-                    FormVersion.form_id
-                    == session.scalar(
-                        sa.select(__import__("app.models", fromlist=["Form"]).Form.id).where(
-                            __import__("app.models", fromlist=["Form"]).Form.slug == "synthetic"
-                        )
-                    )
-                )
-            ).definition
-        )
-        accept(session, spec, deps, key="second")
+        accept(session, world["spec"], deps, key="second")
         reference = session.scalar(
             sa.select(HandoffReference).where(HandoffReference.id != UUID(world["reference"]))
         )
@@ -441,3 +434,587 @@ def test_mcp_projection_confirmations_and_sensitive_opt_in(world, tmp_path):
         assert declined.is_error
     finally:
         live.close()
+
+
+def test_html_pages_native_controls_csrf_safe_retry_and_journey(world):
+    from admin_api_support import ORIGIN
+    from test_admin import csrf_token, login
+
+    client = world["writer"]
+    assert (
+        client.get(url_of("list_event_sources", slug="synthetic")).json()["items"][0]["name"]
+        == "Fonte sintética"
+    )
+    assert (
+        client.get(url_of("get_event_source", source_id=world["source"]["id"])).json()["enabled"]
+        is True
+    )
+    assert login(client).status_code == 303
+    csrf = csrf_token(client)
+    source_path = "/admin/event-sources/" + world["source"]["id"]
+    page = client.get(source_path)
+    assert page.status_code == 200, page.text
+    assert "<fieldset>" in page.text and 'type="checkbox"' in page.text
+    assert "Fonte sintética" in page.text and world["issued"]["secret"] not in page.text
+    refused = client.post(
+        source_path + "/credential",
+        data={
+            "csrf_token": csrf,
+            "expected_version": "2",
+            "name": "Credencial preservada",
+            "source_revision": "1",
+            "expiry_choice": "date",
+            "expires_at": "2026-10-20T00:00",
+            "idempotency_key": str(uuid4()),
+            "confirm": "true",
+        },
+        headers=ORIGIN,
+    )
+    assert refused.status_code == 422, refused.text
+    assert 'value="Credencial preservada"' in refused.text
+    assert 'value="2026-10-20T00:00"' in refused.text
+    assert world["issued"]["secret"] not in refused.text
+    assert post(world, event(world)).status_code == 201
+    path = "/admin/submissions/" + world["submission"] + "/journey"
+    journey = client.get(path)
+    assert journey.status_code == 200, journey.text
+    assert "25/10/2026 às 10:00" in journey.text
+    assert "America/Sao_Paulo" in journey.text
+    assert "author-personal-marker" not in journey.text
+    assert "Captura sem geração de PDF" in journey.text
+    assert 'method="get"' in journey.text
+    form = client.get("/admin/forms/synthetic")
+    assert "/event-sources" in form.text
+    capture = client.get("/admin/captures/" + world["submission"])
+    assert path in capture.text
+    assert client.post(path + "/erase", data={"confirm": "true"}, headers=ORIGIN).status_code == 403
+
+
+def test_credential_expiry_rotation_replay_and_policy_revision(world):
+    writer = world["writer"]
+    path = url_of("get_event_source", source_id=world["source"]["id"])
+    listing = writer.get(url_of("list_event_credentials", source_id=world["source"]["id"]))
+    assert listing.status_code == 200 and listing.json()["items"][0]["name"] == "Adaptadora"
+    assert "secret_hash" not in listing.text
+    repeated = writer.post(path + "/credentials", json=world["credential_body"])
+    assert (
+        repeated.status_code == 409
+        and repeated.json()["code"] == "credential_secret_already_issued"
+    )
+    assert "secret" not in repeated.json() and world["issued"]["secret"] not in repeated.text
+    rotate = {
+        "expected_version": "1",
+        "expires_at": None,
+        "idempotency_key": str(uuid4()),
+        "confirm": True,
+    }
+    rotated = writer.post(
+        "/admin/api/v1/event-credentials/" + world["issued"]["credential"]["id"] + "/rotate",
+        json=rotate,
+    )
+    assert rotated.status_code == 200, rotated.text
+    assert post(world, event(world)).status_code == 401
+    world["headers"] = {"Authorization": "Bearer " + rotated.json()["secret"]}
+    assert post(world, event(world)).status_code == 201
+    assert (
+        writer.post(
+            "/admin/api/v1/event-credentials/" + world["issued"]["credential"]["id"] + "/rotate",
+            json=rotate,
+        ).status_code
+        == 409
+    )
+    source = world["source"]
+    policy = copy.deepcopy(source["policy"])
+    policy["types"].remove("meeting.attendance_recorded")
+    changed = writer.put(
+        url_of("update_event_source", source_id=source["id"]),
+        json={
+            "expected_version": source["version"],
+            "name": source["name"],
+            "policy": policy,
+            "confirm": True,
+        },
+    )
+    assert (
+        changed.status_code == 200
+        and changed.json()["revision"] == 2
+        and changed.json()["enabled"] is False
+    )
+    assert post(world, event(world, 2)).status_code == 401
+    # Replay de criação não reativa nem reverte a política posteriormente alterada.
+    replay = writer.post("/admin/api/v1/forms/synthetic/event-sources", json=world["create_body"])
+    assert replay.json()["revision"] == 2 and replay.json()["enabled"] is False
+
+
+def test_source_permissions_and_namespace_credentials_never_substitute(world):
+    service = world["service"]
+    for raw in (world["resolver"].secret.get_secret_value(), "gp_fake", "lkh_fake", "lke_invalid"):
+        response = service.post(
+            "/journey/events",
+            content=b"{",
+            headers={"Authorization": "Bearer " + raw, "Content-Type": "application/json"},
+        )
+        assert response.status_code == 401
+    body = event(world)
+    body["evidence"]["kind"] = "dispatch_record"
+    assert post(world, body).status_code == 403
+    assert post(world, {**event(world), "source_revision": 2}).status_code == 409
+    assert post(world, {**event(world), "reference_id": str(uuid4())}).status_code == 404
+    response = service.post(
+        "/handoffs/resolve", json={"reference": "lkh_" + "x" * 43}, headers=world["headers"]
+    )
+    assert response.status_code == 401
+    assert (
+        service.post(
+            "/journey/events",
+            content=b"x",
+            headers={**world["headers"], "Content-Type": "text/plain"},
+        ).status_code
+        == 415
+    )
+    assert (
+        service.post(
+            "/journey/events",
+            content=b" " * 32769,
+            headers={**world["headers"], "Content-Type": "application/json"},
+        ).status_code
+        == 413
+    )
+
+
+def test_history_paginates_and_multiple_sources_do_not_merge(world):
+    for revision in (1, 3, 2):
+        assert post(world, event(world, revision)).status_code == 201
+    path = f"/admin/api/v1/submissions/{world['submission']}/journey/events"
+    first = world["writer"].get(path, params={"limit": 2})
+    assert first.status_code == 200
+    page = first.json()
+    assert len(page["items"]) == 2 and page["next_cursor"]
+    following = world["writer"].get(path, params={"limit": 2, "cursor": page["next_cursor"]}).json()
+    assert len(following["items"]) == 1 and following["next_cursor"] is None
+    assert {row["id"] for row in page["items"]}.isdisjoint(row["id"] for row in following["items"])
+    assert world["writer"].get(path, params={"type": "invalid"}).status_code == 422
+    assert world["writer"].get(path, params={"cursor": "invalid"}).status_code == 422
+    body = copy.deepcopy(world["create_body"])
+    body.update(namespace="second", idempotency_key=str(uuid4()))
+    source = world["writer"].post("/admin/api/v1/forms/synthetic/event-sources", json=body).json()
+    credential_body = {**world["credential_body"], "idempotency_key": str(uuid4())}
+    issued = (
+        world["writer"]
+        .post(f"/admin/api/v1/event-sources/{source['id']}/credentials", json=credential_body)
+        .json()
+    )
+    assert (
+        world["writer"]
+        .post(
+            f"/admin/api/v1/event-sources/{source['id']}/enabled",
+            json={"expected_version": "1", "enabled": True, "confirm": True},
+        )
+        .status_code
+        == 200
+    )
+    response = world["service"].post(
+        "/journey/events",
+        json=event(world),
+        headers={"Authorization": "Bearer " + issued["secret"]},
+    )
+    assert response.status_code == 201
+    assert len(read(world)["external_declared"]) == 2
+
+
+def test_blocked_gate_refuses_ingestion_and_enable_but_allows_pause_revoke(world, deps):
+    from app.models import DeploymentContract
+
+    with deps.sessions.begin() as session:
+        session.get(DeploymentContract, 1).phase = "blocked"
+    assert post(world, event(world)).status_code == 503
+    path = "/admin/api/v1/event-sources/" + world["source"]["id"] + "/enabled"
+    assert (
+        world["writer"]
+        .post(path, json={"expected_version": "2", "enabled": True, "confirm": True})
+        .status_code
+        == 503
+    )
+    assert (
+        world["writer"]
+        .post(path, json={"expected_version": "2", "enabled": False, "confirm": True})
+        .status_code
+        == 200
+    )
+    revoke = "/admin/api/v1/event-credentials/" + world["issued"]["credential"]["id"] + "/revoke"
+    assert (
+        world["writer"].post(revoke, json={"expected_version": "1", "confirm": True}).status_code
+        == 200
+    )
+
+
+def test_synthetic_complete_flow_declares_facts_without_generating_job(world, deps):
+    from urllib.parse import parse_qs, urlsplit
+
+    from app.forms import starter
+    from app.forms.definition import compile_definition
+
+    definition = starter.definition(slug="synthetic", title="Sintético", generation="none")
+    intake = world["writer"].post(
+        "/v1/forms/synthetic/submissions",
+        json={
+            "answers": definition["examples"]["answers"],
+            "consent": {
+                "privacy": True,
+                "text_version": compile_definition(definition).consent_text_version,
+            },
+        },
+        headers={"Idempotency-Key": "full-flow-http"},
+    )
+    assert intake.status_code == 202, intake.text
+    bearer = parse_qs(urlsplit(intake.json()["completion"]["url"]).query)["leadkit_ref"][0]
+    resolved = world["service"].post(
+        "/handoffs/resolve",
+        json={"reference": bearer},
+        headers={"Authorization": "Bearer " + world["resolver"].secret.get_secret_value()},
+    )
+    assert resolved.status_code == 200, resolved.text
+    world["reference"], world["submission"] = (
+        resolved.json()["reference_id"],
+        resolved.json()["submission_id"],
+    )
+    for kind, identifier in [
+        ("context", "context"),
+        ("invitation", "invitation-1"),
+        ("meeting", "meeting-1"),
+    ]:
+        assert post(world, event(world, kind=kind, identifier=identifier)).status_code == 201
+    assert {row["entity_kind"] for row in read(world)["external_declared"]} == {
+        "context",
+        "invitation",
+        "meeting",
+    }
+    for revision in (3, 2):
+        assert post(world, event(world, revision)).status_code == 201
+    for kind in ("attendance", "notification", "receipt"):
+        assert post(world, event(world, kind=kind, identifier=kind + "-1")).status_code == 201
+    assert read(world)["job"] is None
+    assert len(read(world)["external_declared"]) == 6
+    with deps.sessions.begin() as session:
+        reference = session.get(HandoffReference, UUID(world["reference"]))
+        reference.created_at, reference.expires_at = (
+            NOW - timedelta(days=2),
+            NOW - timedelta(days=1),
+        )
+        reference.token_ciphertext = None
+    assert post(world, event(world, 4)).status_code == 201
+
+
+@pytest.mark.parametrize("world", [{"generation": "pdf", "release_mode": "manual"}], indirect=True)
+def test_commercial_events_do_not_release_pdf_or_extend_job_retention(world, deps):
+    from app.models import Job, Submission
+
+    with deps.sessions() as session:
+        job = session.scalar(sa.select(Job).where(Job.submission_id == UUID(world["submission"])))
+        original = (
+            job.updated_at,
+            job.expires_at,
+            session.get(Submission, job.submission_id).created_at,
+        )
+    for kind in ("invitation", "meeting", "attendance", "receipt"):
+        assert post(world, event(world, kind=kind, identifier=kind + "-1")).status_code == 201
+    view = read(world)
+    assert (
+        next(fact for fact in view["local_facts"] if fact["type"] == "current_plan_authorization")[
+            "state"
+        ]
+        == "held"
+    )
+    with deps.sessions() as session:
+        job = session.scalar(sa.select(Job).where(Job.submission_id == UUID(world["submission"])))
+        assert (
+            job.updated_at,
+            job.expires_at,
+            session.get(Submission, job.submission_id).created_at,
+        ) == original
+
+
+def test_query_without_reference_returns_local_facts_without_creating_link(world, deps):
+    with deps.sessions.begin() as session:
+        session.execute(
+            sa.delete(HandoffReference).where(HandoffReference.id == UUID(world["reference"]))
+        )
+    view = read(world)
+    assert view["reference_id"] is None and view["external_declared"] == []
+    assert view["local_facts"][0]["state"] == "persisted"
+    assert post(world, event(world)).status_code == 404
+
+
+def test_same_entity_revision_concurrently_conflicts_without_overwrite(world):
+    from concurrent.futures import ThreadPoolExecutor
+
+    first, second = event(world), event(world)
+    second["event_id"] = "another-id"
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda body: post(world, body), [first, second]))
+    assert sorted(response.status_code for response in results) == [201, 409]
+    assert next(response for response in results if response.status_code == 409).json() == {
+        "code": "entity_revision_conflict"
+    }
+
+
+def test_ingestion_racing_erasure_never_rebuilds_external_data(world):
+    from concurrent.futures import ThreadPoolExecutor
+
+    assert post(world, event(world)).status_code == 201
+    view = read(world)
+    command = {
+        "expected_journey_version": view["journey_version"],
+        "expected_handoff_version": view["reference_version"],
+        "confirm": True,
+    }
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        ingest = pool.submit(post, world, event(world, 2))
+        erase = pool.submit(
+            world["writer"].post,
+            f"/admin/api/v1/submissions/{world['submission']}/journey/erase",
+            json=command,
+        )
+        ingested, erased = ingest.result(), erase.result()
+    assert ingested.status_code in (201, 404)
+    assert erased.status_code in (200, 409)
+    if erased.status_code == 409:
+        view = read(world)
+        command.update(
+            expected_journey_version=view["journey_version"],
+            expected_handoff_version=view["reference_version"],
+        )
+        assert (
+            world["writer"]
+            .post(f"/admin/api/v1/submissions/{world['submission']}/journey/erase", json=command)
+            .status_code
+            == 200
+        )
+    assert all(
+        item["state"] == "erased"
+        for item in read(world, include_lead_data=True)["external_declared"]
+    )
+    assert post(world, event(world, 3)).status_code == 404
+
+
+def test_authenticated_event_rate_limit_has_retry_after(world):
+    for _ in range(60):
+        response = post(world, event(world))
+        assert response.status_code in (200, 201)
+    response = post(world, event(world))
+    assert response.status_code == 429 and int(response.headers["Retry-After"]) > 0
+
+
+@pytest.mark.parametrize(
+    "world", [{}, {"generation": "pdf", "release_mode": "manual"}], indirect=True
+)
+def test_prior_runtime_two_retains_and_purges_additive_children(world, deps, tmp_path):
+    """Executa código2 anterior isolado: ignora eventos, recusa migração e purga por cascata."""
+    import json
+    import os
+    import subprocess
+    import sys
+    import tarfile
+
+    from app.models import Job, Submission
+
+    assert post(world, event(world)).status_code == 201
+    with deps.sessions.begin() as session:
+        submission = session.get(Submission, UUID(world["submission"]))
+        submission.created_at = NOW - timedelta(days=400)
+        job = session.scalar(sa.select(Job).where(Job.submission_id == submission.id))
+        if job:
+            job.updated_at, job.expires_at = NOW - timedelta(days=400), NOW - timedelta(days=1)
+    revision = "b4e2726d2ba0abb8b6c0315f0431111f9823351d"
+    archive, runtime = tmp_path / "runtime2.tar", tmp_path / "runtime2"
+    archived = subprocess.run(
+        ["git", "archive", "--format=tar", "-o", str(archive), revision, "app"],
+        capture_output=True,
+        check=False,
+    )
+    assert archived.returncode == 0, (
+        "A referência pública do runtime2 deve estar disponível no checkout completo."
+    )
+    runtime.mkdir()
+    with tarfile.open(archive) as files:
+        files.extractall(runtime, filter="data")
+    settings = tmp_path / "synthetic-settings.json"
+    settings.write_text(deps.settings.model_dump_json())
+    settings.chmod(0o600)
+    script = """
+import json, sys
+from datetime import datetime
+from pathlib import Path
+from types import SimpleNamespace
+sys.path.insert(0, sys.argv[1])
+from app.db import make_engine, make_session_factory
+from app.settings import Settings
+from app.deployment_contract import assert_contract, BINARY_CONTRACT
+from app.migrations.compatibility import validate_database
+from app.migrations.contracts import SIGNATURES
+from app.retention import purge_expired
+assert BINARY_CONTRACT == 2
+assert '0018_journey_events' not in SIGNATURES
+settings = Settings.model_validate_json(Path(sys.argv[2]).read_text())
+engine = make_engine(settings.database_url)
+sessions = make_session_factory(engine)
+with sessions() as session:
+    assert_contract(session, required=2)
+    try:
+        validate_database(session.connection(), SIGNATURES)
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError('O migrador anterior deve recusar o head novo.')
+report = purge_expired(SimpleNamespace(settings=settings, sessions=sessions), now=datetime.fromisoformat(sys.argv[3]))
+assert report.captures_deleted + report.requests_deleted == 1
+engine.dispose()
+print(json.dumps({'runtime': 2, 'purged': 1, 'old_migrator_refused': True}))
+"""
+    result = subprocess.run(
+        [sys.executable, "-I", "-c", script, str(runtime), str(settings), NOW.isoformat()],
+        cwd=runtime,
+        env={**os.environ, "PYTHONPATH": ""},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, "A execução isolada do runtime2 falhou: " + result.stderr[-1200:]
+    assert json.loads(result.stdout)["purged"] == 1
+    assert post(world, event(world)).status_code == 404
+    with deps.sessions() as session:
+        from app.models import JourneyEvent
+
+        assert session.scalar(sa.select(sa.func.count()).select_from(JourneyEvent)) == 0
+
+
+@pytest.mark.parametrize("value", [True, 1.5, "1", 2147483648])
+def test_event_entity_revision_requires_a_bounded_json_integer(world, value):
+    body = event(world)
+    body["entity"]["revision"] = value
+    assert post(world, body).status_code == 422
+
+
+@pytest.mark.parametrize("field,value", [("occurred_at", 1792497600), ("schema_version", True)])
+def test_event_contract_does_not_coerce_numeric_time_or_boolean_version(world, field, value):
+    body = event(world)
+    body[field] = value
+    assert post(world, body).status_code == 422
+
+
+@pytest.mark.parametrize(
+    "world", [{}, {"generation": "pdf", "release_mode": "manual"}], indirect=True
+)
+def test_ingestion_racing_retention_leaves_no_recreated_diagnosis(world, deps):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from app.models import Job, Submission
+    from app.retention import purge_expired
+
+    assert post(world, event(world)).status_code == 201
+    with deps.sessions.begin() as session:
+        submission = session.get(Submission, UUID(world["submission"]))
+        submission.created_at = NOW - timedelta(days=400)
+        job = session.scalar(sa.select(Job).where(Job.submission_id == submission.id))
+        if job:
+            job.updated_at, job.expires_at = NOW - timedelta(days=400), NOW - timedelta(days=1)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        ingest = pool.submit(post, world, event(world, 2))
+        purge = pool.submit(purge_expired, deps, now=NOW)
+        ingested = ingest.result()
+        purge.result()
+    assert ingested.status_code in (201, 404, 503)
+    purge_expired(deps, now=NOW)
+    assert post(world, event(world)).status_code == 404
+    assert (
+        world["writer"].get(f"/admin/api/v1/submissions/{world['submission']}/journey").status_code
+        == 404
+    )
+
+
+def test_mcp_manages_its_own_source_and_credential_with_real_confirmation(world, tmp_path):
+    from admin_mcp_live import Live
+    from admin_mcp_world import Asker
+
+    live = Live(world["writer"], tmp_path, lead_data=True)
+    try:
+        arguments = {
+            **world["create_body"],
+            "namespace": "mcp-synthetic",
+            "idempotency_key": str(uuid4()),
+        }
+        arguments.pop("confirm")
+        arguments["slug"] = "synthetic"
+        source = live.ok("create_event_source", arguments, Asker(True))
+        assert source["enabled"] is False
+        issued = live.ok(
+            "create_event_credential",
+            {
+                "source_id": source["id"],
+                "name": "MCP sintética",
+                "source_revision": 1,
+                "expected_source_version": source["version"],
+                "expires_at": None,
+                "idempotency_key": str(uuid4()),
+            },
+            Asker(True),
+        )
+        assert issued["secret"].startswith("lke_")
+        enabled = live.ok(
+            "set_event_source_enabled",
+            {"source_id": source["id"], "expected_version": source["version"], "enabled": True},
+            Asker(True),
+        )
+        assert enabled["enabled"] is True
+        response = world["service"].post(
+            "/journey/events",
+            json=event(world, kind="context", identifier="context"),
+            headers={"Authorization": "Bearer " + issued["secret"]},
+        )
+        assert response.status_code == 201
+        viewed = live.ok(
+            "get_submission_journey",
+            {"submission_id": world["submission"], "include_lead_data": True},
+        )
+        assert "contact-personal-marker" in str(viewed)
+        safe = live.ok("get_submission_journey", {"submission_id": world["submission"]})
+        assert "personal-marker" not in str(safe)
+        erased = live.ok(
+            "erase_submission_journey",
+            {
+                "submission_id": world["submission"],
+                "expected_journey_version": safe["journey_version"],
+                "expected_handoff_version": safe["reference_version"],
+            },
+            Asker(True),
+        )
+        assert erased["erased"] is True
+        assert post(world, event(world)).status_code == 404
+    finally:
+        live.close()
+
+
+def test_credential_explicit_nullable_expiry_is_enforced_and_expired_key_is_refused(world):
+    path = url_of("create_event_credential", source_id=world["source"]["id"])
+    body = {
+        **world["credential_body"],
+        "expected_source_version": world["source"]["version"],
+        "idempotency_key": str(uuid4()),
+    }
+    body.pop("expires_at")
+    assert world["writer"].post(path, json=body).status_code == 422
+    body["expires_at"] = (NOW + timedelta(seconds=1)).isoformat()
+    created = world["writer"].post(path, json=body)
+    assert created.status_code == 201
+    with TestClient(
+        create_integration_api(clock=lambda: (NOW + timedelta(seconds=2)).timestamp())
+    ) as client:
+        expired = client.post(
+            "/journey/events",
+            content=b"{",
+            headers={
+                "Authorization": "Bearer " + created.json()["secret"],
+                "Content-Type": "application/json",
+            },
+        )
+    assert expired.status_code == 401 and expired.json() == {"code": "invalid_credentials"}

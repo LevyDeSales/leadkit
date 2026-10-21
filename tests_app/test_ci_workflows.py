@@ -1477,7 +1477,7 @@ def test_post_ddl_rehearsal_accepts_only_the_composed_schema_and_blocked_floor(t
     script = (
         """psql_compat() {
       case "$1" in
-        *version_num*) echo 0017_continuation_release ;;
+        *version_num*) echo 0018_journey_events ;;
         *) echo 2:blocked ;;
       esac
     }

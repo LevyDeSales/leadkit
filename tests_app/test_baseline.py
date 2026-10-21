@@ -78,7 +78,7 @@ def assert_read_only(statements: list[str]) -> None:
 
 def test_public_revision_graph_has_one_seedless_baseline() -> None:
     scripts = ScriptDirectory.from_config(config())
-    assert scripts.get_heads() == ["0017_continuation_release"]
+    assert scripts.get_heads() == ["0018_journey_events"]
     assert scripts.get_bases() == ["0012"]
     assert scripts.get_revision("0012").down_revision is None
     assert not (MIGRATIONS / "legacy_forms").exists()
@@ -92,7 +92,7 @@ def test_empty_database_gets_all_tables_and_no_business_rows(fresh: sa.Engine) -
         }
         assert connection.exec_driver_sql(
             "SELECT version_num FROM alembic_version"
-        ).scalars().all() == ["0017_continuation_release"]
+        ).scalars().all() == ["0018_journey_events"]
         assert all(
             connection.exec_driver_sql(f'SELECT count(*) FROM "{table}"').scalar_one() == 0
             for table in Base.metadata.tables
@@ -192,16 +192,14 @@ def test_future_contract_can_be_prepared_from_public_sources(
 
     command.upgrade(config(), "head")
     with fresh.begin() as connection:
-        assert (
-            validate_database(connection, load_contracts(MIGRATIONS)) == "0017_continuation_release"
-        )
+        assert validate_database(connection, load_contracts(MIGRATIONS)) == "0018_journey_events"
         with Operations.context(MigrationContext.configure(connection)) as operations:
             operations.add_column(
                 "jobs", sa.Column("contract_example", sa.Integer(), nullable=True)
             )
         signature = schema_signature(connection)
     contracts = load_contracts(MIGRATIONS)
-    contracts["0018_example"] = signature
+    contracts["0019_example"] = signature
     directory = tmp_path / "public-reference"
     for relative in (
         "env.py",
@@ -213,6 +211,7 @@ def test_future_contract_can_be_prepared_from_public_sources(
         "versions/0015_capture_delivery.py",
         "versions/0016_plan_audiences.py",
         "versions/0017_continuation_release.py",
+        "versions/0018_journey_events.py",
     ):
         target = directory / relative
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -220,8 +219,8 @@ def test_future_contract_can_be_prepared_from_public_sources(
     (directory / "contracts.py").write_text(
         "SIGNATURES = " + pprint.pformat(contracts, sort_dicts=True)
     )
-    (directory / "versions" / "0018_example.py").write_text(
-        'from alembic import op\nimport sqlalchemy as sa\nrevision = "0018_example"\ndown_revision = "0017_continuation_release"\n'
+    (directory / "versions" / "0019_example.py").write_text(
+        'from alembic import op\nimport sqlalchemy as sa\nrevision = "0019_example"\ndown_revision = "0018_journey_events"\n'
         'def upgrade():\n    op.add_column("jobs", sa.Column("contract_example", sa.Integer(), nullable=True))\n'
     )
     reset_test_schema(fresh.url.render_as_string(hide_password=False))
@@ -231,9 +230,9 @@ def test_future_contract_can_be_prepared_from_public_sources(
     with fresh.connect() as connection:
         assert (
             connection.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one()
-            == "0018_example"
+            == "0019_example"
         )
-        assert validate_database(connection, contracts) == "0018_example"
+        assert validate_database(connection, contracts) == "0019_example"
     assert_read_only(statements_during(lambda: command.upgrade(proposed, "head")))
 
 
@@ -350,6 +349,7 @@ def test_artifact_migration_preserves_old_writes_and_verifies_history_only_on_do
         "0015_capture_delivery",
         "0016_plan_audiences",
         "0017_continuation_release",
+        "0018_journey_events",
     ):
         command.upgrade(config(), revision)
         with fresh.connect() as connection:
