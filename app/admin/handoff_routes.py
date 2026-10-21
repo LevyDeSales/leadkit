@@ -1,5 +1,6 @@
 """Página mínima de gestão, protegida pela sessão e CSRF existentes do admin."""
 
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 from fastapi import Request
@@ -8,6 +9,8 @@ from pydantic import ValidationError
 
 from app import handoff_receivers, handoffs, integration_credentials
 from app.admin.auth import instant
+from app.admin.localtime import LOCAL_TZ
+from app.admin.views import moment
 from app.deployment_contract import DeploymentContractError
 from app.deps import get_deps
 from app.destinations import SecretCipher
@@ -19,6 +22,55 @@ from app.handoff_types import (
     SaveReceiver,
     SetReceiverEnabled,
 )
+
+TTL_OPTIONS = (
+    ("60", "1 minuto"),
+    ("300", "5 minutos"),
+    ("900", "15 minutos"),
+    ("1800", "30 minutos"),
+    ("3600", "1 hora"),
+    ("7200", "2 horas"),
+    ("21600", "6 horas"),
+    ("43200", "12 horas"),
+    ("86400", "1 dia"),
+    ("172800", "2 dias"),
+    ("259200", "3 dias"),
+    ("604800", "7 dias"),
+)
+
+
+def _duration_label(raw):
+    try:
+        seconds = int(raw)
+        if not 60 <= seconds <= 604800:
+            raise ValueError
+    except (ValueError, TypeError):
+        return "Prazo informado: confira a validade"
+    parts = []
+    for unit, singular, plural in (
+        (86400, "dia", "dias"),
+        (3600, "hora", "horas"),
+        (60, "minuto", "minutos"),
+        (1, "segundo", "segundos"),
+    ):
+        amount, seconds = divmod(seconds, unit)
+        if amount:
+            parts.append(f"{amount} {singular if amount == 1 else plural}")
+    return " e ".join(parts)
+
+
+def _expires_at(choice, text):
+    if choice == "none":
+        return None
+    try:
+        if choice != "date":
+            raise ValueError
+        parsed = datetime.fromisoformat(text)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=LOCAL_TZ)
+        return parsed.astimezone(UTC)
+    except (ValueError, TypeError):
+        raise HandoffError("invalid_expiry", status=422, field="expires_at") from None
 
 
 def _render(request, slug, *, status=200, message=None, created=None, values=None):
@@ -41,6 +93,13 @@ def _render(request, slug, *, status=200, message=None, created=None, values=Non
                     reference = None
             except (ValueError, HandoffError):
                 message = "Encaminhamento não encontrado neste formulário."
+    values = values or {}
+    ttl = str(
+        values.get("reference_ttl_seconds", receiver.reference_ttl_seconds if receiver else 604800)
+    )
+    options = list(TTL_OPTIONS)
+    if ttl not in {value for value, _ in options}:
+        options.insert(0, (ttl, _duration_label(ttl)))
     return _page(
         request,
         "admin/form_handoff.html",
@@ -51,7 +110,12 @@ def _render(request, slug, *, status=200, message=None, created=None, values=Non
             "handoff": reference,
             "message": message,
             "created": created,
-            "values": values or {},
+            "values": values,
+            "ttl_options": options,
+            "selected_ttl": ttl,
+            "credential_expiries": {item.id: moment(item.expires_at) for item in credentials},
+            "handoff_expiry": moment(reference.expires_at) if reference else None,
+            "handoff_revoked": moment(reference.revoked_at) if reference else None,
             "idempotency_key": str(uuid4()),
         },
         status_code=status,
@@ -120,9 +184,9 @@ def register(protected):
                             name=first("name"),
                             expected_receiver_version=expected,
                             receiver_revision=first("receiver_revision"),
-                            expires_at=None
-                            if first("expiry_choice", "none") == "none"
-                            else first("expires_at"),
+                            expires_at=_expires_at(
+                                first("expiry_choice", "none"), first("expires_at")
+                            ),
                             idempotency_key=first("idempotency_key"),
                             confirm=confirmed,
                         ),
@@ -135,9 +199,9 @@ def register(protected):
                         UUID(first("credential_id")),
                         command=RotateCredential(
                             expected_version=expected,
-                            expires_at=None
-                            if first("expiry_choice", "none") == "none"
-                            else first("expires_at"),
+                            expires_at=_expires_at(
+                                first("expiry_choice", "none"), first("expires_at")
+                            ),
                             idempotency_key=first("idempotency_key"),
                             confirm=confirmed,
                         ),
@@ -170,7 +234,7 @@ def register(protected):
                 slug,
                 status=422,
                 values=values,
-                message="Confira os campos informados. Datas precisam de fuso, como 2027-01-01T12:00:00Z.",
+                message="Confira os campos informados. Escolha data e hora futuras em Brasília, ou Sem vencimento.",
             )
         except ValueError:
             return _render(

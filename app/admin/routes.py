@@ -416,11 +416,32 @@ def _detail_page(
         )
     if detail is None:
         return _error(request, 404, JOB_NOT_FOUND)
+    from urllib.parse import quote, urlencode
+
+    import sqlalchemy as sa
+
+    from app.models import Job, Submission
+
+    with deps.sessions() as db:
+        source = db.execute(
+            sa.select(Submission.id, Submission.form_slug)
+            .join(Job, Job.submission_id == Submission.id)
+            .where(Job.public_id == public_id)
+        ).first()
+    if source is None:
+        return _error(request, 404, JOB_NOT_FOUND)
+    handoff_url = (
+        "/admin/forms/"
+        + quote(source.form_slug, safe="")
+        + "/handoff?"
+        + urlencode({"submission_id": str(source.id)})
+    )
     return _page(
         request,
         "admin/job.html",
         {
             "job": detail,
+            "handoff_url": handoff_url,
             "errors": errors or {},
             "reason": reason,
             "release_form": release_form

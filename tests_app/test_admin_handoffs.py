@@ -86,3 +86,85 @@ def test_editor_selects_observed_receiver_without_manual_uuid_and_preserves_save
     assert selected.url == "https://example.test/observed"
     assert selected.receiver_revision == "2"
     assert original.receiver_revision == "1"
+
+
+def test_credential_expiry_uses_brasilia_picker_and_preserves_invalid_input(deps, api_client):
+    from datetime import UTC, datetime
+
+    import sqlalchemy as sa
+
+    from app.models import IntegrationCredential
+
+    with deps.sessions.begin() as session:
+        configured(session)
+    client = api_client("total")
+    login(client)
+    csrf = csrf_token(client)
+    page = "/admin/forms/synthetic/handoff"
+    shown = client.get(page)
+    assert 'type="datetime-local"' in shown.text and "Brasília" in shown.text
+    body = {
+        "csrf_token": csrf,
+        "expected_version": "2",
+        "receiver_revision": "1",
+        "name": "Horário de Brasília",
+        "expiry_choice": "date",
+        "expires_at": "2030-01-02T10:30",
+        "idempotency_key": str(uuid4()),
+        "confirm": "true",
+    }
+    invalid = client.post(
+        page + "/create", data={**body, "expires_at": "data-inválida"}, headers=ORIGIN
+    )
+    assert invalid.status_code == 422
+    assert 'value="data-inválida"' in invalid.text and 'value="Horário de Brasília"' in invalid.text
+    created = client.post(page + "/create", data=body, headers=ORIGIN)
+    assert created.status_code == 200
+    with deps.sessions() as session:
+        expiry = session.scalar(
+            sa.select(IntegrationCredential.expires_at).where(
+                IntegrationCredential.name == body["name"]
+            )
+        )
+        assert expiry == datetime(2030, 1, 2, 13, 30, tzinfo=UTC)
+
+
+def test_receiver_duration_uses_human_options_without_rounding_api_values(deps, api_client):
+    from test_handoffs import NOW
+
+    from app import handoff_receivers
+    from app.handoff_types import SaveReceiver
+
+    with deps.sessions.begin() as session:
+        configured(session)
+        handoff_receivers.save_receiver(
+            session,
+            "synthetic",
+            actor="teste",
+            now=NOW,
+            command=SaveReceiver(
+                expected_version="2",
+                name="Atendimento",
+                entry_url="https://example.test/continuar",
+                reference_ttl_seconds=61,
+                confirm=True,
+            ),
+        )
+    client = api_client("total")
+    login(client)
+    page = "/admin/forms/synthetic/handoff"
+    shown = client.get(page)
+    assert "<select" in shown.text and "7 dias" in shown.text
+    assert 'value="61" selected' in shown.text
+    assert "1 minuto e 1 segundo" in shown.text
+    body = {
+        "csrf_token": csrf_token(client),
+        "expected_version": "3",
+        "name": "Atendimento",
+        "entry_url": "https://example.test/continuar",
+        "reference_ttl_seconds": "61",
+        "confirm": "true",
+    }
+    assert client.post(page + "/save", data=body, headers=ORIGIN).status_code == 303
+    with deps.sessions() as session:
+        assert handoff_receivers.get_receiver(session, "synthetic").reference_ttl_seconds == 61
