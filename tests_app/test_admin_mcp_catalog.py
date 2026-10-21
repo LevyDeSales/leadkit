@@ -48,7 +48,7 @@ def selected(role: str, lead_data: bool = False) -> dict[str, ToolSpec]:
 def test_the_catalog_has_exactly_the_operation_ids_of_the_file() -> None:
     assert LOADED.skipped == {}
     assert set(TOOLS) == operation_ids(DOCUMENT)
-    assert len(TOOLS) == 72
+    assert len(TOOLS) == len(OPERATIONS)
 
 
 def test_the_list_of_exceptions_starts_empty() -> None:
@@ -116,7 +116,7 @@ def test_a_leitura_key_registers_only_the_leitura_tools() -> None:
     found = selected("leitura")
 
     assert set(found) == LEITURA
-    assert len(found) == 33
+    assert len(found) == len(LEITURA)
     assert all(tool.role == "leitura" for tool in found.values())
     assert {"publish_form_draft", "upload_asset", "download_job_pdf"}.isdisjoint(found)
 
@@ -125,14 +125,14 @@ def test_a_total_key_registers_all_but_the_lead_pdf_while_the_option_is_off() ->
     found = selected("total")
 
     assert set(found) == operation_ids(DOCUMENT) - {"download_job_pdf", "get_job_plan_projection"}
-    assert len(found) == 70
+    assert len(found) == len(OPERATIONS) - 2
 
 
 def test_the_lead_data_option_registers_the_lead_pdf_for_a_total_key() -> None:
     found = selected("total", lead_data=True)
 
     assert set(found) == operation_ids(DOCUMENT)
-    assert len(found) == 72
+    assert len(found) == len(OPERATIONS)
 
 
 def test_the_option_does_nothing_for_a_leitura_key() -> None:
@@ -212,6 +212,8 @@ def test_every_lead_data_operation_is_either_flagged_or_withheld_without_the_opt
         "get_job_plan_projection",
         "list_captures",
         "get_capture",
+        "get_submission_journey",
+        "list_submission_journey_events",
     }
 
     found = selected("total")
@@ -242,7 +244,15 @@ def test_the_marked_tools_are_exactly_the_destructive_or_external_operations() -
     }
 
     assert {name for name, tool in TOOLS.items() if tool.marked} == expected
-    assert len(expected) == 30
+    assert expected >= {
+        "create_event_source",
+        "update_event_source",
+        "set_event_source_enabled",
+        "create_event_credential",
+        "rotate_event_credential",
+        "revoke_event_credential",
+        "erase_submission_journey",
+    }
 
 
 def test_every_marked_tool_offers_confirm_as_an_optional_boolean_and_says_what_it_does() -> None:

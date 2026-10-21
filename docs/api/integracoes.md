@@ -49,3 +49,7 @@ Filtro de formulário desconhecido retorna `404 not_found`; conector, limite ou 
 `422 validation_failed`. API sem chave válida retorna `401`; limite de uso, `429` com `Retry-After`;
 banco indisponível, `503 unavailable`, sem falsa lista vazia. A tela sem sessão redireciona ao login.
 Veja a [matriz de cobertura](cobertura.md#central-de-integrações) e o [OpenAPI](openapi.json).
+
+A [jornada externa](jornada.md) recebe declarações autenticadas em um contrato separado de
+resolução de encaminhamento e da administração. Sua fonte e credencial não autorizam transportes,
+liberação de plano ou acesso às respostas. O esquema de integrações documenta ambos os serviços.

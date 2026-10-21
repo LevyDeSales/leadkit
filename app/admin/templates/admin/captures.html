@@ -7,6 +7,7 @@
 {% if detail %}
 <section class="box"><h2>{{ detail.form_slug }} · versão {{ detail.form_version_number }}</h2>
 <p>Capturada em {{ detail.created_at }} · {{ detail.submission_id }}</p>
+<a class="btn btn--secondary" href="/admin/submissions/{{ detail.submission_id }}/journey">Jornada</a>
 <a class="btn btn--secondary" href="/admin/forms/{{ detail.form_slug }}/handoff?submission_id={{ detail.submission_id }}">Consultar encaminhamento</a>
 <dl>{% for key, value in detail.lead_data.identity.items() %}<dt>{{ key }}</dt><dd>{{ value or '—' }}</dd>{% endfor %}</dl>
 <h3>Entregas às integrações</h3>

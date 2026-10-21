@@ -85,3 +85,18 @@ exista ou não uma referência utilizável.
 
 **Credencial de serviço:** capacidade que autentica um receptor para resolver referências no
 âmbito autorizado; não autentica a participante nem herda permissões administrativas.
+
+**Fonte de eventos:** serviço autorizado a declarar certos fatos externos para um formulário,
+receptora e revisão histórica determinados.
+
+**Evento externo:** declaração conservada com ocorrência, recebimento e evidência mínima. Sua
+aceitação técnica não atesta a verdade comercial do relato.
+
+**Projeção da jornada:** leitura dos fatos conservados por fonte e entidade, distinguindo fatos
+locais de declarações externas, sem um estado universal de atendimento.
+
+**Revisão da entidade externa:** sequência de estados completos atribuída pela fonte à mesma
+entidade no mesmo diagnóstico, independente da ordem de chegada.
+
+**Declaração de comparecimento:** relato de presença, ausência ou estado não informado associado
+à revisão exata de um agendamento da mesma fonte. Não decorre de convite ou agendamento.

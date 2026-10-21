@@ -236,3 +236,11 @@ emissões respeitam o prazo do pedido; revogação não retira URLs ou cópias j
 continua responsável pela limpeza de dados nos receptores. O proxy precisa omitir query, headers
 Authorization e cookies das rotas de capacidade, e corpos do resolvedor de encaminhamento dos logs;
 o filtro Python de access log não configura nem comprova o proxy externo.
+
+## Jornada externa de atendimento
+
+A jornada de cada submissão, inclusive captura sem PDF, separa fatos locais de declarações externas.
+Fontes nascem pausadas, com credenciais próprias e autoridade histórica explícita. O painel em
+Eventos externos e Jornada usa os mesmos serviços da API de admin/MCP; ingestão é uma API de serviço
+separada. Veja [contrato, autoridade e retenção](../docs/api/jornada.md). Eventos não executam
+liberação, geração, agenda ou mensagens; integração real exige prova própria do adaptador.

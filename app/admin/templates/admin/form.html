@@ -36,6 +36,7 @@
     </p>
   </div>
   <div class="badges">{{ m.badge(form.status) }}{% if form.draft %}{{ m.badge(form.draft) }}{% endif %}</div>
+  <p><a class="btn btn--secondary" href="/admin/forms/{{ form.slug }}/event-sources">Eventos externos</a></p>
   <p><a class="btn btn--secondary" href="/admin/forms/{{ form.slug }}/handoff">Encaminhamento</a></p>
   <p class="btns"><a class="btn btn--secondary" href="{{ form.duplicate_url }}">{{ m.icon('copy') }}Duplicar…</a></p>
 </header>

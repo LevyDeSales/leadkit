@@ -44,7 +44,7 @@ def test_service_schema_is_separate_and_contains_no_administrative_tools():
     assert schema == json.loads(
         (Path(__file__).resolve().parents[1] / "docs/api/integrations-openapi.json").read_text()
     )
-    assert list(schema["paths"]) == ["/handoffs/resolve"]
+    assert list(schema["paths"]) == ["/handoffs/resolve", "/journey/events"]
     assert schema["paths"]["/handoffs/resolve"]["post"]["security"] == [
         {"IntegrationCredentialAuth": []}
     ]
