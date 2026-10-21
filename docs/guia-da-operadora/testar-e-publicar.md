@@ -1,0 +1,68 @@
+# Testar, publicar e recuperar versões
+
+[Sumário do guia](README.md) · [Configurar](configurar-formulario.md) · [Acompanhar respostas](acompanhar-respostas.md)
+
+## Conferir sem receber um envio real
+
+**Onde entrar:** rascunho salvo do formulário.
+
+1. Abra “Ver a página no celular”. Percorra as etapas e marque respostas diferentes para conferir as condições. Nada é enviado, e essa prévia não valida as respostas. Abrir uma etapa pela lista reinicia as marcações.
+2. Em “Depois de salvar as respostas”, abra “Conferir conclusão salva”. Confira mensagem, rótulo e destino; o botão fica desativado e não há redirecionamento externo.
+3. Para PDF, confira também [imagens e aparência](imagens-e-pdf.md).
+
+**Resultado:** você confere a apresentação sem criar um pedido ou captura. Uma prévia correta ainda não comprova que a geração funciona.
+
+**Se algo não refletir sua edição:** volte e salve. A prévia das perguntas e da conclusão usa o rascunho salvo.
+
+## Validar somente captura
+
+**Onde entrar:** rascunho com “Somente salvar respostas” → “Testar o rascunho”.
+
+1. Em “Teste local”, deixe “Respostas JSON (em branco: exemplo)” vazio para usar o exemplo salvo ou peça ajuda para informar outras respostas fictícias nesse formato.
+2. Escolha “Data simulada”, se precisar conferir regras de uma data específica.
+3. Clique em “Validar captura”.
+4. Confira “Respostas válidas”, pontuação e mensagem de conclusão; use “Conferir conclusão” para a apresentação.
+
+**Resultado:** validação local, sem inteligência artificial, PDF, envio persistido ou entrega a uma integração. O teste não aparecerá como uma captura recebida.
+
+**Se recusar:** siga o link de erro de respostas ou data e corrija o exemplo ou as regras. Se o erro for da estrutura JSON, peça ajuda técnica.
+
+## Testar a geração do PDF
+
+**Onde entrar:** rascunho com geração de PDF → “Testar o rascunho”.
+
+1. Deixe “Respostas (JSON)” em branco para usar as respostas de exemplo, sempre fictícias; use “Data simulada” quando necessário.
+2. Use “Montar o prompt” para ler o que será enviado à inteligência artificial e “Calcular a pontuação” para conferir as notas. Essas ações não fazem a chamada de geração.
+3. Quando estiver pronta para um teste real, clique em “Testar com o LLM”. Ele chama o serviço de inteligência artificial, pode ter custo e inclui as rodadas de reparo necessárias; também gera o PDF. Há um limite de um teste por vez e uma pausa entre testes.
+4. Aguarde o resultado, abra o teste em “Testes recentes” e, quando disponível, use “Baixar o PDF do teste”. Confira o plano e a apresentação.
+
+**Resultado:** um teste guardado temporariamente, sem criar pedido nem mandar webhook. A tela informa quantos testes e por quantos dias são conservados. O plano mostrado no detalhe do teste inclui os campos internos; não o compartilhe como se fosse a saída da participante.
+
+**Se falhar:** leia a mensagem e o que foi enviado. Corrija e salve antes de testar de novo. Se a infraestrutura estiver indisponível, peça ajuda técnica; não repita cliques esperando acelerar a fila. Um teste antigo pode não cobrir as mudanças atuais.
+
+## Publicar uma versão
+
+**Objetivo:** colocar a definição revisada em uso para novos envios. Siga este procedimento quando a publicação estiver decidida pela responsável.
+
+**Onde entrar:** rascunho → “Publicar…”. Abrir esse link apenas mostra a revisão; publicar exige o botão final.
+
+1. Confira “O que muda em relação à versão” ou “Primeira publicação”. Revise perguntas, conclusão, imagens e integrações.
+2. Preencha “Nota do que mudou”. Ela é obrigatória.
+3. Confira “Teste com o LLM”. Para PDF, a primeira publicação e as mudanças que afetam a geração exigem teste bem-sucedido correspondente. Captura não exige teste de inteligência artificial. Mudanças só de aparência não implicam sempre um novo teste de geração; siga a indicação da tela.
+4. Se houver aviso de envio de contato no prompt, revise a necessidade com a responsável. Confirme somente se o uso estiver aprovado; caso contrário, volte ao rascunho para retirar a referência.
+5. Clique em “Publicar a versão” com o número mostrado. Aguarde a confirmação e confira “Versão publicada” no formulário.
+6. Confira “Situação” e o endereço público. Publicar não reativa um formulário inativo. Divulgue o link apenas quando estiver publicado e ativo.
+
+**Resultado:** uma nova versão que não pode ser editada. Os próximos envios passam a usá-la imediatamente quando o formulário está ativo. Pedidos existentes mantêm a versão respondida. Na primeira publicação, o endereço passa a ser fixo.
+
+**Se a publicação for recusada:** siga a lista “A versão não foi publicada. Falta:”. Ela pode pedir nota, teste, correção da definição, imagem ou integração compatível. “Nada para publicar” significa que o rascunho já está igual à versão atual. Em conflito com outra alteração, reabra e compare; não presuma que o clique anterior falhou nem publique outra vez sem verificar.
+
+## Pausar ou recuperar conteúdo anterior
+
+**Onde entrar:** página do formulário.
+
+Para interromper novos envios, abra “Desativar…”, leia o efeito, confirme e clique em “Desativar o formulário”. Isso torna o formulário indisponível para novos envios, mas não cancela pedidos já recebidos. “Ativar o formulário” permite receber novamente, desde que exista versão publicada.
+
+Para recuperar conteúdo, vá a “Histórico”, confira “O que mudou” e abra “Voltar a esta versão…”. A confirmação e “Copiar para o rascunho” substituem o rascunho atual pela cópia escolhida; preserve mudanças que ainda queira manter. Nada muda na página pública nesse momento. Revise, teste quando exigido e publique: será criada uma nova versão, sem apagar o histórico.
+
+**Se a versão antiga depender de uma integração ou imagem:** confira a compatibilidade atual antes de publicar. A cópia de uma definição não restaura serviços externos nem credenciais removidas.
