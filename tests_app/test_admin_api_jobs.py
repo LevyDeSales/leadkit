@@ -1031,6 +1031,7 @@ def test_list_jobs_the_form_version_filter_lists_the_same_orders_as_the_page(
 # --- get_job ------------------------------------------------------------------------------------
 
 STATE_FIELDS = {
+    "release",
     "public_id",
     "status",
     "stage",
@@ -1162,6 +1163,10 @@ def test_get_job_lists_the_pdfs_the_deliveries_and_the_syncs_of_each_attempt(
         "config_version",
         "current_config_version",
         "dispatch_no",
+        "event",
+        "release_id",
+        "occurred_at",
+        "blocked_reason",
         "id",
         "destination",
         "status",

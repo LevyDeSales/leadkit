@@ -376,6 +376,7 @@ def test_publisher_rejects_forks_prs_other_shas_and_missing_or_failed_checks(
 def test_swarm_rehearsal_accepts_the_real_guard_refusal(request, tmp_path: Path) -> None:
     """O ensaio precisa reconhecer a recusa real e ainda permitir rollback sem migrar.
 
+    Atualização compatível2→2: Current/Previous e piso são coerentes com o binário.
     Só o transporte Docker é substituído: o deploy.sh e o Alembic/guard usam código real
     e PostgreSQL 16. Não há Swarm local; versões e disponibilidade ficam no ensaio remoto.
     """
@@ -408,6 +409,8 @@ def test_swarm_rehearsal_accepts_the_real_guard_refusal(request, tmp_path: Path)
     database_url = engine.url.render_as_string(hide_password=False)
     env = {
         "STUB_NETWORK": "1",
+        "STUB_CONTRACT_FLOOR": "2",
+        "STUB_TARGET_CONTRACT": "2",
         "GUARD_PYTHON": sys.executable,
         "GUARD_ROOT": str(ROOT),
         "DATABASE_URL": database_url,
@@ -424,7 +427,7 @@ def test_swarm_rehearsal_accepts_the_real_guard_refusal(request, tmp_path: Path)
         connection.exec_driver_sql("UPDATE alembic_version SET version_num = 'ci_futura'")
         connection.execute(
             DeploymentContract.__table__.update().values(
-                phase="verified", epoch=uuid4(), attested_at=sa.func.now()
+                minimum_contract=2, phase="verified", epoch=uuid4(), attested_at=sa.func.now()
             )
         )
     try:

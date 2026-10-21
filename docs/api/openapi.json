@@ -8796,6 +8796,17 @@
             "title": "Attempt",
             "type": "integer"
           },
+          "form_version_number": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Form Version Number"
+          },
           "policy": {
             "enum": [
               "automatic",
@@ -8845,6 +8856,7 @@
           }
         },
         "required": [
+          "form_version_number",
           "policy",
           "state",
           "release_version",

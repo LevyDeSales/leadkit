@@ -152,6 +152,7 @@ LEAD_STATE: dict[str, frozenset[str]] = {
         {
             "release",
             "release.policy",
+            "release.form_version_number",
             "release.state",
             "release.release_version",
             "release.release_id",

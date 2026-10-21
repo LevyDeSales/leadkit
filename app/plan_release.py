@@ -105,7 +105,8 @@ def historical_policy(session: Session, job: Job):
         spec = compile_definition(definition, version_number=submission.form_version_number)
     except DefinitionError:
         raise ReleaseRefused("release_policy_unavailable") from None
-    if spec.version != submission.form_version or spec.slug != submission.form_slug:
+    # O texto legado da versão é metadado preservado; a chave publicada é slug/número.
+    if spec.slug != submission.form_slug or spec.version_number != submission.form_version_number:
         raise ReleaseRefused("release_policy_unavailable")
     return submission, spec
 

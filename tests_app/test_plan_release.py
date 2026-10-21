@@ -216,6 +216,9 @@ def test_admin_release_requires_total_confirmation_and_replays_without_dispatch(
     body = command_for(artifact_id).model_dump(mode="json")
     assert api_client("leitura").post(path, content="invalid json").status_code == 403
     client = api_client("total")
+    observed = client.get(f"/admin/api/v1/jobs/{public_id}").json()
+    assert observed["release"]["form_version_number"] == 1
+    body["expected_form_version_number"] = observed["release"]["form_version_number"]
     assert client.post(path, json={**body, "confirm": False}).status_code == 422
     first = client.post(path, json=body)
     assert first.status_code == 200, first.text
@@ -224,10 +227,13 @@ def test_admin_release_requires_total_confirmation_and_replays_without_dispatch(
     replay = client.post(path, json=body)
     assert replay.status_code == 200, replay.text
     assert replay.json()["release_id"] == first.json()["release_id"]
+    assert replay.json()["occurred_at"] == first.json()["occurred_at"]
+    assert first.json()["occurred_at"].endswith("Z")
     assert replay.json()["replay"] and not replay.json()["launched"]
     safe = api_client("leitura").get(f"/admin/api/v1/jobs/{public_id}")
     assert safe.status_code == 200
     assert safe.json()["release"]["state"] == "released"
+    assert safe.json()["release"]["released_at"] == first.json()["occurred_at"]
     assert safe.json()["lead_data"] is None
 
 
