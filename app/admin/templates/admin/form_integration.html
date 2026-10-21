@@ -1,8 +1,9 @@
 {% extends "admin/layout.html" %}
 {% import "admin/macros.html" as m %}
-{% set section = "forms" %}
+{% set section = "integrations" %}
 {% block title %}Integração com o Baserow · {{ page.form_title }}{% endblock %}
 {% block content %}
+<nav class="crumbs" aria-label="Central de integrações"><a href="/admin/integrations">Integrações</a></nav>
 <nav aria-label="Perfis de mapeamento"><a href="{{ page.url }}?profile=capture">Captura sem PDF</a> · <a href="{{ page.url }}?profile=pdf">Plano com PDF</a></nav>
 <p>Finalidade do perfil: <strong>{{ 'Captura sem PDF' if page.profile == 'capture' else 'Plano com PDF' }}</strong>. A ativação da conexão vale para a finalidade publicada. Perfil de captura: {{ page.capture_mapped }} campo(s); perfil PDF: {{ page.pdf_mapped }} campo(s).</p>
 {% if page.active and (not page.report or not page.report.ok) %}<p role="alert">Integração ativa com configuração incompatível ou não verificada para esta finalidade. Confira o relatório e corrija o perfil ou desative a conexão.</p>{% endif %}

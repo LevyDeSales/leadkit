@@ -50,6 +50,7 @@ from app.admin.api import (
     drafts,
     errors,
     forms,
+    integration_hub,
     integrations,
     jobs,
     previews,
@@ -140,6 +141,7 @@ ROUTERS = (
     draft_tests.router,
     previews.router,
     integrations.router,
+    integration_hub.router,
     jobs.router,
     publication.router,
 )

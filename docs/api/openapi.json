@@ -1457,6 +1457,45 @@
         "title": "BaserowTableField",
         "type": "object"
       },
+      "Capability": {
+        "properties": {
+          "active": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active"
+          },
+          "configured": {
+            "title": "Configured",
+            "type": "integer"
+          },
+          "connector": {
+            "enum": [
+              "baserow",
+              "webhook"
+            ],
+            "title": "Connector",
+            "type": "string"
+          },
+          "served_forms": {
+            "title": "Served Forms",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "connector",
+          "configured",
+          "active",
+          "served_forms"
+        ],
+        "title": "Capability",
+        "type": "object"
+      },
       "CaptureDeliveryCounts": {
         "description": "Intenções de captura por estado; remover configuração apaga esse histórico local.",
         "properties": {
@@ -2205,6 +2244,27 @@
           "notice"
         ],
         "title": "ConsentDoc",
+        "type": "object"
+      },
+      "Counts": {
+        "properties": {
+          "failed": {
+            "default": 0,
+            "title": "Failed",
+            "type": "integer"
+          },
+          "pending": {
+            "default": 0,
+            "title": "Pending",
+            "type": "integer"
+          },
+          "succeeded": {
+            "default": 0,
+            "title": "Succeeded",
+            "type": "integer"
+          }
+        },
+        "title": "Counts",
         "type": "object"
       },
       "CreateApiKeyRequest": {
@@ -4535,6 +4595,24 @@
         "title": "FormIntegration",
         "type": "object"
       },
+      "FormIssue": {
+        "properties": {
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "message"
+        ],
+        "title": "FormIssue",
+        "type": "object"
+      },
       "FormPage": {
         "description": "Uma página de formulários, por endereço.",
         "properties": {
@@ -4900,6 +4978,206 @@
         "title": "FormVersionInfo",
         "type": "object"
       },
+      "History": {
+        "properties": {
+          "capture": {
+            "$ref": "#/components/schemas/Counts"
+          },
+          "last_success": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LastSuccess"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pdf": {
+            "$ref": "#/components/schemas/Counts"
+          }
+        },
+        "title": "History",
+        "type": "object"
+      },
+      "HubForm": {
+        "properties": {
+          "active": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active"
+          },
+          "exists": {
+            "title": "Exists",
+            "type": "boolean"
+          },
+          "profile": {
+            "anyOf": [
+              {
+                "enum": [
+                  "pdf",
+                  "capture"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Profile"
+          },
+          "published_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Published Version"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "required": [
+          "slug",
+          "title",
+          "exists",
+          "active",
+          "published_version",
+          "profile"
+        ],
+        "title": "HubForm",
+        "type": "object"
+      },
+      "HubRow": {
+        "properties": {
+          "configured": {
+            "title": "Configured",
+            "type": "boolean"
+          },
+          "connector": {
+            "enum": [
+              "baserow",
+              "webhook"
+            ],
+            "title": "Connector",
+            "type": "string"
+          },
+          "form": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/HubForm"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "form_issues": {
+            "items": {
+              "$ref": "#/components/schemas/FormIssue"
+            },
+            "title": "Form Issues",
+            "type": "array"
+          },
+          "form_slug": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Form Slug"
+          },
+          "history": {
+            "$ref": "#/components/schemas/History"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "mapping": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MappingState"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "provider_verification": {
+            "const": "not_checked",
+            "default": "not_checked",
+            "title": "Provider Verification",
+            "type": "string"
+          },
+          "receiver": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Receiver"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "scope_kind": {
+            "enum": [
+              "default",
+              "form"
+            ],
+            "title": "Scope Kind",
+            "type": "string"
+          },
+          "serving": {
+            "enum": [
+              "own",
+              "default",
+              "none"
+            ],
+            "title": "Serving",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "connector",
+          "scope_kind",
+          "form_slug",
+          "form",
+          "configured",
+          "serving",
+          "receiver",
+          "mapping",
+          "form_issues"
+        ],
+        "title": "HubRow",
+        "type": "object"
+      },
       "IdentityDoc": {
         "additionalProperties": false,
         "properties": {
@@ -4994,6 +5272,44 @@
           "definition"
         ],
         "title": "ImportFormRequest",
+        "type": "object"
+      },
+      "IntegrationHubPage": {
+        "properties": {
+          "catalog": {
+            "description": "Contagens globais de configurações, conexões ativas (só Baserow) e formulários atendidos. Não variam pelos filtros nem pela página; o padrão conta uma vez.",
+            "items": {
+              "$ref": "#/components/schemas/Capability"
+            },
+            "title": "Catalog",
+            "type": "array"
+          },
+          "items": {
+            "description": "Os itens desta página.",
+            "items": {
+              "$ref": "#/components/schemas/HubRow"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Passe em `cursor` para ler a página seguinte; nulo na última.",
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items",
+          "catalog"
+        ],
+        "title": "IntegrationHubPage",
         "type": "object"
       },
       "JobAttempt": {
@@ -6160,6 +6476,39 @@
         "title": "JobSync",
         "type": "object"
       },
+      "LastSuccess": {
+        "properties": {
+          "at": {
+            "format": "date-time",
+            "title": "At",
+            "type": "string"
+          },
+          "configuration_match": {
+            "enum": [
+              "current",
+              "previous",
+              "unknown"
+            ],
+            "title": "Configuration Match",
+            "type": "string"
+          },
+          "stream": {
+            "enum": [
+              "pdf",
+              "capture"
+            ],
+            "title": "Stream",
+            "type": "string"
+          }
+        },
+        "required": [
+          "at",
+          "stream",
+          "configuration_match"
+        ],
+        "title": "LastSuccess",
+        "type": "object"
+      },
       "ListBlock": {
         "additionalProperties": false,
         "description": "Uma lista de nomes (um catálogo de aulas, por exemplo), sem nomes repetidos. Os templates a\nleem como uma lista de textos, e um campo de opções fixas do plano pode tirar os valores dela.",
@@ -6186,6 +6535,24 @@
           "items"
         ],
         "title": "ListBlock",
+        "type": "object"
+      },
+      "MappingState": {
+        "properties": {
+          "capture_present": {
+            "title": "Capture Present",
+            "type": "boolean"
+          },
+          "pdf_present": {
+            "title": "Pdf Present",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "pdf_present",
+          "capture_present"
+        ],
+        "title": "MappingState",
         "type": "object"
       },
       "MarketingDoc": {
@@ -7724,6 +8091,105 @@
           "label"
         ],
         "title": "QuestionDoc",
+        "type": "object"
+      },
+      "Receiver": {
+        "properties": {
+          "active": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active"
+          },
+          "credential_unreadable": {
+            "title": "Credential Unreadable",
+            "type": "boolean"
+          },
+          "events": {
+            "items": {
+              "enum": [
+                "plano.concluido",
+                "submissao.persistida"
+              ],
+              "type": "string"
+            },
+            "title": "Events",
+            "type": "array"
+          },
+          "form_slug": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Form Slug"
+          },
+          "host": {
+            "title": "Host",
+            "type": "string"
+          },
+          "purpose": {
+            "enum": [
+              "internal",
+              "participant"
+            ],
+            "title": "Purpose",
+            "type": "string"
+          },
+          "purpose_origin": {
+            "enum": [
+              "legacy",
+              "explicit",
+              "default"
+            ],
+            "title": "Purpose Origin",
+            "type": "string"
+          },
+          "scope_kind": {
+            "enum": [
+              "default",
+              "form"
+            ],
+            "title": "Scope Kind",
+            "type": "string"
+          },
+          "table_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Table Id"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "scope_kind",
+          "form_slug",
+          "version",
+          "host",
+          "table_id",
+          "purpose",
+          "purpose_origin",
+          "events",
+          "active",
+          "credential_unreadable"
+        ],
+        "title": "Receiver",
         "type": "object"
       },
       "RemovedDestination": {
@@ -10311,7 +10777,7 @@
   "info": {
     "description": "Tudo o que o painel admin faz, por chave de API com papel.\n\n**Autenticação.** Só `Authorization: Bearer <chave>`: a chave não vai na URL nem em cookie, e a\nsessão do painel não vale em nenhuma operação (ela só abre esta referência e o `openapi.json`). Cada\noperação diz o papel mínimo (`x-required-role`): `leitura` só consulta; `total` faz tudo o que o\nadmin logado faz. Toda escrita fica na auditoria em nome da chave (`chave:<nome>`).\n\n**Erros.** Um formato só, `{\"code\", \"detail\"}`, com `errors` (`field`, `message`, `line`) no `422`.\nA resposta nunca traz o valor recebido.\n\n**Operações marcadas.** As que apagam ou sobrescrevem algo difícil de desfazer (`x-destructive`) e\nas que mudam o que a lead vê, para onde os dados dela vão ou chamam um serviço de fora\n(`x-external-effect`) exigem `\"confirm\": true` em toda chamada (na query, em `DELETE`). Sem ele, a\nresposta é `422 confirmation_required` e nada acontece.\n\n**Limite de uso.** Cada chave tem um balde de chamadas por minuto; passou, `429 rate_limited` com\n`Retry-After`.\n\n**Fora das operações.** De qualquer endereço podem vir `404 not_found` (caminho sem operação),\n`405 method_not_allowed` (com `Allow`, os métodos do caminho), `413 payload_too_large`,\n`500 internal_error` e `503 unavailable` (banco fora do ar, com `Retry-After`).\n\n## MCP: usar a API pelo Claude\n\nO **MCP** (`python -m app.admin_mcp`) é um programa que roda no computador da operadora e deixa o\nClaude Desktop e o Claude Code chamarem esta API numa conversa. É um cliente HTTP desta API, só por\n`stdio` (não há MCP remoto), com a chave de quem o usa: nada novo sobe no servidor, e a autorização é\na da chave.\n\n**Configurar.** A tela [Configurar o MCP](/admin/mcp), no menu do painel, leva do zero ao servidor\nfuncionando: escolhe ou cria a chave (o segredo aparece uma vez), mostra a instalação, monta o comando\ndo Claude Code ou o bloco do Claude Desktop já com o endereço deste painel e confere a chave.\n\n**Ferramentas por papel.** Cada operação desta referência é uma ferramenta, com o `operationId` como\nnome, o `summary` e a `description` como texto, e os parâmetros e o corpo juntos num só objeto de\nentrada. Uma chave `leitura` recebe as operações de papel `leitura`; uma `total`, todas. Vêm além\ndelas algumas **compostas**, que juntam as chamadas de um fluxo (`attention_overview`,\n`diagnose_order`, `edit_form_draft`, `publish_form_with_review` e `connect_baserow_integration`) e só\nchamam ferramentas que a chave já tem. Para explorar, prefira `leitura`: são menos ferramentas.\n\n**Confirmações.** Uma operação marcada (`x-destructive` ou `x-external-effect`) não executa sozinha: o\nMCP mostra o efeito e o alvo e só chama a API com o sim da pessoa. O `confirm` que o modelo escrever\npor conta própria é ignorado.\n\n**Dado da lead.** Fica desligado: sem `GERADOR_MCP_LEAD_DATA=1`, o nome, o e-mail e as respostas das\nleads não chegam ao modelo, e o argumento `include_lead_data`, a busca `q` de `list_jobs` e a\n`download_job_pdf` não existem. Com a opção e uma chave `total` eles voltam, e o que o Claude ler vai\nao provedor do modelo.\n\n**Pastas.** PDFs e HTML vão para arquivo, em `GERADOR_MCP_DOWNLOAD_DIR` (ou numa pasta só do usuário\nno diretório temporário), e a ferramenta devolve o caminho, nunca os bytes. As imagens\n(`upload_asset` e `replace_asset`) só saem de `GERADOR_MCP_UPLOAD_DIR`, uma pasta que a pessoa\nescolhe e que não tem padrão. **A imagem enviada é servida sem login**: ponha nessa pasta só o que\npode ser público.\n\n**A chave.** Vai no ambiente do cliente (`GERADOR_API_URL` e `GERADOR_API_KEY`), nunca na linha de\ncomando do servidor, e só viaja no cabeçalho `Authorization: Bearer`: não aparece em retorno de\nferramenta, em erro nem em log.\n",
     "title": "Leadkit: API de admin",
-    "version": "1.61.0"
+    "version": "1.62.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -16915,6 +17381,159 @@
         "x-required-role": "total"
       }
     },
+    "/integrations": {
+      "get": {
+        "description": "Consulta somente o banco local: Baserow e Webhook, inclusive rascunhos, inativos e configurações órfãs conhecidas. Filtra por conector e formulário; um filtro de formulário não inclui a linha global do padrão. Ordena por conector, padrão primeiro e slug crescente. scope_kind e form_slug distinguem padrão de formulário; key é a identidade de paginação. receiver descreve o receptor efetivo, com revisão própria: não use a revisão herdada para criar um receptor de formulário. Contadores do catálogo são globais. Ativa indica apenas a configuração Baserow; mapeamento salvo não prova compatibilidade com a tabela atual. provider_verification é sempre not_checked. Histórico correlaciona identidade e formulário, separa captura/PDF e qualifica a revisão; Baserow PDF tem revisão unknown. O resumo do padrão não deve ser somado às linhas herdadas. Sucesso confirma transporte, sem provar leitura, atendimento ou liberação. Históricos legados PDF sem receptor ficam no pedido. Nunca expõe URL completa, token, segredo, payload ou texto bruto de erro, mesmo para total. Não consulta provedores, não dispara automação nem exige confirmação. Escritas continuam nas operações existentes de integração e destinos.",
+        "operationId": "list_integrations",
+        "parameters": [
+          {
+            "description": "Conector; omitido lista ambos.",
+            "in": "query",
+            "name": "connector",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "baserow",
+                    "webhook"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Conector; omitido lista ambos.",
+              "title": "Connector"
+            }
+          },
+          {
+            "description": "Slug persistido ou configuração órfã conhecida; inexistente retorna 404.",
+            "in": "query",
+            "name": "form_slug",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Slug persistido ou configuração órfã conhecida; inexistente retorna 404.",
+              "title": "Form Slug"
+            }
+          },
+          {
+            "description": "Quantos itens por página (de 1 a 200; padrão 50).",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "description": "Quantos itens por página (de 1 a 200; padrão 50).",
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "O `next_cursor` da página anterior. É opaco: não monte nem altere.",
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 300,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "O `next_cursor` da página anterior. É opaco: não monte nem altere.",
+              "title": "Cursor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntegrationHubPage"
+                }
+              }
+            },
+            "description": "Catálogo global e página de associações com fatos locais seguros e cursor da próxima página."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Sem chave, chave desconhecida ou de segredo errado (`invalid_credentials`: a mesma resposta nos três casos), ou chave vencida (`key_expired`) ou revogada (`key_revoked`). Leva `WWW-Authenticate: Bearer`.",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Sempre `Bearer`: o único esquema que a API aceita.",
+                "schema": {
+                  "examples": [
+                    "Bearer"
+                  ],
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "O corpo ou a definição não valem (`validation_failed`; `errors` traz o caminho de cada campo) ou falta `confirm: true` numa operação marcada (`confirmation_required`; nada acontece)."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Limite de uso da chave ou bloqueio por chave errada (`rate_limited`), ou pausa entre os testes pagos do rascunho (`test_paused`). Leva `Retry-After`.",
+            "headers": {
+              "Retry-After": {
+                "description": "Quantos segundos esperar antes de tentar de novo.",
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "summary": "Listar as integrações e associações dos formulários",
+        "tags": [
+          "Integrações"
+        ],
+        "x-required-role": "leitura"
+      }
+    },
     "/jobs": {
       "get": {
         "description": "Lista os pedidos de plano, do mais novo para o mais antigo, `limit` por página (de 1 a 200; padrão 50), com o cursor da seguinte em `next_cursor`: o pedido que chega durante a leitura não pula nem repete nenhuma linha. Cada item traz o estado do pedido (código, situação, etapa, tentativa, formulário e versão, quando chegou, o código da falha e a situação de cada entrega ao webhook e de cada sincronização com a planilha da tentativa atual) e **nada que diga quem é a lead**. Filtros, todos juntos (E): `status`; `form`, o endereço do formulário (`list_forms` lista os que existem), que traz só os pedidos dele, e um endereço que nenhum formulário tem dá a lista vazia, não erro; `form_version`, a versão do formulário em que o pedido foi feito, no texto que cada item mostra em `form_version` (só junto com `form`; uma versão que o formulário não tem dá a lista vazia: serve a ver se os pedidos da versão que acabou de ser publicada estão falhando); `delivery`, `failed` ou `pending`, que traz os pedidos com uma entrega ao webhook nesse estado na tentativa atual (acha o que não chegou ao destino sem abrir pedido por pedido; uma falha de uma tentativa já reprocessada não conta); `sync`, `failed` ou `pending`, que traz os pedidos com uma sincronização com a planilha nesse estado na tentativa atual (acha as linhas que faltam na planilha; uma falha já refeita não conta); `created_from` (inclusive) e `created_to` (exclusive), instantes ISO 8601 com fuso que cortam pela data em que o pedido chegou (para o movimento de hoje, `created_from` é a meia-noite de Brasília, como `2027-01-15T00:00:00-03:00`: é o que o filtro Recebido da página calcula, em dias de calendário de Brasília); e `q`, que acha o pedido pelo código exato e, só com chave `total`, também por parte do nome ou do e-mail da lead; com chave `leitura`, `q` busca só pelo código, e um nome ou e-mail simplesmente não acha ninguém (buscar pessoas serviria para sondar quem é lead). Os filtros valem em todas as páginas: o `next_cursor` continua filtrado. `include_total=true` acrescenta quantos pedidos há com os filtros (contar custa). `include_lead_data=true`, só com chave `total`, põe em cada item o bloco `lead_data` (nome, e-mail e prioridade); com chave `leitura` é `403 forbidden_role`. Não grava nada.",
@@ -18182,6 +18801,10 @@
     {
       "description": "A integração de um formulário com uma tabela do Baserow: cada pedido concluído vira uma linha na tabela, com os campos que o mapeamento escolhe. Ler a integração (a tabela é lida agora no Baserow) é de `leitura`; conectar, mapear, ativar, desativar, remover, testar e reenviar são de `total`. O **token do Baserow só entra** (ao conectar): nenhuma resposta o devolve. Ativar, testar e reenviar escrevem na planilha do cliente, e remover apaga o token e o estado das sincronizações: as quatro exigem `confirm`.",
       "name": "Integração com o Baserow"
+    },
+    {
+      "description": "Central de Baserow e Webhook por formulário. Configuração, herança e histórico local, sem consultar provedores nem expor dados da participante ou credenciais.",
+      "name": "Integrações"
     },
     {
       "description": "Os pedidos de plano: cada formulário que uma lead enviou, com a situação, as tentativas, as entregas ao webhook, as sincronizações com a planilha e a linha do tempo. O estado do pedido é de `leitura`; o dado da lead (nome, e-mail, respostas, pontuação, consentimento e plano) e o PDF do plano são só de `total`, e só vêm quando pedidos. Reprocessar um pedido e reenviar uma entrega ou uma sincronização com a planilha são ações de `total`.",
