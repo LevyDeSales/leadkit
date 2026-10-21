@@ -489,7 +489,7 @@ jobs:
               from app.migrations.compatibility import validate_database
               from app.migrations.contracts import SIGNATURES
               with deps.sessions() as session:
-                  assert validate_database(session.connection(), SIGNATURES) == "0017_continuation_release"
+                  assert validate_database(session.connection(), SIGNATURES) == "0018_journey_events"
                   assert all(hashlib.sha256(json.dumps(SIGNATURES[revision], sort_keys=True).encode()).hexdigest() == digest for revision, digest in state["signatures"].items())
                   job = session.get_one(Job, UUID(state["history_job"]))
                   deps.signer.verify(state["history_token"], job)

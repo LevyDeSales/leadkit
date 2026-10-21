@@ -19,7 +19,7 @@ def test_composed_upgrade_blocks_new_contract_and_preserves_previous_objects():
             connection.execute(
                 sa.text("UPDATE deployment_contract SET phase='blocked', minimum_contract=1")
             )
-        command.upgrade(alembic(), "head")
+        command.upgrade(alembic(), "0017_continuation_release")
         with engine.connect() as connection:
             assert (
                 connection.scalar(sa.text("SELECT version_num FROM alembic_version"))

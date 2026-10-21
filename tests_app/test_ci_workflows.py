@@ -1524,7 +1524,7 @@ def test_composed_image_probe_is_isolated_and_checks_real_http_capabilities():
     assert '"replay"] == (phase == "return")' in probe
     assert 'body["release_id"] == state["release_id"]' in probe
     assert 'phase == "blocked"' in probe and "assert_contract(session, required=2)" in probe
-    assert "validate_database(session.connection(), SIGNATURES)" in probe
+    assert 'validate_database(session.connection(), SIGNATURES) == "0018_journey_events"' in probe
 
 
 @pytest.mark.parametrize(
