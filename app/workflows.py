@@ -276,7 +276,7 @@ def send(input: DeliverInput, ctx: Context) -> DeliverOutput:
     return DeliverOutput(
         delivery_id=input.delivery_id,
         delivered_count=int(status == "succeeded"),
-        skipped_count=int(status in ("obsolete", "already_succeeded")),
+        skipped_count=int(status in ("obsolete", "already_succeeded", "blocked")),
     )
 
 

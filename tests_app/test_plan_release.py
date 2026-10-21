@@ -385,3 +385,64 @@ def test_integrations_hub_accepts_release_event_without_exposing_capabilities(
     assert page.status_code == 200
     assert "Liberação do plano" in page.text
     assert "?k=i1." not in page.text
+
+
+@pytest.mark.parametrize("manual_pdf", [["plano.concluido", "plano.liberado"]], indirect=True)
+def test_held_delivery_is_skipped_by_worker_and_failure_callback(deps, manual_pdf):
+    from app import workflows
+    from app.models import Delivery
+
+    job_id, _ = manual_pdf
+    with deps.sessions() as session:
+        delivery_id = session.scalars(sa.select(Delivery.id).where(Delivery.job_id == job_id)).one()
+    output = workflows.send.mock_run(input=workflows.DeliverInput.for_delivery(delivery_id))
+    assert output.skipped_count == 1 and output.delivered_count == 0
+    assert pipeline.mark_delivery_failed(deps, delivery_id, "synthetic_failure") == 0
+    with deps.sessions() as session:
+        assert session.get_one(Delivery, delivery_id).status == "pending"
+
+
+@pytest.mark.parametrize("manual_pdf", [["plano.concluido", "plano.liberado"]], indirect=True)
+def test_database_preserves_legacy_uniqueness_and_bidirectional_release_channel(deps, manual_pdf):
+    from app.models import Delivery
+
+    job_id, artifact_id = manual_pdf
+    with deps.sessions.begin() as session:
+        job = session.get_one(Job, job_id)
+        release = release_pdf(
+            session, deps, job.public_id, actor="operadora", command=command_for(artifact_id)
+        )
+        release_delivery = release.delivery_ids[0]
+        completed = session.scalar(
+            sa.select(Delivery.id).where(
+                Delivery.job_id == job_id, Delivery.event == "plano.concluido"
+            )
+        )
+        for delivery_id, invalid in [
+            (release_delivery, {"release_id": None}),
+            (release_delivery, {"event": "plano.concluido"}),
+            (release_delivery, {"config_version": None}),
+            (release_delivery, {"webhook_destination_id": None}),
+            (completed, {"release_id": release.release_id}),
+            (completed, {"event": "plano.liberado"}),
+        ]:
+            with pytest.raises(sa.exc.IntegrityError), session.begin_nested():
+                session.execute(
+                    sa.update(Delivery).where(Delivery.id == delivery_id).values(**invalid)
+                )
+        original = session.get_one(Delivery, completed)
+        with pytest.raises(sa.exc.IntegrityError), session.begin_nested():
+            session.add(
+                Delivery(
+                    job_id=job.id,
+                    artifact_id=artifact_id,
+                    destination="webhook",
+                    event="plano.concluido",
+                    audience="participant",
+                    authorization_origin="explicit",
+                    webhook_destination_id=original.webhook_destination_id,
+                    config_version=original.config_version,
+                    authorized_attempt=1,
+                )
+            )
+            session.flush()
