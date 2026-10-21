@@ -81,6 +81,13 @@ O total considera operações únicas; recursos podem compartilhar a mesma opera
 | `POST /admin/login` | Confere usuário e senha (argon2), bloqueia o IP após 5 falhas, abre a sessão com o token CSRF | `AdminAuth.check_credentials`, `LoginThrottle` | — | — | — | — | fora (A) |
 | `POST /admin/logout` | Encerra a sessão e apaga o cookie | `AdminAuth` | — | — | — | — | fora (A) |
 
+### Navegação HTML
+
+| Rota atual | O que faz | Serviço hoje | Operação da API | `operation_id` | Papel | Marcas | Status |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `GET /admin/responses` | Orienta a operadora para os históricos de pedidos com PDF e respostas sem PDF, preservando o filtro de formulário | `routes.responses_page`; `queries.forms.form_title` só para o título de navegação | — | — | — | — | fora (B) |
+| `GET /admin/advanced` | Agrupa links para ferramentas existentes, sem executar suas operações | `routes.advanced_page` | — | — | — | — | fora (B) |
+
 ### Pedidos
 
 **Dado da lead.** `list_jobs` e `get_job` são `leitura` e devolvem o pedido sem dado pessoal: código,
@@ -445,12 +452,17 @@ Ler a auditoria não a grava: só as escritas são auditadas (decisão 2 da revi
 - **(A) Login por senha, sessão e saída** (3 rotas). A API autentica por chave a cada chamada: não há
   sessão, cookie, token CSRF nem bloqueio de login por IP a replicar (a chave errada tem o bloqueio
   próprio, o mesmo mecanismo). Entrar com a senha continua sendo só pelo navegador.
-- **(B) Telas sem dado nem ação** (3 rotas): a tela da importação (`GET /admin/forms/import`), a de
-  criar um formulário (`GET /admin/forms/new`) e a moldura da prévia da página pública
+- **(B) Telas de navegação ou sem dado nem ação** (5 rotas): a tela da importação
+  (`GET /admin/forms/import`), a de criar um formulário (`GET /admin/forms/new`) e a moldura da prévia da página pública
   (`GET /admin/forms/{slug}/draft/preview`). A primeira e a segunda são formulários vazios (as
   sugestões de título e de endereço da cópia são conveniência de digitação; quem cria pela API manda
   o que quer, e a lista dos formulários de onde copiar é `list_forms`). A terceira é só o `iframe`
-  que aponta para `.../preview/frame`, que tem a operação dele.
+  que aponta para `.../preview/frame`, que tem a operação dele. Os hubs protegidos
+  `GET /admin/responses` e `GET /admin/advanced` são navegação HTML: o primeiro orienta para os
+  históricos já cobertos, preservando o filtro de formulário e consultando só seu título para
+  contexto; o segundo agrupa links para ferramentas existentes. Não acrescentam leitura de
+  respostas nem operação de negócio: as operações dos destinos continuam cobertas pela API e
+  pelo MCP, sem operação ou ferramenta nova para os links.
 - **(C) Redesenho do editor** (6 operações dentro de `draft/edit`). `refresh-question`,
   `refresh-rule`, `refresh-operator`, `plan-refresh`, `data-refresh` e `scoring-refresh-rule` só
   refazem a tela depois de uma troca de tipo ou de operador. O documento não guarda o estado da tela.
