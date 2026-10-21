@@ -415,6 +415,7 @@ jobs:
           umask 077
           cat > "$RUNNER_TEMP/continuation-probe.py" <<'PYPROBE'
           """Prova sintética na imagem imutável; somente cenário, resultado e contagens saem no log."""
+          import copy
           import hashlib
           import json
           import os
@@ -544,7 +545,8 @@ jobs:
                               handoff_receivers.set_receiver_enabled(session, "ci-handoff", command=SetReceiverEnabled(
                                   expected_version=receiver.version, enabled=True, confirm=True), actor="ci", cipher=deps.cipher, now=now)
                               draft = drafts.load(session, "ci-handoff")
-                          document = dict(draft.document)
+                          # O token continua descrevendo o rascunho observado antes da edição.
+                          document = copy.deepcopy(draft.document)
                           document["examples"]["answers"]["email"] = "capture@example.test"
                           document["completion"] = {"mode": "redirect", "url": receiver.entry_url,
                               "handoff": {"receiver_id": str(receiver.id), "receiver_revision": receiver.revision}}
@@ -720,12 +722,32 @@ jobs:
               return 1
             fi
             docker stack rm "$compat" >/dev/null 2>&1 || true
+            # A rede pode sumir antes dos containers: observar a stack inteira e vínculos do volume.
             for _ in $(seq 1 60); do
-              if ! docker network inspect "${compat}_internal" >/dev/null 2>&1; then break; fi
+              remaining_services=$(docker service ls --filter "label=com.docker.stack.namespace=$compat" --format '{{.ID}}') || return 1
+              remaining_networks=$(docker network ls --filter "label=com.docker.stack.namespace=$compat" --format '{{.ID}}') || return 1
+              stack_containers=$(docker ps -aq --filter "label=com.docker.stack.namespace=$compat") || return 1
+              attached=$(docker ps -aq --filter "volume=${compat}_pgdata") || return 1
+              containers=$(printf '%s\n%s\n' "$stack_containers" "$attached" | sort -u) || return 1
+              for container in $containers; do
+                container_state=$(docker inspect --format '{{.State.Running}}:{{.State.Status}}:{{index .Config.Labels "com.docker.stack.namespace"}}' "$container") || return 1
+                case "$container_state" in
+                  "false:exited:$compat"|"false:dead:$compat")
+                    # Sem force: só remover o container próprio depois da saída positivamente observada.
+                    docker rm "$container" >/dev/null 2>&1 || return 1 ;;
+                  "true:running:$compat"|"true:restarting:$compat"|"true:paused:$compat"|"false:created:$compat"|"false:removing:$compat") ;;
+                  *) return 1 ;;
+                esac
+              done
+              if [ -z "$remaining_services$remaining_networks$stack_containers$attached" ]; then break; fi
               sleep 2
             done
-            if docker network inspect "${compat}_internal" >/dev/null 2>&1; then return 1; fi
-            docker volume rm "${compat}_pgdata" >/dev/null 2>&1 || true
+            [ -z "$remaining_services$remaining_networks$stack_containers$attached" ] || return 1
+            # Falha de observação não significa volume ausente; a lista precisa ser consultável.
+            remaining_volumes=$(docker volume ls --format '{{.Name}}') || return 1
+            if printf '%s\n' "$remaining_volumes" | grep -Fxq "${compat}_pgdata"; then
+              docker volume rm "${compat}_pgdata" >/dev/null 2>&1 || return 1
+            fi
           }
           trap cleanup_compat EXIT
           cd "$folder"
@@ -1872,13 +1894,31 @@ jobs:
               raise SystemExit(1) from None
           PYCLEAN
           docker stack rm "$compat" >/dev/null 2>&1 || true
+          # A rede pode sumir antes dos containers: observar a stack inteira e vínculos do volume.
           for _ in $(seq 1 60); do
-            if ! docker network inspect "${compat}_internal" >/dev/null 2>&1; then break; fi
+            remaining_services=$(docker service ls --filter "label=com.docker.stack.namespace=$compat" --format '{{.ID}}') || exit 1
+            remaining_networks=$(docker network ls --filter "label=com.docker.stack.namespace=$compat" --format '{{.ID}}') || exit 1
+            stack_containers=$(docker ps -aq --filter "label=com.docker.stack.namespace=$compat") || exit 1
+            attached=$(docker ps -aq --filter "volume=${compat}_pgdata") || exit 1
+            containers=$(printf '%s\n%s\n' "$stack_containers" "$attached" | sort -u) || exit 1
+            for container in $containers; do
+              container_state=$(docker inspect --format '{{.State.Running}}:{{.State.Status}}:{{index .Config.Labels "com.docker.stack.namespace"}}' "$container") || exit 1
+              case "$container_state" in
+                "false:exited:$compat"|"false:dead:$compat")
+                  # Sem force: só remover o container próprio depois da saída positivamente observada.
+                  docker rm "$container" >/dev/null 2>&1 || exit 1 ;;
+                "true:running:$compat"|"true:restarting:$compat"|"true:paused:$compat"|"false:created:$compat"|"false:removing:$compat") ;;
+                *) exit 1 ;;
+              esac
+            done
+            if [ -z "$remaining_services$remaining_networks$stack_containers$attached" ]; then break; fi
             sleep 2
           done
-          if docker network inspect "${compat}_internal" >/dev/null 2>&1; then exit 1; fi
-          if docker volume inspect "${compat}_pgdata" >/dev/null 2>&1; then
-            docker volume rm "${compat}_pgdata" >/dev/null
+          [ -z "$remaining_services$remaining_networks$stack_containers$attached" ] || exit 1
+          # Falha de observação não significa volume ausente; a lista precisa ser consultável.
+          remaining_volumes=$(docker volume ls --format '{{.Name}}') || exit 1
+          if printf '%s\n' "$remaining_volumes" | grep -Fxq "${compat}_pgdata"; then
+            docker volume rm "${compat}_pgdata" >/dev/null 2>&1 || exit 1
           fi
           python3 - "$folder" "$RUNNER_TEMP/continuation-probe.py" <<'PY'
           import shutil
