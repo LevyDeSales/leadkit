@@ -83,6 +83,12 @@ def describe(number: str | None, built_on: str | None) -> str:
     return f"{text} · {day.day:02d}/{day.month:02d}/{day.year}"
 
 
+def operator_guide_url(number: str | None) -> str:
+    """O guia da tag instalada; builds sem versão válida consultam o desenvolvimento."""
+    ref = f"v{number}" if number and NUMBER.fullmatch(number) else "develop"
+    return f"https://github.com/LevyDeSales/leadkit/blob/{ref}/docs/guia-da-operadora/README.md"
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """`git ls-remote --tags origin | python -m app.version --sha $GITHUB_SHA`: imprime as duas
     variáveis do build (`APP_VERSION` e `APP_BUILD_DATE`), no formato do `$GITHUB_ENV`."""
