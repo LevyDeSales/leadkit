@@ -152,7 +152,26 @@ def require_participant_access(
 
 
 def _result(session: Session, job: Job, release: PlanRelease, *, replay: bool) -> ReleaseCommit:
-    ids = tuple(session.scalars(sa.select(Delivery.id).where(Delivery.release_id == release.id)))
+    original_completion = sa.and_(
+        Delivery.job_id == release.job_id,
+        Delivery.artifact_id == release.artifact_id,
+        Delivery.destination == "webhook",
+        Delivery.event == "plano.concluido",
+        Delivery.audience == "participant",
+        Delivery.authorization_origin == "explicit",
+        Delivery.authorized_attempt == release.attempt,
+    )
+    ids = tuple(
+        session.scalars(
+            sa.select(Delivery.id)
+            .where(sa.or_(Delivery.release_id == release.id, original_completion))
+            .order_by(
+                sa.case((Delivery.release_id == release.id, 0), else_=1),
+                Delivery.created_at,
+                Delivery.id,
+            )
+        )
+    )
     return ReleaseCommit(
         release.id,
         release.attempt,

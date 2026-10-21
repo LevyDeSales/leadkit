@@ -626,6 +626,8 @@ def create_app(
                 filename=f"plano-{job.public_id}.pdf",
                 access=ParticipantPdfAccess(job.id, job.attempt, job.token_version),
             )
+        except TokenError:
+            raise HTTPException(410, "link expirado", headers=PRIVATE_HEADERS) from None
         except PlanHeld:
             return JSONResponse({"code": "plan_held"}, status_code=403, headers=PRIVATE_HEADERS)
         except (ReleaseRefused, DeploymentContractError):
