@@ -241,6 +241,9 @@ def import_definition(
         from app.integration_readiness import problems as integration_problems
 
         configuration_lock(session)
+        from app.forms.continuation_contract import assert_definition_contract
+
+        assert_definition_contract(session, document)
         if issues := integration_problems(session, spec):
             raise DefinitionError(issues)
         form_id = session.scalar(

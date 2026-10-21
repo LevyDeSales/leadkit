@@ -148,6 +148,7 @@ SCREEN_FIELDS = (
     "scoring",
     "notices",
     "completion",
+    "release",
 )
 # O que o resto não traz: o endereço, que só muda antes da primeira publicação e no campo dele, e
 # a versão do texto do consentimento, que a publicação sobe sozinha. Salvar põe de volta os
@@ -916,6 +917,9 @@ def _store(
     now = utc_now()
     try:
         with deps.sessions.begin() as session:
+            from app.forms.continuation_contract import assert_definition_contract
+
+            assert_definition_contract(session, document)
             # A linha do formulário serializa as mudanças do rascunho e a publicação.
             session.execute(sa.select(Form.id).where(Form.id == draft.form_id).with_for_update())
             latest = load(session, draft.slug)
@@ -1123,6 +1127,9 @@ def _insert_form(
     digest = fingerprint(document)
     now = utc_now()
     with deps.sessions.begin() as session:
+        from app.forms.continuation_contract import assert_definition_contract
+
+        assert_definition_contract(session, document)
         form_id = session.scalar(
             insert(Form)
             .values(
@@ -1441,6 +1448,9 @@ def publish(
             from app.integration_readiness import problems as integration_problems
 
             configuration_lock(session)
+            from app.forms.continuation_contract import assert_definition_contract
+
+            assert_definition_contract(session, found.document)
             if issues := integration_problems(session, found.spec):
                 raise PublishRefused(found, ["Integrações incompatíveis com a finalidade."], issues)
             session.execute(sa.select(Form.id).where(Form.id == draft.form_id).with_for_update())

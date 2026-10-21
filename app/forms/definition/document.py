@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
+from uuid import UUID
 
 from pydantic import (
     AfterValidator,
@@ -509,9 +510,19 @@ class ScoringDoc(_Strict):
     persona: list[RuleDoc] = Field(default=[], max_length=MAX_RULES)
 
 
+class HandoffDoc(_Strict):
+    receiver_id: UUID
+    receiver_revision: Annotated[int, Field(ge=1)]
+
+
+class ReleaseDoc(_Strict):
+    mode: Literal["automatic", "manual"] = "automatic"
+
+
 class CompletionDoc(_Strict):
     """Conclusão após persistência. Texto puro, sem HTML nem interpretação de template."""
 
+    handoff: HandoffDoc | None = None
     mode: Literal["result", "confirmation", "button", "redirect"] = Field(
         default="result",
         description="Próximo passo após commit: resultado PDF (padrão legado), confirmação local, botão ou encaminhamento com recibo de continuidade. Não altera geração nem autorização de PDF.",
@@ -553,6 +564,7 @@ class FormDocument(_Strict):
     consent: ConsentDoc
     scoring: ScoringDoc | None = None
     generation: Literal["pdf", "none"] = "pdf"
+    release: ReleaseDoc | None = None
     instructions: str | None = None
     prompt: str | None = None
     plan: PlanDoc | None = None
@@ -584,6 +596,7 @@ class CaptureExamplesDoc(ExamplesDoc):
 
 
 class CaptureFormDocument(FormDocument):
+    release: None = None
     examples: CaptureExamplesDoc
     generation: Literal["none"]
     instructions: None = None

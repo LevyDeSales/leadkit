@@ -15,7 +15,7 @@ from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
-from app.forms import FIRST_VERSION, Completion, FormSpec
+from app.forms import FIRST_VERSION, Completion, FormSpec, Handoff
 from app.forms.definition import plan as plan_tree
 from app.forms.definition import questions
 from app.forms.definition.conditions import Conditions, condition_problems
@@ -52,6 +52,10 @@ def _rule_problems(definition: FormDocument) -> list[Problem]:
         completion_problems.append(Problem("completion.url", "este modo não usa destino externo"))
     if definition.generation == "none" and definition.completion.mode == "result":
         completion_problems.append(Problem("completion.mode", "resultado PDF exige geração de PDF"))
+    if definition.completion.handoff and definition.completion.mode not in ("button", "redirect"):
+        completion_problems.append(
+            Problem("completion.handoff", "encaminhamento exige botão ou redirecionamento")
+        )
     return completion_problems + (
         questions.question_problems(definition)
         + condition_problems(definition)
@@ -153,5 +157,11 @@ def compile_definition(
             notices=notices_of(definition.notices),  # os avisos da espera e da falha
         ),
         templates=templates,
-        completion=Completion(**definition.completion.model_dump()),
+        completion=Completion(
+            **definition.completion.model_dump(exclude={"handoff"}),
+            handoff=Handoff(**definition.completion.handoff.model_dump())
+            if definition.completion.handoff
+            else None,
+        ),
+        release_mode=definition.release.mode if definition.release else "automatic",
     )

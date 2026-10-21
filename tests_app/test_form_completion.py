@@ -77,3 +77,77 @@ def test_completion_survives_the_structured_editor_without_entering_the_llm() ->
     }
     edited = FormEdit.of_document(document).screen()
     assert edited["completion"] == document["completion"]
+
+
+def test_manual_release_and_handoff_survive_compiler_and_editor() -> None:
+    from uuid import UUID
+
+    receiver_id = UUID("00000000-0000-0000-0000-000000000010")
+    document = {
+        **legacy_definition("demo"),
+        "release": {"mode": "manual"},
+        "completion": {
+            "mode": "redirect",
+            "url": "https://example.test/next",
+            "handoff": {"receiver_id": str(receiver_id), "receiver_revision": 2},
+        },
+    }
+    spec = compile_definition(document)
+    assert spec.release_mode == "manual"
+    assert spec.completion.handoff.receiver_id == receiver_id
+    edited = FormEdit.of_document(document).screen()
+    assert edited["release"] == {"mode": "manual"}
+    assert edited["completion"]["handoff"] == document["completion"]["handoff"]
+    assert llm_fingerprint(document) == llm_fingerprint(legacy_definition("demo"))
+    assert same_meaning(
+        legacy_definition("demo"), {**legacy_definition("demo"), "release": {"mode": "automatic"}}
+    )
+
+
+@pytest.mark.parametrize("mode", ["result", "confirmation"])
+def test_local_completion_rejects_handoff_at_its_field(mode):
+    document = {
+        **legacy_definition("demo"),
+        "completion": {
+            "mode": mode,
+            "handoff": {
+                "receiver_id": "00000000-0000-0000-0000-000000000010",
+                "receiver_revision": 1,
+            },
+        },
+    }
+    with pytest.raises(DefinitionError) as caught:
+        compile_definition(document)
+    assert any(p.path == "completion.handoff" for p in caught.value.problems)
+
+
+@pytest.mark.parametrize("mode", ["manual", "automatic"])
+def test_capture_rejects_even_explicit_automatic_release(mode):
+    from app.forms import starter
+
+    document = starter.definition(slug="capture", title="Captura", generation="none")
+    with pytest.raises(DefinitionError) as caught:
+        compile_definition({**document, "release": {"mode": mode}})
+    assert any(p.path == "release" for p in caught.value.problems)
+
+
+@pytest.mark.parametrize(
+    "extension",
+    [
+        {"release": {"mode": "automatic"}},
+        {"release": {"mode": "manual"}},
+        {"completion": {"mode": "result", "handoff": None}},
+    ],
+)
+def test_draft_persistence_refuses_new_format_before_verified_floor_two(deps, extension):
+    from app.deployment_contract import DeploymentContractError
+    from app.forms import drafts
+
+    with deps.sessions() as session:
+        draft = drafts.load(session, "demo")
+    with pytest.raises(DeploymentContractError):
+        drafts.save_document(
+            deps, "demo", {**draft.document, **extension}, actor="teste", expected=draft.token
+        )
+    with deps.sessions() as session:
+        assert drafts.load(session, "demo").token == draft.token
