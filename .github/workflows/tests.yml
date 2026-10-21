@@ -49,6 +49,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           persist-credentials: false
+          # A prova de retenção/runtime2 usa a referência0017 pública congelada.
           fetch-depth: 0
 
       - name: Install WeasyPrint system libraries

@@ -17,7 +17,7 @@ from app.models import EventCredential, EventSource, HandoffReceiver, JourneyEve
 
 def test_previous_schema_signatures_are_byte_identical():
     old = subprocess.run(
-        ["git", "show", "b4e2726d2ba0abb8b6c0315f0431111f9823351d:app/migrations/contracts.py"],
+        ["git", "show", "37f0755b8f97d5f9ccc0e96a0e8a36185fc9e42e:app/migrations/contracts.py"],
         capture_output=True,
         check=False,
     )

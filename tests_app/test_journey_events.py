@@ -816,7 +816,7 @@ def test_prior_runtime_two_retains_and_purges_additive_children(world, deps, tmp
         job = session.scalar(sa.select(Job).where(Job.submission_id == submission.id))
         if job:
             job.updated_at, job.expires_at = NOW - timedelta(days=400), NOW - timedelta(days=1)
-    revision = "b4e2726d2ba0abb8b6c0315f0431111f9823351d"
+    revision = "37f0755b8f97d5f9ccc0e96a0e8a36185fc9e42e"
     archive, runtime = tmp_path / "runtime2.tar", tmp_path / "runtime2"
     archived = subprocess.run(
         ["git", "archive", "--format=tar", "-o", str(archive), revision, "app"],
