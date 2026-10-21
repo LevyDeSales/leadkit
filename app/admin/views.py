@@ -975,8 +975,8 @@ class FormRow:
     draft: Badge | None  # o aviso de rascunho não publicado
     review: Badge | None  # o aviso de dados vencidos (`notices`)
     notices: tuple[str, ...]  # o que conferir nos dados do formulário (`app.forms.data_notices`)
-    submissions: str  # "3 envios"
-    jobs_url: str  # a lista de pedidos só deste formulário
+    submissions: str  # "3 respostas"
+    responses_url: str  # os dois históricos de respostas deste formulário
 
 
 form_title = form_queries.form_title  # o nome do formulário; a consulta é dividida com a API
@@ -1007,8 +1007,8 @@ def form_list(
             draft=DRAFT_PENDING if row.draft_pending else None,
             review=DATA_TO_REVIEW if row.notices else None,
             notices=row.notices,
-            submissions=_plural(row.submissions, "envio", "envios"),
-            jobs_url=job_queries.JobFilters(form=row.slug).url(),
+            submissions=_plural(row.submissions, "resposta", "respostas"),
+            responses_url="/admin/responses?" + urlencode({"form": row.slug}),
         )
         for row in form_queries.form_summaries(
             session, forms, public_base_url=public_base_url, now=now

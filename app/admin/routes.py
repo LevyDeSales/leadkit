@@ -185,8 +185,10 @@ def _safe_next(value: str) -> str:
     """Só caminhos do próprio admin, sem query string (evita redirecionamento aberto)."""
     parts = urlsplit(value)
     if parts.scheme or parts.netloc or value.startswith("//") or "\\" in value:
-        return "/admin"
-    return parts.path if parts.path.startswith("/admin") else "/admin"
+        return "/admin/forms"
+    return (
+        parts.path if parts.path == "/admin" or parts.path.startswith("/admin/") else "/admin/forms"
+    )
 
 
 def require_same_origin(request: Request) -> None:
@@ -289,7 +291,7 @@ protected = APIRouter(
 @open_routes.get("/login")
 def login_page(request: Request, next: str = "") -> Response:
     if _auth(request).read(request.cookies.get(COOKIE_NAME)) is not None:
-        return RedirectResponse("/admin", status_code=303)
+        return RedirectResponse(_safe_next(next), status_code=303)
     return templates.TemplateResponse(
         request, "admin/login.html", {"error": None, "next": _safe_next(next)}
     )
@@ -340,6 +342,32 @@ def logout(request: Request) -> Response:
     response = RedirectResponse("/admin/login", status_code=303)
     response.delete_cookie(COOKIE_NAME, path=COOKIE_PATH)
     return response
+
+
+@protected.get("/responses")
+def responses_page(request: Request, form: str = "") -> Response:
+    """Orienta os dois históricos sem consultar respostas nem inferir a finalidade atual."""
+    form = job_queries.JobFilters(form=form).form
+    title = None
+    if form:
+        with get_deps().sessions() as session:
+            title = form_queries.form_title(session, form)
+    return _page(
+        request,
+        "admin/responses.html",
+        {
+            "form": form,
+            "form_title": title,
+            "pdf_url": job_queries.JobFilters(form=form).url(),
+            "captures_url": "/admin/captures" + ("?" + urlencode({"form": form}) if form else ""),
+        },
+    )
+
+
+@protected.get("/advanced")
+def advanced_page(request: Request) -> Response:
+    """Agrupa ferramentas existentes, preservando sua autenticação e permissões."""
+    return _page(request, "admin/advanced.html", {})
 
 
 @protected.get("")

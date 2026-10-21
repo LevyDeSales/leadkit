@@ -1,0 +1,11 @@
+{% extends "admin/layout.html" %}
+{% set section = "advanced" %}
+{% block title %}Avançado{% endblock %}
+{% block content %}
+<div class="page-head"><div><h1>Avançado</h1><p>Recursos técnicos para conectar ferramentas autorizadas ao painel.</p></div></div>
+<div class="stackcol">
+<section class="box"><h2><a href="/admin/api-keys">Chaves de API</a></h2><p>Consulte e administre as chaves que autorizam o acesso de outras ferramentas.</p></section>
+<section class="box"><h2><a href="/admin/mcp">MCP</a></h2><p>Veja como conectar assistentes ao painel, com as permissões da chave escolhida.</p></section>
+<section class="box"><h2><a href="/admin/api/v1/reference">Referência da API</a></h2><p>Consulte as operações disponíveis para suas ferramentas e as permissões necessárias.</p></section>
+</div>
+{% endblock %}

@@ -256,7 +256,7 @@ def test_list_forms_shows_the_same_forms_and_states_as_the_page(
         version = item["published_version"]
         assert (f"Versão {version}" if version else "Nenhuma versão publicada") in shown, slug
         assert item["public_url"] in shown, slug
-        assert re.search(rf"\b{item['submissions']} envios?\b", shown), slug
+        assert re.search(rf"\b{item['submissions']} respostas?\b", shown), slug
 
 
 # --- get_form -----------------------------------------------------------------------------------

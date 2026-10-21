@@ -758,8 +758,9 @@ def test_the_menu_links_to_the_page_and_marks_it_when_it_is_open(client: TestCli
     other = client.get("/admin/assets").text
     own = client.get(KEYS).text
 
-    assert '<a href="/admin/api-keys">' in other
-    assert '<a href="/admin/api-keys" aria-current="page">' in own
+    assert '<a href="/admin/advanced">' in other
+    assert '<a href="/admin/api-keys">' in client.get("/admin/advanced").text
+    assert '<a href="/admin/advanced" aria-current="page">' in own
 
 
 def test_the_form_comes_with_90_days_the_operator_can_empty_and_the_leitura_role(

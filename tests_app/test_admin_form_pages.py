@@ -109,12 +109,14 @@ def test_each_row_tells_the_status_the_published_version_and_the_submissions(
     rows = {slug: text(row) for slug, row in rows_of(client.get("/admin/forms")).items()}
 
     assert all("Ativo" in row for row in rows.values())
-    assert "Versão 2" in rows[SLUG] and "2 envios" in rows[SLUG]
-    assert "Versão 1" in rows["demo"] and "1 envio" in rows["demo"] and "0 envios" in rows["mcc"]
-    # O número de envios leva à lista de pedidos só daquele formulário.
+    assert "Versão 2" in rows[SLUG] and "2 respostas" in rows[SLUG]
+    assert (
+        "Versão 1" in rows["demo"] and "1 resposta" in rows["demo"] and "0 respostas" in rows["mcc"]
+    )
+    # O total abre os dois históricos, preservando o formulário.
     raw = rows_of(client.get("/admin/forms"))
-    assert tags(raw["demo"], "a", href="/admin?form=demo")
-    assert tags(raw[SLUG], "a", href=f"/admin?form={SLUG}")
+    assert tags(raw["demo"], "a", href="/admin/responses?form=demo")
+    assert tags(raw[SLUG], "a", href=f"/admin/responses?form={SLUG}")
 
 
 def test_without_javascript_the_address_is_a_link_and_the_copy_button_stays_hidden(

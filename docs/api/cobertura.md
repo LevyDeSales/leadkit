@@ -30,46 +30,13 @@ o OpenAPI e exigem uma operação ou justificativa para cada rota.
   `openapi.json` e o teste que a prova está citado) ou `fora (letra)`, uma rota sem par, com o motivo
   em ["O que não entra na API"](#o-que-não-entra-na-api-e-por-quê).
 
-## Totais
+## Verificação da cobertura
 
-| Recurso | Rotas | Funções | Operações da API | Fora |
-| --- | ---: | ---: | ---: | ---: |
-| Acesso (login e sessão) | 3 | 3 | 0 | 3 |
-| Pedidos | 8 | 8 | 8 | 0 |
-| Projeções de plano | 1 | 1 | 1 | 0 |
-| Capturas | 3 | 3 | 3 | 0 |
-| Central de integrações | 1 | 1 | 1 | 0 |
-| Destinos do webhook | 11 | 6 | 6 | 0 |
-| Formulários: cadastro, situação e retenção | 10 | 10 | 8 | 2 |
-| Versões | 3 | 3 | 3 | 0 |
-| Rascunho: editor | 6 | 6 | 5 | 1 |
-| Rascunho: PDF e prévias | 4 | 4 | 4 | 0 |
-| Rascunho: testes | 7 | 7 | 6 | 0 |
-| Rascunho: publicação | 2 | 2 | 2 | 0 |
-| Integração com o Baserow | 8 | 8 | 8 | 0 |
-| Imagens dos formulários | 5 | 5 | 5 | 0 |
-| Chaves de API | 3 | 3 | 3 | 0 |
-| Configurar o MCP | 2 | 2 | 1 | 1 |
-| Continuidade e credenciais de serviço | 7 | 7 | 9 | 0 |
-| **Total** | **84** | **79** | **72** | **7** |
-
-O total considera operações únicas; recursos podem compartilhar a mesma operação.
-
-- **84 rotas** (`GET` e `POST`; o admin não usa outro método), de **79 funções**: as cinco ações dos
-  destinos (ver, endereço, segredo, remoção e teste) existem para o destino padrão e para o de um
-  formulário, com a mesma função.
-- **77 rotas têm par na API**, em **70 operações** (algumas rotas dividem a operação: as duas dos
-  destinos, o editor do PDF e o do formulário, que salvam o mesmo rascunho, a página do teste e o
-  trecho do polling, e a criação de chave da página das chaves e a da tela do MCP). **7 rotas ficam
-  fora**: o login e a saída (a chave substitui a sessão), três telas sem dado nem ação e a tela de
-  configurar o MCP.
-- O editor estruturado do rascunho tem **48 operações** dentro de uma rota só (`POST
-  /admin/forms/{slug}/draft/edit`): 42 viram uma edição do documento e 6 são só redesenho da tela
-  ([a tabela](#operações-do-editor-48)).
-- Mais **2 operações novas**, sem rota no admin (`get_current_api_key` e `list_audit_log`): ver
-  [as novas](#operações-novas-sem-rota-no-admin).
-- Total da API: **62 operações** (60 + 2), as mesmas do `docs/api/openapi.json` (o teste de cobertura
-  confere). **Nenhuma linha está `falta`**: a cobertura está fechada.
+O [inventário por recurso](#inventário-por-recurso) registra cada rota e sua operação da API ou
+justificativa de exceção. As operações estão no [contrato OpenAPI](openapi.json), e o
+[teste de cobertura](../../tests_app/test_admin_api_coverage.py) confere o inventário contra as
+rotas do app, o OpenAPI e as operações dos editores. A cobertura está fechada: nenhuma linha
+pode ficar `falta`.
 
 ## Inventário por recurso
 
@@ -77,9 +44,16 @@ O total considera operações únicas; recursos podem compartilhar a mesma opera
 
 | Rota atual | O que faz | Serviço hoje | Operação da API | `operation_id` | Papel | Marcas | Status |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `GET /admin/login` | Mostra o formulário de login; com sessão válida, vai para `/admin` | `AdminAuth.read` | — | — | — | — | fora (A) |
+| `GET /admin/login` | Mostra o formulário de login; com sessão válida, segue o `next` seguro dentro do admin, sem query string, ou `/admin/forms` por padrão | `AdminAuth.read` | — | — | — | — | fora (A) |
 | `POST /admin/login` | Confere usuário e senha (argon2), bloqueia o IP após 5 falhas, abre a sessão com o token CSRF | `AdminAuth.check_credentials`, `LoginThrottle` | — | — | — | — | fora (A) |
 | `POST /admin/logout` | Encerra a sessão e apaga o cookie | `AdminAuth` | — | — | — | — | fora (A) |
+
+### Navegação HTML
+
+| Rota atual | O que faz | Serviço hoje | Operação da API | `operation_id` | Papel | Marcas | Status |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `GET /admin/responses` | Orienta a operadora para os históricos de pedidos com PDF e respostas sem PDF, preservando o filtro de formulário | `routes.responses_page`; `queries.forms.form_title` só para o título de navegação | — | — | — | — | fora (B) |
+| `GET /admin/advanced` | Agrupa links para ferramentas existentes, sem executar suas operações | `routes.advanced_page` | — | — | — | — | fora (B) |
 
 ### Pedidos
 
@@ -445,12 +419,17 @@ Ler a auditoria não a grava: só as escritas são auditadas (decisão 2 da revi
 - **(A) Login por senha, sessão e saída** (3 rotas). A API autentica por chave a cada chamada: não há
   sessão, cookie, token CSRF nem bloqueio de login por IP a replicar (a chave errada tem o bloqueio
   próprio, o mesmo mecanismo). Entrar com a senha continua sendo só pelo navegador.
-- **(B) Telas sem dado nem ação** (3 rotas): a tela da importação (`GET /admin/forms/import`), a de
-  criar um formulário (`GET /admin/forms/new`) e a moldura da prévia da página pública
+- **(B) Telas de navegação ou sem dado nem ação** (5 rotas): a tela da importação
+  (`GET /admin/forms/import`), a de criar um formulário (`GET /admin/forms/new`) e a moldura da prévia da página pública
   (`GET /admin/forms/{slug}/draft/preview`). A primeira e a segunda são formulários vazios (as
   sugestões de título e de endereço da cópia são conveniência de digitação; quem cria pela API manda
   o que quer, e a lista dos formulários de onde copiar é `list_forms`). A terceira é só o `iframe`
-  que aponta para `.../preview/frame`, que tem a operação dele.
+  que aponta para `.../preview/frame`, que tem a operação dele. Os hubs protegidos
+  `GET /admin/responses` e `GET /admin/advanced` são navegação HTML: o primeiro orienta para os
+  históricos já cobertos, preservando o filtro de formulário e consultando só seu título para
+  contexto; o segundo agrupa links para ferramentas existentes. Não acrescentam leitura de
+  respostas nem operação de negócio: as operações dos destinos continuam cobertas pela API e
+  pelo MCP, sem operação ou ferramenta nova para os links.
 - **(C) Redesenho do editor** (6 operações dentro de `draft/edit`). `refresh-question`,
   `refresh-rule`, `refresh-operator`, `plan-refresh`, `data-refresh` e `scoring-refresh-rule` só
   refazem a tela depois de uma troca de tipo ou de operador. O documento não guarda o estado da tela.
