@@ -8,6 +8,8 @@ O motor usa Python 3.11, FastAPI, PostgreSQL 16, Hatchet, OpenAI e WeasyPrint. P
 armazenamento local funcionam com conteúdo fictício; o processamento pela fila exige um Hatchet
 configurado e um worker conectado.
 
+Para operar formulários, respostas e integrações, consulte o [guia da operadora](docs/guia-da-operadora/README.md).
+
 ## Instalação
 
 Instale Python 3.11, uv, PostgreSQL 16 e as bibliotecas nativas do WeasyPrint (Pango e HarfBuzz).
