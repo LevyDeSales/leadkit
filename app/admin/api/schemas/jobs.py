@@ -459,7 +459,9 @@ def _state_fields(state: queries.JobState, run_url_template: str | None) -> dict
     return {
         "current_pdf": availability_dict(state.current_pdf),
         "public_id": state.public_id,
-        "release": ReleaseStatus(**state.release),
+        "release": ReleaseStatus(
+            **{**state.release, "released_at": utc(state.release["released_at"])}
+        ),
         "status": state.status,
         "stage": state.stage,
         "attempt": state.attempt,
@@ -528,6 +530,7 @@ class CurrentPdf(BaseModel):
 
 
 class ReleaseStatus(BaseModel):
+    form_version_number: int | None
     policy: Literal["automatic", "manual", "unavailable"]
     state: Literal["automatic", "held", "released", "unavailable"]
     release_version: int
@@ -745,4 +748,5 @@ class ReleasedJobPdf(BaseModel):
 
         data = asdict(done.commit)
         data.pop("delivery_ids")
+        data["occurred_at"] = utc(data["occurred_at"])
         return cls(**data, notifications=list(done.notifications), launched=done.launched)

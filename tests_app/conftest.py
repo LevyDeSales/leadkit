@@ -201,18 +201,23 @@ def memoized_compile(original: Callable[..., FormSpec]) -> Callable[..., FormSpe
     def compile_once(
         document: Any, *, version_number: int = FIRST_VERSION, clock: Any = utc_now
     ) -> FormSpec:
-        if clock is not utc_now:
-            return original(document, version_number=version_number, clock=clock)
         if isinstance(document, bytes | str):
-            as_text = document.decode() if isinstance(document, bytes) else document
+            try:
+                as_text = document.decode() if isinstance(document, bytes) else document
+            except UnicodeDecodeError:
+                # O parser público conserva o erro de domínio para bytes sem UTF-8.
+                return original(document, version_number=version_number, clock=clock)
         else:
             # `sort_keys`: o JSONB do banco devolve as chaves de um objeto noutra ordem que o arquivo, e
             # a ordem delas não é do documento (o banco nem a guarda); a das listas é, e fica na chave.
             as_text = json.dumps(document, sort_keys=True, ensure_ascii=False, default=str)
-        key = (hashlib.sha256(as_text.encode()).hexdigest(), version_number)
-        if key not in _COMPILED:
-            _COMPILED[key] = original(document, version_number=version_number, clock=clock)
-        spec = _COMPILED[key]
+        if clock is not utc_now:
+            spec = original(document, version_number=version_number, clock=clock)
+        else:
+            key = (hashlib.sha256(as_text.encode()).hexdigest(), version_number)
+            if key not in _COMPILED:
+                _COMPILED[key] = original(document, version_number=version_number, clock=clock)
+            spec = _COMPILED[key]
         _COMPILED_DOCUMENTS[(spec.slug, spec.version_number, spec.version)] = json.loads(as_text)
         return spec
 
@@ -956,6 +961,11 @@ def publish(deps: Deps, *versions: FormSpec) -> None:
         for spec in versions:
             document = _COMPILED_DOCUMENTS.get((spec.slug, spec.version_number, spec.version))
             form_id = session.scalar(sa.select(Form.id).where(Form.slug == spec.slug))
+            if document is not None and form_id is None:
+                form = Form(slug=spec.slug, title=spec.title, created_by="testes")
+                session.add(form)
+                session.flush()
+                form_id = form.id
             exists = (
                 session.scalar(
                     sa.select(FormVersion.id).where(
