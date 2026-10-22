@@ -59,6 +59,7 @@ def testing(
     scoring: bool = False,
     prompt_only: bool = False,
     now: datetime,
+    expected_version: str | None = None,
 ) -> Testing:
     """O estado do teste do rascunho de `slug`: o prompt montado com as `answers` (as de exemplo, se
     `None`; texto JSON da página ou objeto da API) e a data simulada `day` ou, com `scoring`, a
@@ -71,6 +72,7 @@ def testing(
         draft = drafts.load(session, slug)
     if draft is None:
         raise UnknownForm(slug)
+    draft_tests.check_version(draft, expected_version)
     assembled = scored = None
     problems: tuple[Problem, ...] = ()
     try:
@@ -166,6 +168,7 @@ async def start(
     answers: str | Mapping[str, Any] | None,
     day: str,
     now: datetime,
+    expected_version: str | None = None,
 ) -> Started:
     """Põe na fila o teste do rascunho salvo do formulário `slug`, em nome de `actor`, e dispara a
     task `draft_test` (`test_trigger` é o `app.state.test_trigger`). `answers` são as respostas
@@ -176,7 +179,14 @@ async def start(
     `DraftTestRefused` (um teste em andamento, ou a pausa depois do último); nada é gravado nem
     disparado nesses casos."""
     test_id = await run_in_threadpool(
-        draft_tests.start, deps, slug, actor=actor, answers=answers, day=day, now=now
+        draft_tests.start,
+        deps,
+        slug,
+        actor=actor,
+        answers=answers,
+        day=day,
+        now=now,
+        expected_version=expected_version,
     )
     launched = await launching.launch_draft_test(test_trigger, test_id)
     if not launched:

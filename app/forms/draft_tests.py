@@ -96,6 +96,19 @@ class DraftTestRefused(Exception):
         return self.retry_after is not None
 
 
+VERSION_CONFLICT = "O rascunho salvo mudou. Confira a origem e tente novamente com a versão atual."
+
+
+class DraftVersionConflict(Exception):
+    """A origem esperada ou o snapshot montado deixou de ser atual, sem efeitos."""
+
+
+def check_version(draft: Draft, expected_version: str | None) -> None:
+    """Compara o token no próprio snapshot usado pela operação; None mantém o contrato legado."""
+    if expected_version is not None and draft.token != expected_version:
+        raise DraftVersionConflict(VERSION_CONFLICT)
+
+
 @dataclass(frozen=True)
 class DraftTestResult:
     """Um teste do rascunho e o resultado dele, como as páginas mostram. `status` é o da linha,
@@ -223,6 +236,7 @@ def start(
     answers: str | Mapping[str, Any] | None = None,
     day: str = "",
     now: datetime,
+    expected_version: str | None = None,
 ) -> uuid.UUID:
     """Põe na fila um teste do rascunho salvo, em nome de `actor`, com as respostas (texto JSON da
     página ou objeto da API) e a data do `assemble`, e devolve o id. Quem dispara a task
@@ -234,6 +248,7 @@ def start(
         draft = load(session, slug)
     if draft is None:
         raise UnknownForm(slug)
+    check_version(draft, expected_version)
     assembled = assemble(draft, answers=answers, day=day, now=now)
     test_id = uuid.uuid4()
     simulated = assembled.simulated
@@ -244,6 +259,10 @@ def start(
             assert_definition_contract(session, draft.document)
             # A linha do formulário serializa dois cliques: o segundo vê o primeiro na fila.
             session.execute(sa.select(Form.id).where(Form.id == draft.form_id).with_for_update())
+            latest = load(session, slug)
+            if latest is None or latest.form_id != draft.form_id or latest.token != draft.token:
+                raise DraftVersionConflict(VERSION_CONFLICT)
+            check_version(latest, expected_version)
             _interrupt_overdue(session, draft.form_id, now)
             _refuse_while_busy(session, draft.form_id, now)
             _keep_latest(session, draft.form_id, KEEP_TESTS - 1)

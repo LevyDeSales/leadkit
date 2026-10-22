@@ -577,3 +577,22 @@ mas não declara fatos comerciais em nome delas. Toda gestão e consulta abaixo 
 | --- | --- | --- | --- | --- | --- |
 | `list_event_credentials` | `GET /event-sources/{source_id}/credentials` | Metadados de credenciais sem segredo ou hash | leitura | — | feita · tests_app/test_journey_events.py::test_credential_expiry_rotation_replay_and_policy_revision |
 | `list_submission_journey_events` | `GET /submissions/{submission_id}/journey/events` | Histórico paginado por recebimento e ID local, com filtros GET na tela de jornada | leitura | lead | feita · tests_app/test_journey_events.py::test_history_paginates_and_multiple_sources_do_not_merge |
+
+### Simulação por campos e origem esperada
+
+Os POSTs HTML de prompt, pontuação, captura e início de teste aceitam `input_mode=fields|json`;
+sem o campo, mantêm o JSON legado. A tela oferece os seis tipos já compilados e mantém JSON em
+Avançado, sem mesclar entradas. Respostas visuais usam namespace HTML `_simulation_`, separado dos controles
+administrativos; o adaptador restaura os nomes do domínio sem alterar JSON/API. O modo visual exige `expected` da origem salva; erros 422/409
+preservam respostas permitidas e data. A confirmação da chamada paga é explícita na tela nova.
+
+Os requests API correspondentes recebem `expected_version` opcional (`get_form_draft.version`),
+sem alterar a semântica dos clientes antigos. Divergência retorna `409 state_conflict`. O início
+revalida o snapshot após configuration-lock → Form, antes de DraftTest, auditoria e trigger;
+respostas, definição, prompt e fingerprints pertencem à mesma origem. Confirmação da API,
+pausas e `Retry-After` permanecem. MCP deriva esse argumento do OpenAPI, sem ferramenta por campo.
+GET, prompt, pontuação e captura não chamam IA ou fornecedores nem criam submissão, pedido ou
+outbox público. Evidências: `tests_app/test_admin_simulation.py`,
+`test_stale_expected_version_refuses_without_effects`,
+`test_edit_between_assembly_and_lock_refuses_before_enqueue` e
+`test_expected_version_conflict_is_compatible_and_has_no_effects`.

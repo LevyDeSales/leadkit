@@ -1,0 +1,35 @@
+{% import "public/_macros.html" as fields %}
+<p><strong>Rascunho salvo</strong></p>
+<input type="hidden" name="expected" value="{{ simulation.expected }}">
+<p class="muted">Use respostas fictícias. Conferir as instruções para IA, calcular pontuação e validar captura não chamam IA. Alterações no editor precisam ser salvas antes de simular.</p>
+{% if simulation.expected != simulation.current_version %}
+<p role="alert">A origem mudou. <a href="/admin/forms/{{ simulation_slug }}/draft/tests">Abrir o rascunho salvo atual</a>. Confira suas respostas antes de tentar novamente.</p>
+{% endif %}
+<fieldset class="fieldset"><legend>Como você quer responder?</legend>
+<label><input type="radio" name="input_mode" value="fields"{% if simulation.input_mode == 'fields' %} checked{% endif %}> Preencher campos</label>
+<details{% if simulation.input_mode == 'json' %} open{% endif %}>
+<summary>Avançado: respostas JSON</summary>
+<label><input type="radio" name="input_mode" value="json"{% if simulation.input_mode == 'json' %} checked{% endif %}> Usar somente o JSON abaixo</label>
+<p class="muted">Os modos são separados. No modo JSON, em branco usa exemplos; {} envia respostas vazias.</p>
+<label for="{{ simulation.json_id }}">Respostas (JSON)</label>
+<textarea class="input mono" id="{{ simulation.json_id }}" name="answers" rows="10" spellcheck="false" autocomplete="off"{% if simulation.json_errors %} aria-invalid="true" aria-describedby="{{ simulation.json_id }}-erro" autofocus{% endif %}>{{ simulation_answers }}</textarea>
+{% if simulation.json_errors %}<p class="error" id="{{ simulation.json_id }}-erro">{{ simulation.json_errors | join(" · ") }}</p>{% endif %}
+</details>
+</fieldset>
+<div data-simulation-fields>
+{% set failed = namespace(any=false) %}
+{% for step in simulation.steps %}{% for view in step.questions %}{% if view.error %}{% set failed.any = true %}{% endif %}{% endfor %}{% endfor %}
+{% if failed.any %}<div class="alert alert--error" role="alert" tabindex="-1" data-simulation-errors><div><strong>Confira as respostas</strong><ul>
+{% for step in simulation.steps %}{% for view in step.questions %}{% if view.error %}
+<li><a href="#{{ view.id }}{{ '-0' if view.question.kind in ('choice', 'choices') else '' }}">{{ view.question.label }}: {{ view.error }}</a></li>
+{% endif %}{% endfor %}{% endfor %}
+</ul></div></div>{% endif %}
+{% for step in simulation.steps %}
+<section aria-labelledby="simulation-step-{{ step.number }}"><h3 id="simulation-step-{{ step.number }}">{{ step.title }}</h3>
+{% if step.help %}<p>{{ step.help }}</p>{% endif %}
+{% for view in step.questions %}{{ fields.question(view) }}{% endfor %}
+</section>
+{% else %}<p role="alert">Não foi possível montar os campos. Confira o rascunho ou use o modo JSON avançado.</p>{% endfor %}
+</div>
+{% if simulation.conditions %}<script type="application/json" data-simulation-conditions>{{ simulation.conditions | tojson }}</script>{% endif %}
+<noscript><p>Sem JavaScript, todas as perguntas aparecem. O servidor considera apenas as perguntas visíveis pelas condições e recusa alternativas indisponíveis.</p></noscript>

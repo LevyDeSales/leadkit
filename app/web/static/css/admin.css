@@ -560,3 +560,8 @@ fieldset.field { border: 0; margin: 0; padding: 0; min-width: 0; }
   .hub-table td:not(.who) { display: block; }
   .hub-table td:not(.who)::before { display: block; margin-top: 8px; }
 }
+
+/* Os controles públicos reutilizados na simulação seguem a largura da coluna administrativa. */
+[data-simulation-fields] .fieldset { border: 1px solid var(--line, #d1d5db); padding: 1rem; margin-block: 1rem; min-width: 0; }
+[data-simulation-fields] .choices { display: grid; gap: .6rem; }
+[data-simulation-fields] [hidden] { display: none !important; }

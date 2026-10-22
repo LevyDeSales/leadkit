@@ -18,27 +18,33 @@
 
 **Onde entrar:** rascunho com “Somente salvar respostas” → “Testar o rascunho”.
 
-1. Em “Teste local”, deixe “Respostas JSON (em branco: exemplo)” vazio para usar o exemplo salvo ou peça ajuda para informar outras respostas fictícias nesse formato.
+1. Confira a origem “Rascunho salvo” e preencha os campos com respostas fictícias. Perguntas e alternativas seguem as condições do formulário; não é necessário consentimento real.
 2. Escolha “Data simulada”, se precisar conferir regras de uma data específica.
 3. Clique em “Validar captura”.
 4. Confira “Respostas válidas”, pontuação e mensagem de conclusão; use “Conferir conclusão” para a apresentação.
 
 **Resultado:** validação local, sem inteligência artificial, PDF, envio persistido ou entrega a uma integração. O teste não aparecerá como uma captura recebida.
 
-**Se recusar:** siga o link de erro de respostas ou data e corrija o exemplo ou as regras. Se o erro for da estrutura JSON, peça ajuda técnica.
+**Se recusar:** siga os links dos campos com erro e corrija as respostas ou a data. Os valores permanecem na tela. Se a origem salva mudou, confira suas respostas e use “Abrir o rascunho salvo atual” antes de tentar novamente.
 
 ## Testar a geração do PDF
 
 **Onde entrar:** rascunho com geração de PDF → “Testar o rascunho”.
 
-1. Deixe “Respostas (JSON)” em branco para usar as respostas de exemplo, sempre fictícias; use “Data simulada” quando necessário.
+1. Confira “Rascunho salvo”, preencha os campos com respostas fictícias e escolha “Data simulada” quando necessário. Campo vazio significa sem resposta; não carrega exemplos automaticamente.
 2. Use “Montar o prompt” para ler o que será enviado à inteligência artificial e “Calcular a pontuação” para conferir as notas. Essas ações não fazem a chamada de geração.
-3. Quando estiver pronta para um teste real, clique em “Testar com o LLM”. Ele chama o serviço de inteligência artificial, pode ter custo e inclui as rodadas de reparo necessárias; também gera o PDF. Há um limite de um teste por vez e uma pausa entre testes.
+3. Quando estiver pronta para um teste real, marque a confirmação da chamada de IA e do possível custo e clique em “Gerar plano de teste com IA”. Ele chama o serviço de inteligência artificial, pode ter custo e inclui as rodadas de reparo necessárias; também gera o PDF. Há um limite de um teste por vez e uma pausa entre testes.
 4. Aguarde o resultado, abra o teste em “Testes recentes” e, quando disponível, use “Baixar o PDF do teste”. Confira o plano e a apresentação.
 
 **Resultado:** um teste guardado temporariamente, sem criar pedido nem mandar webhook. A tela informa quantos testes e por quantos dias são conservados. O plano mostrado no detalhe do teste inclui os campos internos; não o compartilhe como se fosse a saída da participante.
 
 **Se falhar:** leia a mensagem e o que foi enviado. Corrija e salve antes de testar de novo. Se a infraestrutura estiver indisponível, peça ajuda técnica; não repita cliques esperando acelerar a fila. Um teste antigo pode não cobrir as mudanças atuais.
+
+## Usar respostas JSON no modo avançado
+
+Abra “Avançado: respostas JSON” e selecione “Usar somente o JSON abaixo”. Esse modo ignora os campos visuais: as entradas não são mescladas. JSON em branco usa explicitamente os exemplos salvos; `{}` representa respostas vazias e pode falhar nas perguntas obrigatórias. Para voltar, selecione “Preencher campos”. A data simulada vale para o modo escolhido.
+
+Com teclado, use Tab para percorrer campos e ações; nos grupos, use as teclas de seleção do navegador. Sem JavaScript, todas as perguntas aparecem, mas o servidor considera apenas as perguntas visíveis pelas condições e recusa alternativas indisponíveis. Erros têm links para os campos e preservam a entrada. Uma origem alterada pede revisão antes de uma nova tentativa; salvar o editor continua sendo uma ação separada.
 
 ## Publicar uma versão
 
