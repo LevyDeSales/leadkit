@@ -152,9 +152,10 @@ MAX_SECONDS = 1.0
 
 
 def took(read: Callable[[], object]) -> float:
-    started = time.perf_counter()
+    # Mede o custo de CPU da entrada hostil, sem cobrar a espera por CPU no runner compartilhado.
+    started = time.process_time()
     read()
-    return time.perf_counter() - started
+    return time.process_time() - started
 
 
 COMMENTS = {
