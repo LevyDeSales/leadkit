@@ -25,8 +25,8 @@ dependencies = [
   "hatchet-sdk==1.41.1",
   "jinja2>=3.1",
   "weasyprint>=70,<71",
-  "pillow>=12",
-  "pypdf>=5",
+  "pillow>=13.0.0",
+  "pypdf>=6.21.1",
   "itsdangerous>=2.2",
   "argon2-cffi>=23.1",
   "cryptography>=42",
@@ -54,6 +54,10 @@ include = ["app", "app.*"]
 
 [tool.setuptools.package-data]
 app = ["alembic.ini", "migrations/script.py.mako", "migrations/**/*.json", "forms/**/*.json", "forms/**/*.html", "forms/**/*.css", "forms/**/*.md", "assets/**/*", "web/static/**/*", "web/templates/**/*", "admin/templates/**/*"]
+
+[tool.uv]
+# Piso de segurança para o bundle de CAs usado pelos clientes HTTP transitivos.
+constraint-dependencies = ["certifi>=2026.10.19"]
 
 [tool.ruff]
 line-length = 100
