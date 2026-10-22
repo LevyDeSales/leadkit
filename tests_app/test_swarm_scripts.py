@@ -9,7 +9,9 @@ deploy`, e que as recusas acontecem antes de qualquer migration ou deploy.
 import os
 import shutil
 import subprocess
+import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -1599,12 +1601,15 @@ def test_terminal_task_convergence_has_deadline_before_ddl(
     elif reap == "wait_without_destroy":
         monkeypatch.setenv("STUB_NO_DESTROY", "1")
     clock = [0.0]
-    monkeypatch.setattr("deploy.swarm.rollout.time.monotonic", lambda: clock[0])
 
     def advance(seconds):
         clock[0] += 10
 
-    monkeypatch.setattr("deploy.swarm.rollout.time.sleep", advance)
+    # Só o helper usa o relógio falso; subprocess precisa do sleep real no polling de wait.
+    monkeypatch.setattr(
+        "deploy.swarm.rollout.time",
+        SimpleNamespace(monotonic=lambda: clock[0], sleep=advance, time_ns=time.time_ns),
+    )
     with pytest.raises(RolloutError, match="estado terminal no prazo"):
         rollout_client.execute()
     assert clock[0] == 30
@@ -1627,8 +1632,12 @@ def test_process_grace_period_does_not_consume_task_convergence_deadline(
         return run(args, **kwargs)
 
     monkeypatch.setattr("deploy.swarm.rollout.subprocess.run", docker_run)
-    monkeypatch.setattr("deploy.swarm.rollout.time.monotonic", lambda: clock[0])
-    monkeypatch.setattr("deploy.swarm.rollout.time.sleep", lambda seconds: None)
+    monkeypatch.setattr(
+        "deploy.swarm.rollout.time",
+        SimpleNamespace(
+            monotonic=lambda: clock[0], sleep=lambda seconds: None, time_ns=time.time_ns
+        ),
+    )
     rollout_client.execute()
     assert rollout_state(server)["phase"] == "verified"
 
