@@ -13,7 +13,8 @@
 <div class="page-head">
   <div>
     <h1>Integração com o Baserow</h1>
-    <p>Cada pedido concluído de “{{ page.form_title }}” vira uma linha numa tabela do Baserow. Se o pedido é reenviado ou reprocessado, a linha dele é atualizada, nunca duplicada.</p>
+    <p>Esta página consulta os campos atuais no Baserow ao abrir, quando há conexão legível. A leitura não envia uma linha de teste nem ativa a integração.</p>
+    <p>Quando a conexão está ativa e o perfil está preparado, {{ 'as respostas salvas' if page.profile == 'capture' else 'os pedidos concluídos' }} de “{{ page.form_title }}” são enviados para a tabela. O identificador mapeado permite atualizar a mesma linha nos reenvios.</p>
   </div>
   {% if page.state %}<div class="badges">{{ m.badge(page.state) }}</div>{% endif %}
 </div>
