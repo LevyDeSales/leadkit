@@ -11,7 +11,7 @@
 <div class="field">
   <label for="{{ id }}">{{ label }}</label>
   <p class="muted field__hint" id="{{ id }}-dica">{{ hint }}</p>
-  <textarea class="input mono" id="{{ id }}" name="{{ name }}" rows="{{ rows }}" spellcheck="false" autocomplete="off" aria-describedby="{{ id }}-dica{% if name in page.invalid %} problemas{% endif %}"{% if name in page.invalid %} aria-invalid="true"{% endif %}>
+  <textarea class="input mono" id="{{ id }}" name="{{ name }}" rows="{{ rows }}" spellcheck="false" autocomplete="off" aria-describedby="{{ id }}-dica{% if name in page.invalid %} problemas{% endif %}"{% if name in page.invalid %} aria-invalid="true"{% endif %}{% if page.structure.focus == id %} autofocus{% endif %}>
 {{ page.texts[name] }}</textarea>
 </div>
 {%- endmacro %}
@@ -25,18 +25,24 @@
     <h1>Rascunho de {{ page.nav.title }}</h1>
     <p class="meta"><span class="mono">{{ page.nav.slug }}</span>{% if not page.summary.published %}<span>ainda não publicado: a primeira publicação cria a versão 1</span><span>salvo por {{ page.summary.saved_by }} em {{ m.when(page.summary.saved) }}</span>{% elif page.summary.badge %}<span>a partir da versão {{ page.summary.base_version }}</span>{% if page.summary.saved_by %}<span>salvo por {{ page.summary.saved_by }} em {{ m.when(page.summary.saved) }}</span>{% endif %}{% if page.summary.stale_assets %}<span>imagem trocada: {{ page.summary.stale_assets|join(", ") }}</span>{% endif %}{% else %}<span>igual à versão {{ page.summary.current_version }}, a publicada</span>{% endif %}</p>
   </div>
+  <p id="editor-save-state" role="status" aria-live="polite">{{ "Edição ainda não salva" if page.unsaved else "Rascunho salvo" }}</p>
   <div class="badges">{% if page.summary.badge %}{{ m.badge(page.summary.badge) }}{% endif %}</div>
   <p class="btns" id="acoes"><a class="btn btn--secondary" href="{{ page.nav.preview_url }}">{{ m.icon('smartphone') }}Ver a página no celular</a><a class="btn btn--secondary" href="{{ page.nav.pdf_url }}">Editar o PDF e a prévia</a><a class="btn btn--secondary" href="{{ page.nav.tests_url }}">Testar o rascunho</a>{% if page.summary.badge %}<a class="btn btn--primary" href="{{ page.nav.publish_url }}">Publicar…</a>{% if page.nav.compare_url %}<a class="btn btn--ghost" href="{{ page.nav.compare_url }}">O que muda em relação à versão {{ page.summary.current_version }}</a>{% endif %}{% endif %}</p>
+  <p>Versão publicada: {{ page.summary.current_version if page.summary.published else "ainda não publicada" }}. Salvar altera somente o rascunho.</p>
 </header>
+<nav class="editor-index" aria-label="Tarefas do editor">
+  <a href="#perguntas">Perguntas</a><a href="#dados-consentimentos">Dados e consentimentos</a><a href="#apos-envio">Após o envio</a><a href="#plano-apresentacao">Plano e apresentação</a><a href="#avancado">Avançado</a>
+</nav>
+<noscript><p class="alert">As alterações nesta página exigem “Salvar o rascunho”. Sem JavaScript, a indicação de estado só muda após enviar a edição.</p></noscript>
 
 {#- O editor vem primeiro: na tela estreita, as variáveis ficam embaixo, como consulta. -#}
 <div class="cols">
   <div class="stackcol">
     {% if page.message %}
-    <div class="alert alert--warn" role="alert" id="aviso">{{ m.icon('alert-triangle', 'icon--lg') }}<div><strong class="alert__title">{{ page.message }}</strong></div></div>
+    <div class="alert alert--warn" role="alert" id="aviso" tabindex="-1">{{ m.icon('alert-triangle', 'icon--lg') }}<div><strong class="alert__title">{{ page.message }}</strong></div></div>
     {% endif %}
     {% if page.problems %}
-    <div class="alert alert--error" role="alert" id="problemas">{{ m.icon('alert-circle', 'icon--lg') }}<div><strong class="alert__title">O rascunho não foi salvo: {{ page.problems|length }} {{ "problema" if page.problems|length == 1 else "problemas" }}</strong>
+    <div class="alert alert--error" role="alert" id="problemas" tabindex="-1">{{ m.icon('alert-circle', 'icon--lg') }}<div><strong class="alert__title">O rascunho não foi salvo: {{ page.problems|length }} {{ "problema" if page.problems|length == 1 else "problemas" }}</strong>
       <ul class="items">
         {%- for problem in page.problems %}
         <li><a href="{{ problem.href or ('#' ~ problem.target) }}">{{ problem.where }}:</a> {{ problem.message }}</li>
@@ -45,10 +51,12 @@
     </div></div>
     {% endif %}
 
-    <form class="stackcol" id="editor-form" method="post" action="{{ page.nav.draft_url }}">
+    <form class="stackcol" id="editor-form" data-unsaved="{{ 'true' if page.unsaved else 'false' }}" method="post" action="{{ page.nav.draft_url }}">
       <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
       <input type="hidden" name="expected" value="{{ page.token }}">
 
+      <section class="editor-task stackcol" id="perguntas" aria-labelledby="perguntas-titulo">
+        <h2 id="perguntas-titulo">Perguntas</h2>
       <section class="box" id="pagina" aria-labelledby="pagina-titulo">
         <h2 id="pagina-titulo">Página pública</h2>
         <p class="muted">O que está no ar só muda quando você publicar. Salvar confere a definição inteira; o que não compila não é salvo, e cada problema aparece no campo dele.</p>
@@ -61,27 +69,38 @@
           {%- endif %}
           {{ f.field("intro", "Introdução", s.edit.intro, hint="O texto de entrada da página, ao lado do título.", area=True, rows=3) }}
           {{ f.field("minutes", "Tempo para responder, em minutos", s.edit.minutes, hint="De 1 a 60.") }}
-          {#- O aviso extra das páginas que a lead vê depois do envio: título, texto e um link opcional. -#}
-          {%- for page_key, legend, when in s.notices %}
-          {%- set n = "notices." ~ page_key %}
-          {%- set notice = s.edit.notices.pages[page_key] %}
-          <fieldset class="edit-step" id="{{ s.field_id(n) }}" aria-describedby="{{ s.field_id(n) }}-dica">
-            <legend>{{ legend }} <span class="opt">(opcional)</span></legend>
-            <p class="muted field__hint" id="{{ s.field_id(n) }}-dica">{{ when }} É texto puro, sem HTML.</p>
-            {{ f.error_for(n) }}
-            <div class="form-stack">
-              {{ f.field(n ~ ".title", "Título do aviso", notice.title) }}
-              {{ f.field(n ~ ".text", "Texto do aviso", notice.text, hint="Uma linha em branco separa os parágrafos.", area=True, rows=4) }}
-              {{ f.field(n ~ ".link.label", "Rótulo do link", notice.link_label, hint="O texto que a lead clica. Sem rótulo e sem endereço, o aviso fica sem link.", opt=True) }}
-              {{ f.field(n ~ ".link.url", "Endereço do link", notice.link_url, hint="Precisa começar por https://. O link abre em outra aba.", opt=True, mono=True) }}
-            </div>
-          </fieldset>
-          {%- endfor %}
+
         </div>
       </section>
 
       {% include "admin/_form_structure.html" %}
+      </section>
 
+      <section class="editor-task stackcol" id="dados-consentimentos" aria-labelledby="dados-consentimentos-titulo">
+        <h2 id="dados-consentimentos-titulo">Dados e consentimentos</h2>
+      <p class="muted">Confira também a <a href="#identidade">identidade da participante</a> vinculada às perguntas acima. Novidades são opcionais e separadas do processamento.</p>
+      <section class="box" id="consentimento" aria-labelledby="consentimento-titulo">
+        <h2 id="consentimento-titulo">Consentimento</h2>
+        <p class="muted">O que a lead lê e autoriza antes de enviar. A versão do texto sobe sozinha na publicação quando o texto muda, e cada envio guarda a versão que a lead leu.</p>
+        <div class="form-stack">
+          {{ f.field("consent.processing", "Autorização do processamento", s.edit.consent.processing, hint="Obrigatória para processar suas respostas.", area=True, rows=2) }}
+          {{ f.field("consent.notice", "Aviso sobre o uso dos dados", s.edit.consent.notice, area=True, rows=3) }}
+          {%- for channel, offer, label in s.channels %}
+          {%- set name = "consent.marketing." ~ channel %}
+          <div class="edit-channel">
+            <label class="choice choice--check edit-check"><input type="checkbox" id="{{ s.field_id(name ~ '.offered') }}" name="{{ name }}.offered" value="on"{% if s.edit.consent.offered[channel] %} checked{% endif %}><span class="choice__body"><span class="choice__mark">{{ m.icon('check') }}</span><span>{{ offer }}</span></span></label>
+            {{ f.field(name, label, s.edit.consent.texts[channel], hint="Opcional para a lead, separado do processamento." ~ (" Precisa do telefone da lead, na identidade." if channel == "whatsapp" else ""), area=True, rows=2) }}
+          </div>
+          {%- endfor %}
+          {{ f.error_for("consent.marketing") }}
+        </div>
+      </section>
+
+      {% include "admin/_data_editor.html" %}
+      </section>
+
+      <section class="editor-task stackcol" id="apos-envio" aria-labelledby="apos-envio-titulo">
+        <h2 id="apos-envio-titulo">Após o envio</h2>
       <section class="box" id="geracao" aria-labelledby="geracao-titulo">
         <h2 id="geracao-titulo">Finalidade do formulário</h2>
         <label for="{{ s.field_id('generation') }}">Geração</label>
@@ -91,6 +110,10 @@
         </select>
         <p id="geracao-dica">Somente captura dispensa IA, plano e PDF. Escolha uma confirmação, botão ou encaminhamento para concluir. Ao salvar como captura, a configuração de geração sai deste rascunho; versões publicadas são preservadas. Ao voltar para PDF, você começa pela configuração do modelo inicial e pode editá-la antes de publicar.</p>
         {{ f.error_for('generation') }}
+        {% if page.generation_fields %}
+        <label class="edit-check"><input type="checkbox" name="confirm_generation_removal" value="on"> Confirmo a retirada da geração, do modelo do plano e da apresentação deste rascunho ao salvar somente respostas.</label>
+        <p class="muted">Para cancelar antes de salvar, escolha “Gerar plano e PDF”. Sua edição e configuração continuam nesta página.</p>
+        {% endif %}
         <label for="{{ s.field_id('release.mode') }}">Liberação do plano (somente PDF)</label>
         <select class="select" name="release.mode" id="{{ s.field_id('release.mode') }}">
           <option value="automatic"{% if s.edit.release_mode == 'automatic' %} selected{% endif %}>Automática</option>
@@ -137,45 +160,62 @@
         </div>
       </section>
 
-      <section class="box" id="consentimento" aria-labelledby="consentimento-titulo">
-        <h2 id="consentimento-titulo">Consentimento</h2>
-        <p class="muted">O que a lead lê e autoriza antes de enviar. A versão do texto sobe sozinha na publicação quando o texto muda, e cada envio guarda a versão que a lead leu.</p>
-        <div class="form-stack">
-          {{ f.field("consent.processing", "Autorização do processamento", s.edit.consent.processing, hint="Obrigatória para processar suas respostas.", area=True, rows=2) }}
-          {{ f.field("consent.notice", "Aviso sobre o uso dos dados", s.edit.consent.notice, area=True, rows=3) }}
-          {%- for channel, offer, label in s.channels %}
-          {%- set name = "consent.marketing." ~ channel %}
-          <div class="edit-channel">
-            <label class="choice choice--check edit-check"><input type="checkbox" id="{{ s.field_id(name ~ '.offered') }}" name="{{ name }}.offered" value="on"{% if s.edit.consent.offered[channel] %} checked{% endif %}><span class="choice__body"><span class="choice__mark">{{ m.icon('check') }}</span><span>{{ offer }}</span></span></label>
-            {{ f.field(name, label, s.edit.consent.texts[channel], hint="Opcional para a lead, separado do processamento." ~ (" Precisa do telefone da lead, na identidade." if channel == "whatsapp" else ""), area=True, rows=2) }}
-          </div>
+      <details class="box"{% if page.problems %} open{% endif %}><summary>Avisos de espera e falha</summary>
+          {#- O aviso extra das páginas que a lead vê depois do envio: título, texto e um link opcional. -#}
+          {%- for page_key, legend, when in s.notices %}
+          {%- set n = "notices." ~ page_key %}
+          {%- set notice = s.edit.notices.pages[page_key] %}
+          <fieldset class="edit-step" id="{{ s.field_id(n) }}" aria-describedby="{{ s.field_id(n) }}-dica">
+            <legend>{{ legend }} <span class="opt">(opcional)</span></legend>
+            <p class="muted field__hint" id="{{ s.field_id(n) }}-dica">{{ when }} É texto puro, sem HTML.</p>
+            {{ f.error_for(n) }}
+            <div class="form-stack">
+              {{ f.field(n ~ ".title", "Título do aviso", notice.title) }}
+              {{ f.field(n ~ ".text", "Texto do aviso", notice.text, hint="Uma linha em branco separa os parágrafos.", area=True, rows=4) }}
+              {{ f.field(n ~ ".link.label", "Rótulo do link", notice.link_label, hint="O texto que a lead clica. Sem rótulo e sem endereço, o aviso fica sem link.", opt=True) }}
+              {{ f.field(n ~ ".link.url", "Endereço do link", notice.link_url, hint="Precisa começar por https://. O link abre em outra aba.", opt=True, mono=True) }}
+            </div>
+          </fieldset>
           {%- endfor %}
-          {{ f.error_for("consent.marketing") }}
-        </div>
+      </details>
       </section>
 
-      {% if s.edit.generation == "pdf" %}{% include "admin/_plan_editor.html" %}{% endif %}
+      <section class="editor-task stackcol" id="plano-apresentacao" aria-labelledby="plano-apresentacao-titulo">
+        <h2 id="plano-apresentacao-titulo">Plano e apresentação</h2>
+      {% if page.generation_fields %}{% include "admin/_plan_editor.html" %}{% endif %}
+      <p><a class="btn btn--secondary" href="{{ page.nav.pdf_url }}">Editar o PDF e a prévia</a></p>
+      <p class="muted">A apresentação usa o rascunho salvo. Salve sua edição antes de abrir o editor do PDF.</p>
+      </section>
 
-      {% include "admin/_data_editor.html" %}
-
+      <section class="editor-task stackcol" id="avancado" aria-labelledby="avancado-titulo">
+        <h2 id="avancado-titulo">Avançado</h2>
+      <details class="box"{% if page.problems %} open{% endif %}><summary>Configurar pontuação</summary>
       {% include "admin/_scoring_editor.html" %}
-
-      <section class="box" id="textos" aria-labelledby="textos-titulo">
-        <h2 id="textos-titulo">Instruções, prompt e o resto</h2>
+      </details>
+      <details class="box" id="textos"{% if page.problems %} open{% endif %}>
+        <summary>Instruções, prompt e o resto</summary>
         <div class="form-stack">
-          {% if s.edit.generation == "pdf" %}
+          {% if page.generation_fields %}
           {{ editor_field("instructions", "Instruções", "O papel e as regras fixas que o LLM recebe, iguais para toda lead. Template Jinja: lê os dados do formulário em data.", 12) }}
           {{ editor_field("prompt", "Prompt", "Montado a cada pedido com as respostas da lead. Template Jinja: answers, labels, today e data. Só as respostas que ele cita saem para o LLM.", 14) }}
           {% endif %}
           {{ editor_field("definition", "O resto da definição (JSON)", "A versão do formato (format) e o plano de exemplo. O modelo do plano, os dados, a pontuação, as etapas, as perguntas, os pontos de cada opção, a identidade e o consentimento ficam nos campos acima; o PDF, a prévia da página de resultado e as notas do PDF, no editor do PDF.", 18) }}
         </div>
+      </details>
+
       </section>
 
-      <div class="btns savebar"><button class="btn btn--primary" type="submit">Salvar o rascunho</button>{% if page.unsaved %}<span class="muted">Há mudanças nesta página que ainda não foram salvas.</span>{% endif %}</div>
+      <div class="btns savebar"><button class="btn btn--primary" type="submit" name="after_save" value="edit">Salvar o rascunho</button><button class="btn btn--secondary" type="submit" name="after_save" value="preview">Salvar e abrir prévia</button>{% if page.unsaved %}<span class="muted">Há mudanças nesta página que ainda não foram salvas.</span>{% endif %}</div>
     </form>
   </div>
 
   <div class="stackcol">
+    <section class="box" aria-labelledby="resumo-salvo-titulo">
+      <h2 id="resumo-salvo-titulo">Configuração salva</h2>
+      <dl class="kv kv--stack">{% for label, value in page.saved_choices %}<dt>{{ label }}</dt><dd>{{ value }}</dd>{% endfor %}</dl>
+      <p>Integrações: <a href="/admin/integrations?form_slug={{ page.nav.slug }}">consultar configuração e confirmações registradas</a>. Salvar não testa nem ativa destinos.</p>
+      <p class="muted">Prévia e teste usam a origem salva, sem as alterações ainda abertas nesta página.</p>
+    </section>
     {% if page.scoring %}
     <section class="box" id="pontuacao" aria-labelledby="pont-titulo">
       <h2 id="pont-titulo">Pontuação</h2>

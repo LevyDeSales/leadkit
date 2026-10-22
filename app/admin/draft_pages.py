@@ -589,6 +589,8 @@ class EditorPage:
     variables: Variables | None
     structure: StructureView
     unsaved: bool  # a página traz uma operação do editor que ainda não foi salva
+    generation_fields: bool  # conserva a configuração enquanto a retirada não foi salva
+    saved_choices: tuple[tuple[str, str], ...]
     scoring: ScoredView | None  # a pontuação do rascunho guardado com as respostas de exemplo
 
 
@@ -627,8 +629,43 @@ def editor(
         invalid=frozenset(place for place in places if place in TEXT_FIELDS),
         message=message,
         variables=variables(draft),
-        structure=structure_view(draft, edit, problems=problems, focus=focus, slug=slug),
+        structure=structure_view(
+            draft,
+            edit,
+            problems=problems,
+            focus=focus or (field_id(places[0]) if places else None),
+            slug=slug,
+        ),
         unsaved=unsaved,
+        generation_fields=edit.generation == "pdf"
+        or draft.document.get("generation", "pdf") == "pdf",
+        saved_choices=(
+            (
+                "Geração",
+                "Somente salvar respostas"
+                if draft.document.get("generation") == "none"
+                else "Gerar plano e PDF",
+            ),
+            (
+                "Conclusão",
+                {
+                    "result": "Acompanhar o resultado do PDF",
+                    "confirmation": "Confirmação local",
+                    "button": "Botão para outro destino",
+                    "redirect": "Encaminhamento para outro destino",
+                }.get(draft.document.get("completion", {}).get("mode", "result"), "Indisponível"),
+            ),
+            (
+                "Liberação",
+                "Não se aplica"
+                if draft.document.get("generation") == "none"
+                else (
+                    "Manual"
+                    if draft.document.get("release", {}).get("mode") == "manual"
+                    else "Automática"
+                ),
+            ),
+        ),
         scoring=example_scores(draft),
     )
 

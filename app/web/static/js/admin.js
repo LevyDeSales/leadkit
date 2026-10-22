@@ -125,3 +125,59 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
 });
+
+// Edição local e operações de estrutura não comprovam persistência. Só a página
+// recebida após salvar pode apresentar novamente o estado confirmado pelo servidor.
+document.addEventListener("DOMContentLoaded", () => {
+  const form = document.getElementById("editor-form");
+  if (!form) return;
+  const status = document.getElementById("editor-save-state");
+  const dirty = () => {
+    form.dataset.unsaved = "true";
+    status.textContent = "Edição ainda não salva";
+  };
+  const reveal = (target) => {
+    if (!target) return;
+    let parent = target.parentElement;
+    while (parent) {
+      if (parent.matches("details")) parent.open = true;
+      parent = parent.parentElement;
+    }
+    if (!target.matches("input, textarea, select, button, a")) target.tabIndex = -1;
+    target.focus();
+  };
+  const generation = form.querySelector('[name="generation"]');
+  const confirmation = form.querySelector('[name="confirm_generation_removal"]');
+  let previousGeneration = generation.value;
+  generation.addEventListener("change", (event) => {
+    if (confirmation && generation.value === "none" && previousGeneration === "pdf") {
+      const accepted = window.confirm("Ao salvar somente respostas, a geração, o modelo do plano e a apresentação saem deste rascunho. A versão publicada continua igual. Confirmar a troca? Cancelar conserva sua edição e configuração.");
+      if (!accepted) {
+        generation.value = previousGeneration;
+        event.stopPropagation();
+        return;
+      }
+      confirmation.checked = true;
+    } else if (confirmation && generation.value === "pdf") {
+      confirmation.checked = false;
+    }
+    previousGeneration = generation.value;
+  });
+  form.addEventListener("input", dirty);
+  form.addEventListener("change", dirty);
+  document.addEventListener("htmx:beforeRequest", (event) => {
+    if (form.contains(event.detail.elt)) dirty();
+  });
+  document.addEventListener("htmx:afterSwap", (event) => {
+    if (!form.contains(event.target)) return;
+    dirty();
+    reveal(event.target.querySelector("[autofocus]"));
+  });
+  document.addEventListener("click", (event) => {
+    const link = event.target.closest('a[href^="#"]');
+    if (!link) return;
+    reveal(document.getElementById(link.getAttribute("href").slice(1)));
+  });
+  const error = document.getElementById("problemas") || document.getElementById("aviso");
+  if (error) reveal(form.querySelector('[aria-invalid="true"]') || error);
+});

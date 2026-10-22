@@ -20,6 +20,7 @@ from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.routing import APIRoute
+from sqlalchemy.exc import SQLAlchemyError
 from starlette.datastructures import FormData
 
 from app import destinations
@@ -1436,7 +1437,42 @@ def save_draft(
     e os problemas, cada um no campo dele, e nada é gravado. Antes da primeira publicação, o
     endereço (`slug`) muda junto."""
     edit, texts = _posted(form)
+    draft = _draft(slug)
     new_slug = form.get("slug")
+    after_save = _text_of(form, "after_save") if "after_save" in form else "edit"
+    if after_save not in {"edit", "preview"}:
+        return _editor_page(
+            request,
+            draft,
+            status_code=422,
+            texts=texts,
+            edit=edit,
+            unsaved=True,
+            token=_text_of(form, "expected"),
+            slug=_text_of(form, "slug") if "slug" in form else None,
+            message="O rascunho não foi salvo. Escolha salvar ou salvar e abrir prévia.",
+        )
+    if (
+        draft.document.get("generation", "pdf") == "pdf"
+        and edit.generation == "none"
+        and _text_of(form, "confirm_generation_removal") != "on"
+    ):
+        return _editor_page(
+            request,
+            draft,
+            status_code=422,
+            texts=texts,
+            edit=edit,
+            unsaved=True,
+            token=_text_of(form, "expected"),
+            slug=_text_of(form, "slug") if "slug" in form else None,
+            problems=[
+                Problem(
+                    "generation",
+                    "Confirme a retirada da geração ou escolha Gerar plano e PDF para cancelar.",
+                )
+            ],
+        )
     try:
         saved = drafts.save(
             get_deps(),
@@ -1451,20 +1487,46 @@ def save_draft(
     except DefinitionError as exc:
         return _editor_page(
             request,
-            _draft(slug),
+            draft,
             status_code=422,
             texts=texts,
             edit=edit,
             problems=exc.problems,
+            unsaved=True,
+            token=_text_of(form, "expected"),
             slug=_text_of(form, "slug") if "slug" in form else None,
         )
     except drafts.DraftChanged:
         return _editor_page(
-            request, _draft(slug), status_code=409, texts=texts, edit=edit, message=DRAFT_CHANGED
+            request,
+            draft,
+            status_code=409,
+            texts=texts,
+            edit=edit,
+            message=DRAFT_CHANGED,
+            unsaved=True,
+            token=_text_of(form, "expected"),
+            slug=_text_of(form, "slug") if "slug" in form else None,
+        )
+    except SQLAlchemyError:
+        # A transação recusada não confirma persistência nem expõe dados da exceção.
+        return _editor_page(
+            request,
+            draft,
+            status_code=503,
+            texts=texts,
+            edit=edit,
+            unsaved=True,
+            token=_text_of(form, "expected"),
+            slug=_text_of(form, "slug") if "slug" in form else None,
+            message="Não foi possível confirmar o salvamento. Sua edição foi mantida; tente salvar novamente.",
         )
     logger.info("admin: rascunho salvo slug=%s pendente=%s", saved.slug, saved.pending)
     session.flash = ("ok", DRAFT_SAVED if saved.pending else DRAFT_SAVED_EQUAL)
-    return RedirectResponse(views.draft_url(saved.slug), status_code=303)
+    return RedirectResponse(
+        views.draft_url(saved.slug) + ("/preview" if after_save == "preview" else ""),
+        status_code=303,
+    )
 
 
 # O trecho do editor que cada tipo de operação desenha de novo, com o HTMX.
