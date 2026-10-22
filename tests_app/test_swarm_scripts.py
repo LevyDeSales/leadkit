@@ -100,6 +100,7 @@ else:
 
 code = 0
 out = ''
+err = ''
 head = args[:2]
 if head == ['image','inspect']:
     if '--format' in args:
@@ -250,6 +251,11 @@ elif args[:1] == ['inspect']:
                 value['Id']=cid
                 value['State']['ExitCode']=0
                 value['State'].setdefault('StartedAt', '2026-01-01T00:00:00Z')
+                if value['State']['Running']:
+                    fault = os.getenv('STUB_RUNNING_START_FAULT')
+                    if fault == 'missing': value['State'].pop('StartedAt')
+                    if fault == 'invalid': value['State']['StartedAt'] = 'SYNTHETIC_PRIVATE_ERROR'
+                    if fault == 'future': value['State']['StartedAt'] = '2999-01-01T00:00:00Z'
                 value['State']['FinishedAt']='0001-01-01T00:00:00Z' if value['State']['Running'] else datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
                 if not value['State']['Running']:
                     value['State']['FinishedAt'] = state['containers'][cid]['State'].setdefault('FinishedAt', value['State']['FinishedAt'])
@@ -277,11 +283,20 @@ elif args[:1] == ['inspect']:
                 for value in values: value['Image']=a if value['Image']==b else b
     out=json.dumps(values)
 elif head == ['container','wait']:
-    out='0'
+    out=os.getenv('STUB_WAIT_CODE', '0')
     if os.getenv('STUB_TASK_LAG'):
         state['containers'][args[-1]]['State']['Running'] = False
         state.setdefault('waited', {})[args[-1]] = 0
     if os.getenv('STUB_REAP_RACE') == 'wait': reap_during_observation(state, args[-1])
+    fault=os.getenv('STUB_WAIT_FAULT')
+    if fault == 'error': code=1
+    if fault == 'no_such': code=1; out=''; err='Error: No such container'
+    if fault == 'empty': out=''
+    if fault == 'invalid': out='SYNTHETIC_PRIVATE_ERROR'
+    if fault == 'multiple': out='0\n1'
+    if fault == 'negative': out='-1'
+    if fault == 'range': out='256'
+    if fault == 'stderr': err='SYNTHETIC_PRIVATE_ERROR'
 elif args[:1] == ['ps']:
     if '-aq' in args:
         if args[-1].startswith('id='):
@@ -343,6 +358,7 @@ elif args[:1] == ['run']:
             out=json.dumps({'ok':True})
 state_path.write_text(json.dumps(state))
 if out: sys.stdout.write(out if args[:1] == ['exec'] else out + '\n')
+if err: sys.stderr.write(err)
 raise SystemExit(code)
 """
 
@@ -917,6 +933,7 @@ def test_first_adoption_refreshes_inventory_when_container_disappears_during_obs
         STUB_CONTRACT_FLOOR="0",
         STUB_REAP_RACE=boundary,
         STUB_RACE_OUTCOME=outcome,
+        STUB_WAIT_FAULT="error",
     )
     assert result.returncode == 0, result.stderr
     state = rollout_state(server)
@@ -1247,6 +1264,7 @@ def test_bootstrap_waits_for_terminal_task_after_destroy_during_wait(server, no_
         STUB_REAP_RACE="wait",
         STUB_RACE_OUTCOME="active",
         STUB_NO_DESTROY=no_destroy,
+        STUB_WAIT_FAULT="error",
     )
     assert result.returncode == (1 if no_destroy else 0), result.stderr
     if no_destroy:
@@ -1255,6 +1273,75 @@ def test_bootstrap_waits_for_terminal_task_after_destroy_during_wait(server, no_
         state = rollout_state(server)
         assert state["phase"] == "verified"
         assert state["waited"] and all(count >= 3 for count in state["waited"].values())
+
+
+@pytest.mark.parametrize("exit_code", ["0", "137", "255"])
+def test_positive_wait_preserves_exit_after_removal_without_destroy(server, exit_code):
+    result = deploy(
+        server,
+        STUB_NETWORK="1",
+        STUB_CONTRACT_FLOOR="0",
+        STUB_REAP_RACE="wait",
+        STUB_RACE_OUTCOME="terminal",
+        STUB_NO_DESTROY="1",
+        STUB_WAIT_CODE=exit_code,
+    )
+    assert result.returncode == 0, result.stderr
+    assert rollout_state(server)["phase"] == "verified"
+
+
+@pytest.mark.parametrize(
+    "fault", ["error", "no_such", "empty", "invalid", "multiple", "negative", "range", "stderr"]
+)
+def test_invalid_wait_cannot_authorize_removed_container_without_other_proof(server, fault):
+    result = deploy(
+        server,
+        STUB_NETWORK="1",
+        STUB_CONTRACT_FLOOR="0",
+        STUB_REAP_RACE="wait",
+        STUB_RACE_OUTCOME="terminal",
+        STUB_NO_DESTROY="1",
+        STUB_WAIT_FAULT=fault,
+    )
+    assert result.returncode == 1
+    assert not any(call.endswith((" migrate", " attest")) for call in server.calls)
+    assert "SYNTHETIC_PRIVATE_ERROR" not in result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("fault", ["missing", "invalid", "future"])
+def test_wait_requires_known_execution_start_before_call(server, fault):
+    result = deploy(
+        server,
+        STUB_NETWORK="1",
+        STUB_CONTRACT_FLOOR="0",
+        STUB_REAP_RACE="wait",
+        STUB_RACE_OUTCOME="terminal",
+        STUB_NO_DESTROY="1",
+        STUB_RUNNING_START_FAULT=fault,
+    )
+    assert result.returncode == 1
+    assert not any(call.startswith("container wait") for call in server.calls)
+    assert not any(call.endswith((" migrate", " attest")) for call in server.calls)
+    assert "SYNTHETIC_PRIVATE_ERROR" not in result.stdout + result.stderr
+
+
+def test_wait_timeout_does_not_preserve_exit_proof(rollout_client, server, monkeypatch):
+    from deploy.swarm.rollout import RolloutError
+
+    monkeypatch.setenv("STUB_REAP_RACE", "wait")
+    monkeypatch.delenv("STUB_REAP_AFTER_STOP")
+    original = subprocess.run
+
+    def docker_run(args, **kwargs):
+        if args[:3] == ["docker", "container", "wait"]:
+            raise subprocess.TimeoutExpired(args, 660)
+        return original(args, **kwargs)
+
+    monkeypatch.setattr("deploy.swarm.rollout.subprocess.run", docker_run)
+    with pytest.raises(RolloutError, match="sem conclusão"):
+        rollout_client.execute()
+    assert not rollout_client.exit_proofs
+    assert not any(call.endswith((" migrate", " attest")) for call in server.calls)
 
 
 @pytest.mark.parametrize("floor", ["0", "1"])
@@ -1364,18 +1451,28 @@ def test_historical_inspected_exit_keeps_execution_window(
     assert (proof["started_at"], proof["finished_at"]) == (started_at, finished_at)
 
 
-def test_identical_stopped_snapshots_preserve_seeded_exit_proof(rollout_client, monkeypatch):
+@pytest.mark.parametrize("proof_kind", ["inspect", "wait"])
+def test_identical_stopped_snapshots_preserve_seeded_exit_proof(
+    rollout_client, monkeypatch, proof_kind
+):
     import json
 
     from deploy.swarm.rollout import Rollout
 
     monkeypatch.delenv("STUB_REAP_AFTER_STOP")
+    if proof_kind == "wait":
+        monkeypatch.setenv("STUB_REAP_RACE", "wait")
+        monkeypatch.setenv("STUB_RACE_OUTCOME", "terminal")
     rollout = rollout_client
     rollout.node = "local-node"
     rollout.observe("api")
     rollout.docker("service", "scale", "--detach=false", "gerador-planos_api=0")
-    rows = rollout.observe("api")
+    rows = rollout.observe("api", wait=proof_kind == "wait")
     snapshot = json.loads(json.dumps({"processes": rows, "exit_proofs": rollout.exit_proofs}))
+    if proof_kind == "wait":
+        proof = snapshot["exit_proofs"][rows[0]["container_id"]]
+        assert proof["kind"] == "wait" and proof["cli_exit_code"] == proof["exit_code"] == 0
+        assert "finished_at" not in proof
     # O consumidor conserva o mapa e semeia outra leitora, sem schema fechado da prova.
     reader = Rollout(rollout.folder, rollout.image, rollout.stack, False)
     reader.node = rollout.node
@@ -1457,37 +1554,50 @@ def test_contradictory_inspection_invalidates_exit_proof_before_removal(
         ("started_at", "invalid"),
         ("finished_at", "invalid"),
         ("extra", 1),
+        ("cli_exit_code", 1),
+        ("wait_started_at", 0),
     ],
 )
+@pytest.mark.parametrize("proof_kind", ["inspect", "wait"])
 def test_altered_inspected_proof_cannot_authorize_removed_container(
     rollout_client,
+    monkeypatch,
     field,
     value,
+    proof_kind,
 ):
     from deploy.swarm.rollout import RolloutError
 
     rollout = rollout_client
+    if proof_kind == "wait":
+        monkeypatch.delenv("STUB_REAP_AFTER_STOP")
+        monkeypatch.setenv("STUB_REAP_RACE", "wait")
+        monkeypatch.setenv("STUB_RACE_OUTCOME", "terminal")
     rollout.node = "local-node"
     rollout.observe("api")
     rollout.docker("service", "scale", "--detach=false", "gerador-planos_api=0")
-    rows = rollout.observe("api")
+    rows = rollout.observe("api", wait=proof_kind == "wait")
     cid = rows[0]["container_id"]
     rollout.exit_proofs[cid][field] = value
     with pytest.raises(RolloutError, match="prova de saída"):
         rollout.observe("api")
 
 
-@pytest.mark.parametrize("reap", ["", "wait"])
+@pytest.mark.parametrize("reap", ["", "wait", "wait_without_destroy"])
 def test_terminal_task_convergence_has_deadline_before_ddl(
     rollout_client, monkeypatch, server, reap
 ):
     from deploy.swarm.rollout import RolloutError
 
     monkeypatch.setenv("STUB_TASK_LAG", "forever")
-    monkeypatch.setenv("STUB_REAP_RACE", reap)
+    monkeypatch.setenv("STUB_REAP_RACE", "wait" if reap else "")
     monkeypatch.setenv("STUB_RACE_OUTCOME", "active")
     monkeypatch.delenv("STUB_REAP_AFTER_STOP")
     monkeypatch.delenv("STUB_NO_DESTROY")
+    if reap == "wait":
+        monkeypatch.setenv("STUB_WAIT_FAULT", "error")
+    elif reap == "wait_without_destroy":
+        monkeypatch.setenv("STUB_NO_DESTROY", "1")
     clock = [0.0]
     monkeypatch.setattr("deploy.swarm.rollout.time.monotonic", lambda: clock[0])
 
@@ -1537,10 +1647,12 @@ def test_inspected_exit_does_not_bypass_uncertain_daemon_or_inventory(server, fa
     assert not any(call.endswith((" migrate", " attest")) for call in server.calls)
 
 
+@pytest.mark.parametrize("proof_kind", ["inspect", "wait"])
 def test_observed_restart_invalidates_exit_proof_before_subsequent_removal(
     rollout_client,
     server,
     monkeypatch,
+    proof_kind,
 ):
     import json
 
@@ -1548,10 +1660,13 @@ def test_observed_restart_invalidates_exit_proof_before_subsequent_removal(
 
     monkeypatch.setenv("STUB_RACE_OUTCOME", "terminal")
     rollout = rollout_client
+    if proof_kind == "wait":
+        monkeypatch.delenv("STUB_REAP_AFTER_STOP")
+        monkeypatch.setenv("STUB_REAP_RACE", "wait")
     rollout.node = "local-node"
     rollout.observe("api")
     rollout.docker("service", "scale", "--detach=false", "gerador-planos_api=0")
-    row = rollout.observe("api")[0]
+    row = rollout.observe("api", wait=proof_kind == "wait")[0]
     cid = row["container_id"]
     state_path = Path(str(server.calls_file) + ".state")
     state = rollout_state(server)

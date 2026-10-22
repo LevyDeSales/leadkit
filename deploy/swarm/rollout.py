@@ -291,6 +291,43 @@ class Rollout:
             )
         )
 
+    def waited_exit(self, task, proof, until):
+        cid = task["Status"]["ContainerStatus"]["ContainerID"]
+        return (
+            isinstance(proof, dict)
+            and set(proof)
+            == {
+                "kind",
+                "container_id",
+                "image",
+                "node_id",
+                "since",
+                "task_id",
+                "started_at",
+                "wait_started_at",
+                "observed_at",
+                "cli_exit_code",
+                "exit_code",
+            }
+            and proof["kind"] == "wait"
+            and proof["container_id"] == cid
+            and proof["image"] == self.observed_images.get(cid)
+            and proof["node_id"] == self.node == task["NodeID"]
+            and proof["task_id"] == task["ID"]
+            and type(proof["since"]) is int
+            and proof["since"] == self.observed_since
+            and type(proof["wait_started_at"]) is int
+            and type(proof["observed_at"]) is int
+            and self.observed_since <= proof["wait_started_at"] <= proof["observed_at"] <= until
+            and type(proof["cli_exit_code"]) is int
+            and proof["cli_exit_code"] == 0
+            and type(proof["exit_code"]) is int
+            and 0 <= proof["exit_code"] <= 255
+            and self.valid_execution_times(
+                proof["started_at"], proof["started_at"], proof["wait_started_at"]
+            )
+        )
+
     def removed_container(self, task, present, *, waiting=False):
         cid = task["Status"]["ContainerStatus"]["ContainerID"]
         image = self.observed_images.get(cid)
@@ -311,10 +348,14 @@ class Rollout:
             )
         until = time.time_ns()
         # Só observe() pode aguardar uma Task defasada, depois de obter prova positiva.
-        state = task["Status"]["State"] if task["ID"] in present and waiting else "remove"
+        state = (
+            task["Status"]["State"]
+            if task["ID"] in present and task["Status"]["State"] not in TERMINAL
+            else "remove"
+        )
         if cid in self.exit_proofs:
             proof = self.exit_proofs[cid]
-            if self.inspected_exit(task, proof, until):
+            if self.inspected_exit(task, proof, until) or self.waited_exit(task, proof, until):
                 return {"Image": image, "State": {"Running": False}}, state
             if (
                 isinstance(proof, dict)
@@ -435,7 +476,36 @@ class Rollout:
             running = container["State"]["Running"]
             if waiting and running:
                 # O Docker espera o processo efetivamente sair, inclusive durante o grace period.
-                self.docker("container", "wait", cid, optional=True)
+                self.confirm_local_node()
+                wait_started_at = time.time_ns()
+                started_at = container["State"].get("StartedAt")
+                if not self.valid_execution_times(started_at, started_at, wait_started_at):
+                    raise RolloutError("A execução anterior ao wait não está identificada.")
+                result = self.docker("container", "wait", cid, optional=True)
+                observed_at = time.time_ns()
+                if (
+                    result.returncode == 0
+                    and not result.stderr
+                    and re.fullmatch(r"(?:0|[1-9][0-9]{0,2})\n?", result.stdout)
+                    and int(result.stdout) <= 255
+                ):
+                    self.confirm_local_node()
+                    proof = {
+                        "kind": "wait",
+                        "container_id": cid,
+                        "image": container["Image"],
+                        "node_id": self.node,
+                        "since": self.observed_since,
+                        "task_id": task["ID"],
+                        "started_at": started_at,
+                        "wait_started_at": wait_started_at,
+                        "observed_at": observed_at,
+                        "cli_exit_code": result.returncode,
+                        "exit_code": int(result.stdout),
+                    }
+                    if not self.waited_exit(task, proof, observed_at):
+                        raise RolloutError("O wait não comprova a saída desta execução.")
+                    self.exit_proofs[cid] = proof
                 task_deadline = time.monotonic() + 30
                 self.tasks(role)
                 task = self.tracked[role][task["ID"]]

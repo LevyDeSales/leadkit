@@ -144,7 +144,17 @@ permite confirmar a saída sem depender de um evento `destroy` ainda retido. Cad
 novamente nó disponível, daemon local identificado, listagem local bem-sucedida sem aquele
 container e Task terminal ou removida do inventário.
 
-Sem inspeção positiva de encerramento conservada, a alternativa continua exigindo imagem e
+Quando a inspeção ainda encontra o processo vivo, `docker wait` também pode conservar uma
+prova explícita `kind=wait`: a execução precisa ter StartedAt válido, CID completo, imagem,
+task e nó local conhecidos antes da chamada. A CLI precisa terminar com código0, sem erro,
+e imprimir exatamente um código de saída inteiro0..255. A prova registra a janela da chamada
+e seu instante de conclusão, **sem inventar FinishedAt**: esses fatos diferem da inspeção parada.
+Erro, timeout, No such container, saída vazia/inválida e identidade divergente não geram essa
+prova. Seu reuso após remoção exige as mesmas verificações de nó, ausência local e Task terminal;
+o mapa permanece estável entre coletas e restart observado invalida a evidência anterior.
+A semântica é a da [CLI oficial](https://docs.docker.com/reference/cli/docker/container/wait/).
+
+Sem inspeção positiva nem wait válido conservados, a alternativa continua exigindo imagem e
 CID previamente observados e evento local `destroy` do mesmo ID, com `timeNano` dentro da
 janela iniciada antes da observação, além das mesmas verificações de nó e inventário. A consulta
 de eventos tem fim absoluto; falha de `inspect`, ausência ou `DesiredState=remove` isolados
@@ -154,7 +164,7 @@ se a task terminou ou foi removida. Se uma saída positiva já foi comprovada ma
 não ficou terminal, a coleta com espera concede até 30 segundos por task para convergência,
 inclusive quando o container desapareceu durante `wait` e há evento `destroy` local válido,
 contados após o retorno de `docker wait` quando necessário, conferindo novamente o inventário;
-prazo esgotado mantém o bloqueio. `docker wait` e `DesiredState`
+prazo esgotado mantém o bloqueio. A simples chamada de `docker wait` sem retorno validado e `DesiredState`
 isolados nunca substituem a prova do processo. Os objetos recebidos precisam corresponder
 exatamente aos IDs de tasks solicitados, sem omissões ou duplicados. Uma imagem diferente para um container
 já observado é inconsistência e bloqueia o roteiro; não substitui a identidade conservada.
@@ -163,7 +173,7 @@ antes de comprovar a pausa ou executar DDL. Repita o roteiro após investigar o 
 não há tentativa automática que possa omitir o processo recém-descoberto.
 
 Eventos Docker guardam somente os últimos 256 registros globais; não são um histórico durável.
-Sem inspeção positiva conservada, evento ausente, antigo, perdido após restart, inválido ou
+Sem inspeção positiva ou wait válido conservados, evento ausente, antigo, perdido após restart, inválido ou
 de outro ID mantém o bloqueio.
 Uma prova positiva já validada é conservada durante a execução, com nova conferência do nó
 e inventário local em cada uso. O CI conserva somente essa evidência operacional na baseline
