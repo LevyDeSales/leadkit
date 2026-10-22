@@ -89,8 +89,8 @@ verdes no mesmo commit, incluindo `Tests / app-tests` e `ci-ready`. Consulte
 mas não dispensa os gates remotos existentes.
 
 Promoção `develop` → `main` usa merge commit, sem apagar `develop`. Deploy em produção exige commit de
-`main`, Release correspondente (`vAAAA.M.N`, mês de São Paulo) e autorização explícita de Levy
-na conversa atual.
+`main`, Release correspondente (`vYYYY.MM.DD.x`, data de São Paulo; tags legadas `vAAAA.M.N` seguem
+válidas) e autorização explícita de Levy na conversa atual.
 Homologação/deploy de `develop` em DEV segue o escopo autorizado, checks verdes e alvo isolado;
 a exigência de `main` e Release acima é de produção. Autorização já concedida para DEV permanece
 válida no alvo e escopo concedidos, sem nova confirmação; não se estende à produção.

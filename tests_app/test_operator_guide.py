@@ -7,9 +7,10 @@ import pytest
 from app import version
 
 
-def test_release_guide_uses_the_installed_tag() -> None:
-    assert version.operator_guide_url("2026.10.1") == (
-        "https://github.com/LevyDeSales/leadkit/blob/v2026.10.1/docs/guia-da-operadora/README.md"
+@pytest.mark.parametrize("number", ["2026.10.17.1", "2026.10.1"])
+def test_release_guide_uses_the_installed_tag(number: str) -> None:
+    assert version.operator_guide_url(number) == (
+        f"https://github.com/LevyDeSales/leadkit/blob/v{number}/docs/guia-da-operadora/README.md"
     )
 
 
@@ -38,6 +39,10 @@ def test_non_release_builds_use_develop_without_interpolating_input(number: str 
 @pytest.mark.parametrize(
     ("number", "expected"),
     [
+        (
+            "2026.10.17.1",
+            "https://github.com/LevyDeSales/leadkit/blob/v2026.10.17.1/docs/guia-da-operadora/README.md",
+        ),
         (
             "2026.10.1",
             "https://github.com/LevyDeSales/leadkit/blob/v2026.10.1/docs/guia-da-operadora/README.md",
