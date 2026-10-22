@@ -1142,6 +1142,9 @@ def test_editor_rejects_stale_token(client: TestClient) -> None:
     response = post(client, DRAFT, **stale)
     assert response.status_code == 409
     assert "Edição ainda não salva" in text(response.text)
+    assert "Abra o rascunho atual em outra aba" in text(response.text)
+    assert "compare e reaplique" in text(response.text)
+    assert "salvar de novo substitui" not in text(response.text)
     assert form_fields(response.text, EDITOR_FORM)["title"] == stale["title"]
     assert hidden(response.text, "expected") == stale["expected"]
     assert post(client, DRAFT, **form_fields(response.text, EDITOR_FORM)).status_code == 409
