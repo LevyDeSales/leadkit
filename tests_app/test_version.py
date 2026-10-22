@@ -1,5 +1,5 @@
-"""A versão do sistema (`vAAAA.M.N`, ano e mês no fuso de São Paulo): a próxima versão a partir das
-tags do repositório, o que o CI imprime para o build e o rodapé do admin.
+"""A versão do sistema (`vYYYY.MM.DD.x`, data e contador diário no fuso de São Paulo):
+a próxima versão a partir das tags, o que o CI imprime para o build e o rodapé do admin.
 
 O CI não roda aqui, então o cálculo é testado como função e pela linha de comando que o workflow
 chama (`python -m app.version`), com a saída de `git ls-remote --tags` no lugar do remoto.
@@ -24,42 +24,30 @@ from app.settings import Settings
 OCTOBER_17 = datetime(2026, 10, 17, 15, 0, tzinfo=UTC)  # 12:00 em São Paulo
 
 
-def test_the_first_version_of_a_month_is_number_one() -> None:
-    assert version.next_version([], OCTOBER_17) == "2026.10.1"
-    assert version.next_version(["v2026.9.33", "v2025.10.4"], OCTOBER_17) == "2026.10.1"
+def test_the_first_version_of_a_day_is_number_one() -> None:
+    assert version.next_version([], OCTOBER_17) == "2026.10.17.1"
+    assert version.next_version(["v2026.10.99", "v2026.10.16.8"], OCTOBER_17) == "2026.10.17.1"
 
 
-def test_the_next_version_follows_the_highest_number_of_the_month() -> None:
-    tags = ["v2026.10.1", "v2026.10.2", "v2026.9.40"]
-    assert version.next_version(tags, OCTOBER_17) == "2026.10.3"
-    # A ordem das tags não importa, e o número é comparado como número ("10" vem depois de "9").
-    assert version.next_version(["v2026.10.9", "v2026.10.10", "v2026.10.2"], OCTOBER_17) == (
-        "2026.10.11"
-    )
-
-
-def test_tags_that_are_not_versions_of_this_scheme_are_ignored() -> None:
-    tags = ["v2026.10.1", "v2026.10.7-beta.1", "v2026.10.07", "v2026.10", "v1.0.0", "latest", ""]
-    assert version.next_version(tags, OCTOBER_17) == "2026.10.2"
+def test_the_next_version_follows_the_highest_number_of_the_day() -> None:
+    tags = ["v2026.10.17.9", "v2026.10.17.10", "v2026.10.17.2", "v2026.10.99"]
+    assert version.next_version(tags, OCTOBER_17) == "2026.10.17.11"
 
 
 @pytest.mark.parametrize(
     ("moment", "expected"),
     [
-        # 31/10 22:30 em São Paulo já é 01/11 01:30 em UTC: ainda é outubro.
-        (datetime(2026, 11, 1, 1, 30, tzinfo=UTC), "2026.10.4"),
-        # 01/10 00:00 UTC ainda é 30/09 21:00 em São Paulo: é setembro.
-        (datetime(2026, 10, 1, 0, 0, tzinfo=UTC), "2026.9.2"),
-        # 01/11 03:00 UTC é a meia-noite de São Paulo: novembro, e o número volta a 1.
-        (datetime(2026, 11, 1, 3, 0, tzinfo=UTC), "2026.11.1"),
-        # A virada do ano segue a mesma regra.
-        (datetime(2027, 1, 1, 2, 59, tzinfo=UTC), "2026.12.1"),
-        (datetime(2027, 1, 1, 3, 0, tzinfo=UTC), "2027.1.1"),
+        ("2026-10-18T02:59:00+00:00", "2026.10.17.3"),
+        ("2026-10-18T03:00:00+00:00", "2026.10.18.1"),
+        ("2026-11-01T02:59:00+00:00", "2026.10.31.1"),
+        ("2026-11-01T03:00:00+00:00", "2026.11.01.1"),
+        ("2027-01-01T02:59:00+00:00", "2026.12.31.1"),
+        ("2027-01-01T03:00:00+00:00", "2027.01.01.1"),
+        ("2027-01-03T15:00:00+00:00", "2027.01.03.1"),
     ],
 )
-def test_the_month_is_the_one_in_sao_paulo_not_in_utc(moment: datetime, expected: str) -> None:
-    tags = ["v2026.9.1", "v2026.10.1", "v2026.10.2", "v2026.10.3"]
-    assert version.next_version(tags, moment) == expected
+def test_the_day_is_the_one_in_sao_paulo(moment: str, expected: str) -> None:
+    assert version.next_version(["v2026.10.17.2"], datetime.fromisoformat(moment)) == expected
 
 
 def test_a_moment_without_a_time_zone_is_refused() -> None:
@@ -94,7 +82,7 @@ def test_a_commit_with_an_annotated_tag_is_found_by_the_peeled_entry() -> None:
 def test_a_new_commit_gets_the_next_number_and_the_sao_paulo_date() -> None:
     release = version.plan_release(LS_REMOTE, SHA, datetime(2026, 11, 1, 1, 30, tzinfo=UTC))
     # 22:30 de 31/10 em São Paulo.
-    assert release == version.Release("2026.10.3", date(2026, 10, 31))
+    assert release == version.Release("2026.10.31.1", date(2026, 10, 31))
 
 
 def test_the_command_line_prints_what_the_build_needs(
@@ -106,7 +94,7 @@ def test_the_command_line_prints_what_the_build_needs(
 
     assert status == 0
     assert capsys.readouterr().out.splitlines() == [
-        "APP_VERSION=2026.10.3",
+        "APP_VERSION=2026.10.17.1",
         "APP_BUILD_DATE=2026-10-17",
     ]
 
@@ -164,9 +152,10 @@ def footer_text(html: str) -> str:
     return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", match.group(1))).strip()
 
 
-def test_the_admin_footer_shows_the_version_and_the_build_date(deps: Deps) -> None:
-    html = admin_page(deps, APP_VERSION="2026.10.1", APP_BUILD_DATE="2026-10-17")
-    assert footer_text(html) == "versão 2026.10.1 · 17/10/2026"
+@pytest.mark.parametrize("number", ["2026.10.17.1", "2026.10.1"])
+def test_the_admin_footer_shows_the_version_and_the_build_date(deps: Deps, number: str) -> None:
+    html = admin_page(deps, APP_VERSION=number, APP_BUILD_DATE="2026-10-17")
+    assert footer_text(html) == f"versão {number} · 17/10/2026"
 
 
 def test_the_admin_footer_shows_dev_when_the_image_has_no_version(deps: Deps) -> None:
@@ -196,7 +185,7 @@ def test_the_login_page_does_not_tell_which_version_is_running(deps: Deps) -> No
 def test_empty_repository_requires_explicit_release_bootstrap() -> None:
     with pytest.raises(ValueError, match="bootstrap"):
         version.plan_release("", SHA, OCTOBER_17)
-    assert version.plan_release("", SHA, OCTOBER_17, allow_bootstrap=True).version == "2026.10.1"
+    assert version.plan_release("", SHA, OCTOBER_17, allow_bootstrap=True).version == "2026.10.17.1"
 
 
 def test_bootstrap_does_not_accept_malformed_remote_output() -> None:
@@ -218,4 +207,74 @@ def test_cli_bootstrap_is_explicit_and_prints_no_partial_build_environment(
     assert (
         version.main(["--sha", SHA, "--allow-bootstrap", "--now", "2026-10-17T15:00:00+00:00"]) == 0
     )
-    assert "APP_VERSION=2026.10.1" in capsys.readouterr().out
+    assert "APP_VERSION=2026.10.17.1" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("number", ["2026.10.17.4", "2026.10.4"])
+@pytest.mark.parametrize("annotated", [False, True])
+def test_retry_keeps_daily_or_legacy_version_after_midnight(number: str, annotated: bool) -> None:
+    refs = f"{SHA}\trefs/tags/v{number}\n"
+    if annotated:
+        refs = f"{OTHER}\trefs/tags/v{number}\n{SHA}\trefs/tags/v{number}^{{}}\n"
+    assert version.plan_release(refs, SHA, datetime(2027, 1, 1, 4, tzinfo=UTC)).version == number
+
+
+@pytest.mark.parametrize(
+    ("number", "valid"),
+    [
+        ("2024.02.29.1", True),
+        ("2026.02.29.1", False),
+        ("2026.04.31.1", False),
+        ("0000.01.01.1", False),
+        ("2027.01.03.1", True),
+        ("2026.1.03.1", False),
+        ("2026.01.3.1", False),
+        ("2026.10.17.0", False),
+        ("2026.10.17.01", False),
+        ("2026.10.17.2-beta", False),
+        ("1.0.0", False),
+    ],
+)
+def test_calendar_and_release_format_are_shared_by_description_and_guide(
+    number: str, valid: bool
+) -> None:
+    assert version.describe(number, None) == f"{'versão' if valid else 'build'} {number}"
+    ref = f"v{number}" if valid else "develop"
+    assert version.operator_guide_url(number) == (
+        f"https://github.com/LevyDeSales/leadkit/blob/{ref}/docs/guia-da-operadora/README.md"
+    )
+    if not valid:
+        assert version.next_version([f"v{number}"], OCTOBER_17) == "2026.10.17.1"
+        with pytest.raises(ValueError, match="bootstrap"):
+            version.plan_release(f"{OTHER}\trefs/tags/v{number}\n", SHA, OCTOBER_17)
+
+
+@pytest.mark.parametrize(
+    "ref",
+    [
+        "refs/tags/",
+        "refs/tags/.hidden",
+        "refs/tags/x..y",
+        "refs/tags/x.lock",
+        "refs/tags/x//y",
+        "refs/tags/x@{y",
+        "refs/tags/x?y",
+        "refs/tags/x.",
+        "refs/heads/main",
+        "refs/tags/v2026.10.17.1^{}",
+    ],
+)
+def test_invalid_remote_refs_cannot_become_bootstrap(ref: str) -> None:
+    with pytest.raises(ValueError, match="inválida"):
+        version.plan_release(f"{OTHER}\t{ref}\n", SHA, OCTOBER_17, allow_bootstrap=True)
+
+
+def test_annotated_tag_peeling_is_independent_of_line_order() -> None:
+    refs = f"{SHA}\trefs/tags/v2026.10.17.2^{{}}\n{OTHER}\trefs/tags/v2026.10.17.2\n"
+    assert version.plan_release(refs, SHA, OCTOBER_17).version == "2026.10.17.2"
+
+
+def test_conflicting_remote_refs_are_not_silently_overwritten() -> None:
+    refs = f"{SHA}\trefs/tags/v2026.10.17.2\n{OTHER}\trefs/tags/v2026.10.17.2\n"
+    with pytest.raises(ValueError, match="inválida"):
+        version.plan_release(refs, SHA, OCTOBER_17, allow_bootstrap=True)
