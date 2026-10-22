@@ -10,7 +10,25 @@
 <p>Capturada em {{ detail.created_at }} · {{ detail.submission_id }}</p>
 <a class="btn btn--secondary" href="/admin/submissions/{{ detail.submission_id }}/journey">Jornada</a>
 <a class="btn btn--secondary" href="/admin/forms/{{ detail.form_slug }}/handoff?submission_id={{ detail.submission_id }}">Consultar encaminhamento</a>
-<dl>{% for key, value in detail.lead_data.identity.items() %}<dt>{{ key }}</dt><dd>{{ value or '—' }}</dd>{% endfor %}</dl>
+<h3>Identificação da participante</h3>
+{% if detail.lead_data.identity is not none %}
+{% set identity_labels = {'name': 'Nome', 'email': 'E-mail', 'phone': 'Telefone'} %}
+<dl class="kv">{% for key, value in detail.lead_data.identity.items() %}<dt>{{ identity_labels.get(key, key) }}</dt><dd>{{ value if value is not none else 'Não informado' }}</dd>{% endfor %}</dl>
+{% else %}<p>Identidade histórica indisponível. Confira os valores originais abaixo; o cadastro atual da participante não substitui este envio.</p>{% endif %}
+<h3>Respostas do formulário</h3>
+<p>Leitura do envio com rótulos históricos quando disponíveis. Alterações posteriores não mudam os valores originais.</p>
+<dl class="kv kv--answers">{% for row in detail.lead_data.answer_rows %}
+<dt>{{ row.label }}</dt><dd><span class="plan-tree__text">{{ row.value_text }}</span>
+{% if not row.historical_label_available %}<p>Rótulo histórico indisponível. Identificador: <code>{{ row.name }}</code>; valores originais preservados.</p>{% endif %}
+</dd>{% else %}<dt>Respostas</dt><dd>Nenhuma resposta registrada.</dd>{% endfor %}</dl>
+<h3>Consentimentos registrados</h3>
+<p>Registro do envio; não presume o texto de consentimento de outra versão.</p>
+{% set consent_labels = {'privacy': 'Processamento dos dados', 'text_version': 'Versão do consentimento', 'marketing_email': 'Marketing por e-mail', 'marketing_whatsapp': 'Marketing por WhatsApp'} %}
+<dl class="kv">{% for key, value in detail.lead_data.consent.items() %}<dt>{{ consent_labels.get(key, key) }}</dt><dd>{% if value is sameas true %}Sim{% elif value is sameas false %}Não{% elif value is none %}Não informado{% else %}{{ value }}{% endif %}</dd>{% else %}<dt>Consentimentos</dt><dd>Sem registro disponível.</dd>{% endfor %}</dl>
+<h3>Pontuação registrada</h3>
+<dl class="kv">{% for key, value in detail.lead_data.scores.items() %}<dt>{{ key }}</dt><dd>{{ value }}</dd>{% else %}<dt>Pontuação</dt><dd>Sem pontuação registrada.</dd>{% endfor %}
+<dt>Prioridade</dt><dd>{{ detail.lead_data.priority if detail.lead_data.priority is not none else 'Não registrada' }}</dd>
+<dt>Perfil</dt><dd>{{ detail.lead_data.persona if detail.lead_data.persona is not none else 'Não registrado' }}</dd></dl>
 <h3>Entregas às integrações</h3>
 <p>Sucesso confirma o transporte, sem comprovar leitura pela participante. O reenvio mantém o mesmo evento e destino.</p>
 <ul>{% for delivery in detail.deliveries %}<li>{{ delivery.kind }} · {{ delivery.destination_id }} · {{ delivery.status }} · {{ delivery.attempts }} tentativa(s)
@@ -22,7 +40,7 @@
 <input type="hidden" name="expected_config_version" value="{{ delivery.current_config_version }}">
 <label><input type="checkbox" name="confirm" required>Confirmo repetir o envio externo ao mesmo destino na revisão {{ delivery.current_config_version }}.</label>
 <button class="btn" type="submit">Repetir entrega</button></form>{% endif %}</li>{% else %}<li>Sem destinos configurados no momento do envio.</li>{% endfor %}</ul>
-<h3>Respostas, consentimento e pontuação</h3><pre>{{ detail.lead_data | tojson(indent=2) }}</pre></section>
+<details class="acc"><summary>Detalhes técnicos do envio · uso interno</summary><pre class="source" tabindex="0" aria-label="JSON técnico do envio">{{ detail.lead_data | tojson(indent=2) }}</pre></details></section>
 {% else %}
 <form method="get" action="/admin/captures" class="form-stack">
 <label for="capture-form">Formulário</label><input class="input" id="capture-form" name="form" value="{{ form or '' }}">

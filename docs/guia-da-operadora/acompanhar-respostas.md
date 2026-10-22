@@ -8,7 +8,9 @@
 
 Na lista de “Formulários”, a coluna “Respostas” abre “Respostas” para aquele formulário. Escolha a lista desejada; o filtro do formulário é preservado. Um mesmo formulário pode ter histórico nas duas listas se mudou de finalidade entre versões.
 
-Em “Somente respostas”, na lista de capturas (`/admin/captures`), preencha “Formulário” com o endereço identificador do formulário e, se necessário, “Número da versão”; clique em “Filtrar capturas”. Abra a linha desejada. O detalhe mostra identificação, respostas, consentimento e pontuação, atualmente reunidos também em texto JSON. Peça ajuda para interpretar os nomes se necessário.
+Em “Somente respostas”, na lista de capturas (`/admin/captures`), preencha “Formulário” com o endereço identificador do formulário e, se necessário, “Número da versão”; clique em “Filtrar capturas”. Abra a linha desejada. O detalhe separa “Identificação da participante”, “Respostas do formulário”, “Consentimentos registrados” e “Pontuação registrada”. As perguntas e alternativas usam os textos da versão respondida, mesmo que você tenha alterado ou removido uma pergunta depois. A ordem das alternativas selecionadas é preservada; “Não respondida” indica ausência de resposta, enquanto zero, falso e nenhuma alternativa selecionada continuam distintos.
+
+Se aparecer “Identidade histórica indisponível” ou “Rótulo histórico indisponível”, confira os identificadores e valores originais e peça investigação técnica. O sistema não usa o cadastro atual da participante nem textos da versão atual para preencher essa lacuna. Consentimentos e pontuação mostram o registro do envio, sem presumir textos antigos ausentes. “Detalhes técnicos do envio · uso interno” conserva o JSON para consulta autorizada; você pode abrir essa seção pelo teclado, mesmo sem JavaScript. Esses dados são internos e não devem ser enviados à participante como resultado público.
 
 Em “Com PDF”, na lista de pedidos (`/admin`), use “Buscar” por nome, e-mail ou código e os filtros “Formulário”, “Versão”, “Recebido”, “Status”, “Entrega” e “Planilha”. A versão aparece quando um formulário foi escolhido. Abra o nome na linha para ler “Respostas do formulário”, “Contato e consentimentos” e a “Linha do tempo”.
 
@@ -23,7 +25,7 @@ Em “Com PDF”, na lista de pedidos (`/admin`), use “Buscar” por nome, e-m
 1. Confira o número da “Tentativa” no topo. Cada reprocessamento cria outra tentativa.
 2. Leia o estado em “PDF da tentativa atual”. Use “Baixar PDF” quando disponível. Se aparecer “Sem verificação disponível”, use “Verificar e baixar PDF atual” para tentar conferir o arquivo.
 3. Confira separadamente o acesso: “Retido”, “Liberado para esta tentativa” ou “Automático”.
-4. Para revisar a saída pública, use “Ver como participante”; o plano em “Plano gerado · uso interno” pode conter dados que não devem ser compartilhados. “Ver como participante” mostra atualmente o documento público em JSON dentro do painel; não abre o link público, não concede acesso e não envia o plano.
+4. Para revisar a saída pública, use “Ver como participante”; o plano em “Plano gerado · uso interno” pode conter dados que não devem ser compartilhados. “Ver como participante” mostra a prévia visual real da tentativa atual, com o template, as imagens e a versão do envio. “Detalhes do plano em JSON” fica recolhido para consulta. A prévia não abre o link público, não concede acesso e não envia o plano; o download nela permanece desativado. Se o plano estiver retido, um aviso informa que a revisão interna ainda não libera a participante. Se a tentativa atual ou sua versão histórica não estiver disponível, a tela informa a indisponibilidade sem usar um plano anterior.
 
 | Estado do arquivo | O que fazer |
 | --- | --- |

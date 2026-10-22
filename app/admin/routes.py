@@ -20,10 +20,11 @@ from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.routing import APIRoute
+from sqlalchemy.exc import SQLAlchemyError
 from starlette.datastructures import FormData
 
 from app import destinations
-from app.admin import draft_pages, integration_views, launching, views
+from app.admin import draft_pages, integration_views, launching, simulation, views
 from app.admin.actions import destinations as destination_actions
 from app.admin.actions import draft_tests as draft_test_actions
 from app.admin.actions import integrations as integration_actions
@@ -42,7 +43,7 @@ from app.forms import GenerationUnavailable, UnknownForm, draft_previews, draft_
 from app.forms import assets as form_assets
 from app.forms import retention as form_retention
 from app.forms import stored as stored_forms
-from app.forms.definition import DefinitionError, Problem
+from app.forms.definition import DefinitionError, Problem, compile_definition
 from app.integrations import config as integration_config
 from app.integrations import mapping as integration_mapping
 from app.internal_links import AdminPdfAccess
@@ -494,19 +495,23 @@ def job_detail(request: Request, public_id: str) -> Response:
 def participant_plan(request: Request, public_id: str) -> Response:
     from dataclasses import asdict
 
-    from app.admin.queries import jobs as queries
+    from app.admin.participant_preview import PreviewUnavailable, render_job_result
 
-    deps = get_deps()
     try:
-        with deps.sessions() as session:
-            found = queries.get_job_plan_projection(
-                session, public_id, forms=deps.forms, audience="participant"
-            )
-    except queries.ProjectionUnavailable as exc:
-        return _error(request, 409, str(exc))
+        found = render_job_result(get_deps(), public_id)
+    except PreviewUnavailable:
+        return _error(
+            request,
+            409,
+            "A prévia da tentativa atual não está disponível. Confira a versão histórica do formulário.",
+        )
     if found is None:
         return _error(request, 404, JOB_NOT_FOUND)
-    return _page(request, "admin/participant_plan.html", {"projection": asdict(found)})
+    return _page(
+        request,
+        "admin/participant_plan.html",
+        {"projection": asdict(found.projection), "result": found},
+    )
 
 
 @protected.post("/jobs/{public_id}/reprocess")
@@ -798,6 +803,7 @@ def integration_hub_page(
             "limit": limit,
             "next_url": next_url,
             "actions": integration_hub_views.actions,
+            "next_action": integration_hub_views.next_action,
             "hub_timezone": ZoneInfo("America/Sao_Paulo"),
         },
     )
@@ -1380,7 +1386,9 @@ DRAFT_SAVED = "Rascunho salvo. O que está no ar só muda quando você publicar.
 DRAFT_SAVED_EQUAL = "Rascunho salvo igual à versão publicada: não há mudança para publicar."
 DRAFT_CHANGED = (
     "O rascunho mudou desde que você abriu esta página (outra aba ou uma publicação). Nada foi "
-    "salvo. Os campos abaixo têm o seu texto: salvar de novo substitui o rascunho atual."
+    "salvo. Os campos abaixo conservam sua proposta. Preserve-a antes de sair desta página. "
+    "Abra o rascunho atual em outra aba, compare e reaplique as alterações desejadas; "
+    "salve a partir da versão atual."
 )
 
 
@@ -1435,7 +1443,42 @@ def save_draft(
     e os problemas, cada um no campo dele, e nada é gravado. Antes da primeira publicação, o
     endereço (`slug`) muda junto."""
     edit, texts = _posted(form)
+    draft = _draft(slug)
     new_slug = form.get("slug")
+    after_save = _text_of(form, "after_save") if "after_save" in form else "edit"
+    if after_save not in {"edit", "preview"}:
+        return _editor_page(
+            request,
+            draft,
+            status_code=422,
+            texts=texts,
+            edit=edit,
+            unsaved=True,
+            token=_text_of(form, "expected"),
+            slug=_text_of(form, "slug") if "slug" in form else None,
+            message="O rascunho não foi salvo. Escolha salvar ou salvar e abrir prévia.",
+        )
+    if (
+        draft.document.get("generation", "pdf") == "pdf"
+        and edit.generation == "none"
+        and _text_of(form, "confirm_generation_removal") != "on"
+    ):
+        return _editor_page(
+            request,
+            draft,
+            status_code=422,
+            texts=texts,
+            edit=edit,
+            unsaved=True,
+            token=_text_of(form, "expected"),
+            slug=_text_of(form, "slug") if "slug" in form else None,
+            problems=[
+                Problem(
+                    "generation",
+                    "Confirme a retirada da geração ou escolha Gerar plano e PDF para cancelar.",
+                )
+            ],
+        )
     try:
         saved = drafts.save(
             get_deps(),
@@ -1450,20 +1493,46 @@ def save_draft(
     except DefinitionError as exc:
         return _editor_page(
             request,
-            _draft(slug),
+            draft,
             status_code=422,
             texts=texts,
             edit=edit,
             problems=exc.problems,
+            unsaved=True,
+            token=_text_of(form, "expected"),
             slug=_text_of(form, "slug") if "slug" in form else None,
         )
     except drafts.DraftChanged:
         return _editor_page(
-            request, _draft(slug), status_code=409, texts=texts, edit=edit, message=DRAFT_CHANGED
+            request,
+            draft,
+            status_code=409,
+            texts=texts,
+            edit=edit,
+            message=DRAFT_CHANGED,
+            unsaved=True,
+            token=_text_of(form, "expected"),
+            slug=_text_of(form, "slug") if "slug" in form else None,
+        )
+    except SQLAlchemyError:
+        # A transação recusada não confirma persistência nem expõe dados da exceção.
+        return _editor_page(
+            request,
+            draft,
+            status_code=503,
+            texts=texts,
+            edit=edit,
+            unsaved=True,
+            token=_text_of(form, "expected"),
+            slug=_text_of(form, "slug") if "slug" in form else None,
+            message="Não foi possível confirmar o salvamento. Sua edição foi mantida; tente salvar novamente.",
         )
     logger.info("admin: rascunho salvo slug=%s pendente=%s", saved.slug, saved.pending)
     session.flash = ("ok", DRAFT_SAVED if saved.pending else DRAFT_SAVED_EQUAL)
-    return RedirectResponse(views.draft_url(saved.slug), status_code=303)
+    return RedirectResponse(
+        views.draft_url(saved.slug) + ("/preview" if after_save == "preview" else ""),
+        status_code=303,
+    )
 
 
 # O trecho do editor que cada tipo de operação desenha de novo, com o HTMX.
@@ -1712,21 +1781,53 @@ def _now(request: Request) -> datetime:
     return instant(request.app.state.admin_clock)
 
 
+def _simulation_post(slug: str, form: FormData) -> dict[str, Any]:
+    """Lê somente o modo escolhido, conservando vazio e a origem apresentada."""
+    mode = str(form.get("input_mode", "json"))
+    expected = form.get("expected")
+    expected = expected if isinstance(expected, str) else None
+    values = None
+    problems = ()
+    answers = _given(str(form.get("answers", "")))
+    if mode == "fields":
+        draft = _draft(slug)
+        expected = expected if expected is not None else ""
+        try:
+            spec = compile_definition(draft.document, version_number=draft.next_number)
+            post = simulation.read_fields(spec, form)
+            answers, values = post.answers, post.values
+        except DefinitionError as exc:
+            answers, problems = {}, tuple(exc.problems)
+    elif mode != "json":
+        mode = "json"
+        problems = (Problem("answers", "Escolha campos ou JSON para simular."),)
+    return {
+        "answers": answers,
+        "day": str(form.get("date", "")),
+        "input_mode": mode,
+        "values": values,
+        "expected_version": expected,
+        "input_problems": problems,
+    }
+
+
 def _tests_page(
     request: Request,
     slug: str,
     *,
-    answers: str | None = None,
+    answers=None,
     day: str = "",
     message: str | None = None,
     status_code: int = 200,
     headers: dict[str, str] | None = None,
     scoring: bool = False,
     prompt_only: bool = False,
+    input_mode: str = "fields",
+    values=None,
+    expected_version: str | None = None,
+    input_problems: tuple[Problem, ...] = (),
 ) -> Response:
-    """A página do teste: as respostas (as de exemplo, se `answers` vier vazia) e a data, o prompt
-    montado com elas ou, com `scoring`, a pontuação delas (ou os problemas delas) e os testes
-    recentes. O que ela junta é da ação (`draft_test_actions.testing`), a mesma da API."""
+    """A simulação usa as mesmas ações da API e conserva a entrada recuperável."""
     try:
         state = draft_test_actions.testing(
             get_deps(),
@@ -1736,16 +1837,33 @@ def _tests_page(
             scoring=scoring,
             prompt_only=prompt_only,
             now=_now(request),
+            expected_version=expected_version,
         )
     except UnknownForm:
         raise NotFound(DRAFT_NOT_FOUND) from None
+    except draft_tests.DraftVersionConflict:
+        state = draft_test_actions.Testing(_draft(slug), None, None, (), [])
+        message, status_code = draft_tests.VERSION_CONFLICT, 409
+    if input_problems:
+        state = draft_test_actions.Testing(state.draft, None, None, input_problems, state.recent)
     if state.draft.document.get("generation") == "none":
         return _capture_tests_page(
-            request, state.draft, answers=answers, day=day, status_code=status_code
+            request,
+            state.draft,
+            answers=answers,
+            day=day,
+            status_code=status_code,
+            values=values,
+            input_mode=input_mode,
+            expected_version=expected_version,
+            input_problems=input_problems,
         )
+    shown = (
+        json.dumps(answers, ensure_ascii=False, indent=2) if isinstance(answers, dict) else answers
+    )
     page = draft_pages.testing_page(
         state.draft,
-        answers=answers or "",
+        answers=shown if shown is not None else "",
         day=day,
         assembled=state.assembled,
         scored=state.scored,
@@ -1756,8 +1874,17 @@ def _tests_page(
     response = _page(
         request,
         "admin/form_draft_tests.html",
-        {"page": page},
-        status_code=422 if state.problems else status_code,
+        {
+            "page": page,
+            "simulation": simulation.context(
+                state.draft,
+                values=values,
+                problems=state.problems,
+                input_mode=input_mode,
+                expected=expected_version,
+            ),
+        },
+        status_code=status_code if status_code != 200 else (422 if state.problems else 200),
     )
     response.headers.update(headers or {})
     return response
@@ -1767,15 +1894,25 @@ def _capture_tests_page(
     request: Request,
     draft: drafts.Draft,
     *,
-    answers: str | None = None,
+    answers=None,
     day: str = "",
     status_code: int = 200,
+    values=None,
+    input_mode: str = "fields",
+    expected_version: str | None = None,
+    input_problems: tuple[Problem, ...] = (),
 ) -> Response:
     """O teste local usa a mesma validação de modo, respostas e conclusão da API/MCP."""
     result = None
     problems = ()
+    message = None
     try:
+        draft_tests.check_version(draft, expected_version)
+        if input_problems:
+            raise DefinitionError(list(input_problems))
         result = drafts.test_capture(draft, answers=answers, day=day, now=_now(request))
+    except draft_tests.DraftVersionConflict:
+        message, status_code = draft_tests.VERSION_CONFLICT, 409
     except DefinitionError as exc:
         problems = exc.problems
     errors = {
@@ -1784,23 +1921,35 @@ def _capture_tests_page(
         )
         for field in ("answers", "date")
     }
+    shown = (
+        json.dumps(answers, ensure_ascii=False, indent=2) if isinstance(answers, dict) else answers
+    )
     return _page(
         request,
         "admin/capture_test.html",
         {
             "draft": draft,
             "result": result,
-            "answers": answers or "",
+            "answers": shown if shown is not None else "",
             "day": day,
             "problems": problems,
             "errors": errors,
+            "message": message,
+            "simulation": simulation.context(
+                draft,
+                values=values,
+                problems=problems,
+                input_mode=input_mode,
+                expected=expected_version,
+                json_id="capture-answers",
+            ),
         },
-        status_code=422 if problems else status_code,
+        status_code=status_code if status_code != 200 else (422 if problems else 200),
     )
 
 
 def _given(answers: str) -> str | None:
-    """As respostas do formulário do teste; em branco, as de exemplo."""
+    """As respostas JSON em branco escolhem explicitamente o exemplo legado."""
     return answers if answers.strip() else None
 
 
@@ -1810,27 +1959,17 @@ def draft_tests_page(request: Request, slug: str) -> Response:
 
 
 @protected.post("/forms/{slug}/draft/prompt")
-def assemble_prompt(
-    request: Request,
-    slug: str,
-    answers: Annotated[str, Form()] = "",
-    date: Annotated[str, Form()] = "",
-) -> Response:
-    """O prompt montado com as respostas e a data do formulário, sem gravar nada. É um POST para
-    as respostas não irem para a URL nem para o log de acesso."""
-    return _tests_page(request, slug, answers=_given(answers), day=date, prompt_only=True)
+async def assemble_prompt(request: Request, slug: str) -> Response:
+    """POST mantém as respostas fora da URL e dos logs de acesso."""
+    options = await run_in_threadpool(_simulation_post, slug, await posted_form(request))
+    return await run_in_threadpool(_tests_page, request, slug, prompt_only=True, **options)
 
 
 @protected.post("/forms/{slug}/draft/score")
-def score_draft(
-    request: Request,
-    slug: str,
-    answers: Annotated[str, Form()] = "",
-    date: Annotated[str, Form()] = "",
-) -> Response:
-    """A pontuação do rascunho com as respostas do formulário (as de exemplo, em branco), sem
-    gravar nada. Um POST, como o prompt: as respostas não vão para a URL nem para o log."""
-    return _tests_page(request, slug, answers=_given(answers), day=date, scoring=True)
+async def score_draft(request: Request, slug: str) -> Response:
+    """Pontuação local, sem gravação nem chamada de IA."""
+    options = await run_in_threadpool(_simulation_post, slug, await posted_form(request))
+    return await run_in_threadpool(_tests_page, request, slug, scoring=True, **options)
 
 
 @protected.post("/forms/{slug}/draft/tests")
@@ -1838,35 +1977,51 @@ async def start_draft_test(
     request: Request,
     slug: str,
     session: Annotated[AdminSession, Depends(require_session)],
-    answers: Annotated[str, Form()] = "",
-    date: Annotated[str, Form()] = "",
 ) -> Response:
-    """Põe o teste do rascunho na fila e dispara a task `draft_test`, que recebe só o id; a página
-    do teste acompanha o resultado. Recusado (as respostas, a data, um teste em andamento ou a
-    pausa), a página do teste volta com o motivo, e nada sai para o LLM."""
+    """Só a ação explícita confirmada põe um teste na fila, com seu ID."""
+    form = await posted_form(request)
+    options = await run_in_threadpool(_simulation_post, slug, form)
     try:
+        if options["input_problems"]:
+            return await run_in_threadpool(_tests_page, request, slug, **options)
+        if form.get("input_mode") in ("fields", "json") and form.get("confirm") != "on":
+            return await run_in_threadpool(
+                _tests_page,
+                request,
+                slug,
+                **options,
+                message="Confirme a chamada real de IA e o possível custo para gerar o plano de teste.",
+                status_code=422,
+            )
         started = await draft_test_actions.start(
             get_deps(),
             request.app.state.test_trigger,
             slug,
             actor=session.username,
-            answers=_given(answers),
-            day=date,
+            answers=options["answers"],
+            day=options["day"],
             now=_now(request),
+            expected_version=options["expected_version"],
         )
     except UnknownForm:
         return _error(request, 404, DRAFT_NOT_FOUND)
     except DefinitionError:
+        return await run_in_threadpool(_tests_page, request, slug, **options)
+    except draft_tests.DraftVersionConflict:
         return await run_in_threadpool(
-            _tests_page, request, slug, answers=_given(answers), day=date
+            _tests_page,
+            request,
+            slug,
+            **options,
+            message=draft_tests.VERSION_CONFLICT,
+            status_code=409,
         )
     except draft_tests.DraftTestRefused as refused:
         return await run_in_threadpool(
             _tests_page,
             request,
             slug,
-            answers=_given(answers),
-            day=date,
+            **options,
             message=refused.message,
             status_code=429 if refused.paused else 409,
             headers={"Retry-After": str(refused.retry_after)} if refused.paused else None,
@@ -2524,13 +2679,9 @@ def capture_detail_page(submission_id: str, request: Request) -> Response:
 
 
 @protected.post("/forms/{slug}/draft/capture-test")
-def capture_test_page(
-    slug: str,
-    request: Request,
-    answers: Annotated[str, Form()] = "",
-    date: Annotated[str, Form()] = "",
-) -> Response:
-    return _capture_tests_page(request, _draft(slug), answers=_given(answers), day=date)
+async def capture_test_page(slug: str, request: Request) -> Response:
+    options = await run_in_threadpool(_simulation_post, slug, await posted_form(request))
+    return await run_in_threadpool(_capture_tests_page, request, _draft(slug), **options)
 
 
 from app.admin import handoff_routes, journey_routes

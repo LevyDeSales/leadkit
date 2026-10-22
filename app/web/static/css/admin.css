@@ -560,3 +560,18 @@ fieldset.field { border: 0; margin: 0; padding: 0; min-width: 0; }
   .hub-table td:not(.who) { display: block; }
   .hub-table td:not(.who)::before { display: block; margin-top: 8px; }
 }
+
+/* Os controles públicos reutilizados na simulação seguem a largura da coluna administrativa. */
+[data-simulation-fields] .fieldset { border: 1px solid var(--line, #d1d5db); padding: 1rem; margin-block: 1rem; min-width: 0; }
+[data-simulation-fields] .choices { display: grid; gap: .6rem; }
+[data-simulation-fields] [hidden] { display: none !important; }
+
+/* Índice por tarefas: permanece no fluxo para não cobrir campos ou erros no celular. */
+.editor-index { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 24px; }
+.editor-index a { display: inline-flex; align-items: center; min-height: 44px; padding: 8px 12px; border: 1px solid var(--line-strong); border-radius: var(--r-control); background: var(--paper-0); }
+.editor-task { scroll-margin-top: 16px; }
+.editor-task > h2 { margin: 8px 0 0; }
+#editor-save-state { font-weight: 700; }
+#editor-form[data-unsaved="true"] { border-left: 3px solid var(--line-strong); padding-left: 12px; }
+#editor-form details > summary { overflow-wrap: anywhere; }
+#editor-form .savebar { flex-wrap: wrap; }

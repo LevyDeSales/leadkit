@@ -84,3 +84,100 @@
     goTo(area, Number(link.dataset.line));
   });
 })();
+
+// Simulação administrativa: condições puras, sem persistência local ou envio público.
+document.addEventListener("DOMContentLoaded", () => {
+  document.querySelectorAll("form[data-simulation]").forEach((form) => {
+    const fields = form.querySelector("[data-simulation-fields]");
+    const block = form.querySelector("[data-simulation-conditions]");
+    const rules = block ? JSON.parse(block.textContent) : null;
+    const answerName = (name) => name.slice("_simulation_".length);
+    const update = () => {
+      const visual = form.querySelector('[name="input_mode"]:checked')?.value === "fields";
+      fields.hidden = !visual;
+      const answers = {};
+      fields.querySelectorAll("[data-question]").forEach((question) => {
+        const controls = [...question.querySelectorAll("input,textarea")];
+        const name = controls[0] ? answerName(controls[0].name) : null;
+        const chosen = controls.filter((control) =>
+          !["radio", "checkbox"].includes(control.type) || control.checked);
+        if (name) answers[name] = controls[0].type === "checkbox"
+          ? chosen.map((control) => control.value) : chosen[0]?.value || "";
+      });
+      const state = rules && window.FormConditions ? window.FormConditions.evaluate(rules, answers) : null;
+      fields.querySelectorAll("[data-question]").forEach((question) => {
+        const visible = visual && (!state || !state.hidden.includes(answerName(question.dataset.question)));
+        question.hidden = !visible;
+        question.querySelectorAll("input,textarea").forEach((control) => {
+          const option = control.closest("[data-option]");
+          const available = !option || !state || !state.options[answerName(question.dataset.question)]
+            || state.options[answerName(question.dataset.question)].includes(option.dataset.option);
+          if (option) option.hidden = !available;
+          control.disabled = !visible || !available;
+        });
+      });
+      form.querySelector('[name="answers"]').disabled = visual;
+    };
+    form.addEventListener("input", update);
+    form.addEventListener("change", update);
+    update();
+    form.querySelector("[data-simulation-errors]")?.focus();
+  });
+
+});
+
+// Edição local e operações de estrutura não comprovam persistência. Só a página
+// recebida após salvar pode apresentar novamente o estado confirmado pelo servidor.
+document.addEventListener("DOMContentLoaded", () => {
+  const form = document.getElementById("editor-form");
+  if (!form) return;
+  const status = document.getElementById("editor-save-state");
+  const dirty = () => {
+    form.dataset.unsaved = "true";
+    status.textContent = "Edição ainda não salva";
+  };
+  const reveal = (target) => {
+    if (!target) return;
+    let parent = target.parentElement;
+    while (parent) {
+      if (parent.matches("details")) parent.open = true;
+      parent = parent.parentElement;
+    }
+    if (!target.matches("input, textarea, select, button, a")) target.tabIndex = -1;
+    target.focus();
+  };
+  const generation = form.querySelector('[name="generation"]');
+  const confirmation = form.querySelector('[name="confirm_generation_removal"]');
+  let previousGeneration = generation.value;
+  generation.addEventListener("change", (event) => {
+    if (confirmation && generation.value === "none" && previousGeneration === "pdf") {
+      const accepted = window.confirm("Ao salvar somente respostas, a geração, o modelo do plano e a apresentação saem deste rascunho. A versão publicada continua igual. Confirmar a troca? Cancelar conserva sua edição e configuração.");
+      if (!accepted) {
+        generation.value = previousGeneration;
+        event.stopPropagation();
+        return;
+      }
+      confirmation.checked = true;
+    } else if (confirmation && generation.value === "pdf") {
+      confirmation.checked = false;
+    }
+    previousGeneration = generation.value;
+  });
+  form.addEventListener("input", dirty);
+  form.addEventListener("change", dirty);
+  document.addEventListener("htmx:beforeRequest", (event) => {
+    if (form.contains(event.detail.elt)) dirty();
+  });
+  document.addEventListener("htmx:afterSwap", (event) => {
+    if (!form.contains(event.target)) return;
+    dirty();
+    reveal(event.target.querySelector("[autofocus]"));
+  });
+  document.addEventListener("click", (event) => {
+    const link = event.target.closest('a[href^="#"]');
+    if (!link) return;
+    reveal(document.getElementById(link.getAttribute("href").slice(1)));
+  });
+  const error = document.getElementById("problemas") || document.getElementById("aviso");
+  if (error) reveal(form.querySelector('[aria-invalid="true"]') || error);
+});

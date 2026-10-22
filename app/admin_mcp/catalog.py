@@ -4,7 +4,8 @@
 `ToolSpec` por `operationId`: o nome é o `operation_id`; a descrição, o `summary` e a `description` da
 operação (em português, escritos para quem nunca viu o sistema); o esquema de entrada junta os
 parâmetros do caminho e da query com os campos do corpo, num objeto só; e as marcas viram dicas
-(`x-required-role: leitura` é `readOnlyHint`, `x-destructive` é `destructiveHint` e
+(GET/HEAD sem mutação e operações de papel leitura são `readOnlyHint`; `x-destructive` é
+`destructiveHint` e
 `x-external-effect` é `openWorldHint`). `select` aplica, na subida, o papel da chave e a opção do dado
 da lead.
 
@@ -143,7 +144,7 @@ class ToolSpec:
 
     @property
     def read_only(self) -> bool:
-        return self.role == "leitura"
+        return not self.destructive and (self.method in ("GET", "HEAD") or self.role == "leitura")
 
     @property
     def description(self) -> str:

@@ -3,6 +3,7 @@
 {% set section = "forms" %}
 {% block title %}Teste do rascunho de {{ page.nav.title }}{% endblock %}
 
+{% block head %}<script src="{{ static_url('js/conditions.js') }}" defer></script>{% endblock %}
 {% block content %}
 <nav class="crumbs" aria-label="Você está em"><a href="/admin/forms">Formulários</a><span aria-hidden="true">/</span><a href="{{ page.nav.form_url }}">{{ page.nav.title }}</a><span aria-hidden="true">/</span><a href="{{ page.nav.draft_url }}">Rascunho</a><span aria-hidden="true">/</span><span>Teste</span></nav>
 
@@ -19,21 +20,21 @@
     <section class="box" id="respostas" aria-labelledby="resp-titulo">
       <h2 id="resp-titulo">Respostas e data</h2>
       <p class="muted">O teste usa o rascunho salvo. Use respostas fictícias: elas ficam guardadas com o resultado do teste por poucos dias.</p>
-      <form class="form-stack" method="post" action="{{ page.nav.tests_url }}">
+      <form class="form-stack" novalidate data-simulation method="post" action="{{ page.nav.tests_url }}">
         <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
-        <div class="field">
-          <label for="f-answers">Respostas (JSON) <span class="opt">(as de exemplo, se ficar vazio)</span></label>
-          <textarea class="input mono" id="f-answers" name="answers" rows="14" spellcheck="false" autocomplete="off"{% if page.problems %} aria-describedby="problemas"{% endif %}>
-{{ page.answers }}</textarea>
-        </div>
+        {% set simulation_slug = page.nav.slug %}
+        {% set simulation_answers = page.answers %}
+        {% include "admin/_simulation_fields.html" %}
         <div class="field">
           <label for="f-date">Data simulada <span class="opt">(opcional; sem ela, hoje)</span></label>
-          <input class="input" id="f-date" name="date" type="date" value="{{ page.day }}" autocomplete="off">
+          <input class="input" id="f-date" name="date" type="date" value="{{ page.day }}" autocomplete="off"{% if simulation.date_errors %} aria-invalid="true" aria-describedby="f-date-erro" autofocus{% endif %}>
+          {% if simulation.date_errors %}<p class="error" id="f-date-erro"><a href="#f-date">Data simulada</a>: {{ simulation.date_errors | join(" · ") }}</p>{% endif %}
         </div>
         <div class="btns">
           <button class="btn btn--secondary" type="submit" formaction="{{ page.nav.prompt_url }}">Montar o prompt</button>
           <button class="btn btn--secondary" type="submit" formaction="{{ page.nav.score_url }}">Calcular a pontuação</button>
-          <button class="btn btn--primary" type="submit">Testar com o LLM</button>
+          <label><input type="checkbox" name="confirm"> Confirmo a chamada real de IA, com possível custo e rodadas de reparo.</label>
+          <button class="btn btn--primary" type="submit">Gerar plano de teste com IA</button>
         </div>
         <p class="muted">O teste chama o LLM de verdade uma vez, com as rodadas de reparo, e gera o PDF, sem criar pedido nem mandar nada ao webhook. Um teste por vez, com uma pausa entre eles.</p>
       </form>
@@ -59,7 +60,7 @@
     <div class="alert alert--warn" role="alert" id="aviso">{{ m.icon('alert-triangle', 'icon--lg') }}<div><strong class="alert__title">{{ page.message }}</strong></div></div>
     {% endif %}
     {% if page.problems %}
-    {{ m.problems(page.problems, "Não deu para montar o prompt") }}
+    <details class="box"><summary>Detalhes da validação</summary>{{ m.problems(page.problems, "Confira a simulação") }}</details>
     {% endif %}
 
     {% if page.scored %}

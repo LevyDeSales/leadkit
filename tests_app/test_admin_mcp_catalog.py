@@ -72,9 +72,11 @@ def test_every_tool_has_a_description_that_starts_with_the_summary() -> None:
 
 
 def test_the_hints_say_what_the_marks_say_for_every_operation() -> None:
-    for name, (_, _, operation) in OPERATIONS.items():
+    for name, (method, _, operation) in OPERATIONS.items():
         assert TOOLS[name].annotations == {
-            "readOnlyHint": operation["x-required-role"] == "leitura",
+            "readOnlyHint": (method == "get" or operation["x-required-role"] == "leitura")
+            and not operation.get("x-destructive", False)
+            and not operation.get("x-external-effect", False),
             "destructiveHint": operation.get("x-destructive", False),
             "openWorldHint": operation.get("x-external-effect", False),
         }, name
@@ -124,8 +126,12 @@ def test_a_leitura_key_registers_only_the_leitura_tools() -> None:
 def test_a_total_key_registers_all_but_the_lead_pdf_while_the_option_is_off() -> None:
     found = selected("total")
 
-    assert set(found) == operation_ids(DOCUMENT) - {"download_job_pdf", "get_job_plan_projection"}
-    assert len(found) == len(OPERATIONS) - 2
+    assert set(found) == operation_ids(DOCUMENT) - {
+        "download_job_pdf",
+        "get_job_plan_projection",
+        "render_job_participant_preview",
+    }
+    assert len(found) == len(OPERATIONS) - 3
 
 
 def test_the_lead_data_option_registers_the_lead_pdf_for_a_total_key() -> None:
@@ -210,6 +216,7 @@ def test_every_lead_data_operation_is_either_flagged_or_withheld_without_the_opt
         "get_job",
         "download_job_pdf",
         "get_job_plan_projection",
+        "render_job_participant_preview",
         "list_captures",
         "get_capture",
         "get_submission_journey",
@@ -374,6 +381,7 @@ def test_the_responses_that_are_not_json_are_the_downloads_and_the_previews() ->
         "render_form_draft_public_page": ("text/html",),
         "render_form_draft_result_preview": ("text/html",),
         "render_form_draft_completion_preview": ("text/html",),
+        "render_job_participant_preview": ("text/html",),
     }
     for name in non_json:
         assert "salva num arquivo" in TOOLS[name].description
@@ -688,3 +696,14 @@ def _refs(node: Any) -> list[str]:
     if isinstance(node, list):
         return [ref for value in node for ref in _refs(value)]
     return []
+
+
+def test_read_only_nature_is_distinct_from_required_role_and_effect_marks() -> None:
+    from dataclasses import replace
+
+    personal_get = TOOLS["render_job_participant_preview"]
+    assert personal_get.role == "total" and personal_get.read_only
+    assert TOOLS["render_form_draft_pdf_preview"].read_only
+    assert not TOOLS["save_form_draft"].read_only
+    assert not replace(personal_get, destructive=True).read_only
+    assert replace(personal_get, external_effect=True).read_only

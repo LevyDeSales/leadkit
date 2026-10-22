@@ -72,7 +72,7 @@ e-mail pede `total`; `leitura` busca só pelo código. `download_job_pdf` entreg
 | `POST /admin/jobs/{public_id}/release` | Libera a tentativa e o PDF observados, com confirmação e replay histórico; não renova retenção nem exige compra ou reunião | `actions.jobs.release_pdf` e `plan_release.release_pdf` | `POST /jobs/{public_id}/release` | `release_job_pdf` | total | externo | feita · tests_app/test_plan_release.py::test_admin_release_requires_total_confirmation_and_replays_without_dispatch |
 | `POST /admin/jobs/{public_id}/reprocess` | Nova tentativa auditada, com motivo, disparada uma vez; recusa se a tentativa mudou | `actions.jobs.reprocess`: o motivo de 10 a 300 caracteres, o `confirm`, a tentativa esperada, `jobs.reprocess` e o disparo (`launching.launch_attempt`), com a diferença entre enfileirada e adiada para o reconciliador | `POST /jobs/{public_id}/reprocess` | `reprocess_job` | total | externo | feita · tests_app/test_admin_api_job_actions.py::test_reprocess_job_creates_the_next_attempt_and_answers_with_the_new_state |
 | `POST /admin/jobs/{public_id}/deliveries/{delivery_id}/resend` | Entrega que falhou volta para pendente e é disparada de novo | `actions.jobs.resend_delivery`: `jobs.resend_delivery` e o disparo (`launching.launch_delivery`, numa thread, com o limite de `HATCHET_TRIGGER_TIMEOUT_SECONDS`) | `POST /jobs/{public_id}/deliveries/{delivery_id}/resend` | `resend_job_delivery` | total | externo | feita · tests_app/test_admin_api_job_actions.py::test_resend_job_delivery_returns_the_failed_delivery_to_pending_and_launches_it |
-| `GET /admin/jobs/{public_id}/participant` | Plano projetado antes da serialização, sem documento interno oculto ou respostas | `queries.jobs.get_job_plan_projection` | `GET /jobs/{public_id}/plan-projection` | `get_job_plan_projection` | total | lead | feita · tests_app/test_admin_plan_projection.py::test_projection_http_and_html_have_no_hidden_internal_document |
+| `GET /admin/jobs/{public_id}/participant` | Prévia visual e JSON participante da mesma tentativa histórica, sem liberar acesso ou enviar notificações | `participant_preview.render_job_result` | `GET /jobs/{public_id}/participant-preview` | `render_job_participant_preview` | total | lead | feita · tests_app/test_admin_participant_preview.py::test_result_preview_api_is_personal_html_with_safe_errors |
 | `GET /admin/jobs/{public_id}/pdf` | PDF de uma tentativa (a atual, sem `version`), como anexo; é o plano da lead, então só `total` | `actions.jobs.pdf_file`: a tentativa atual sem fallback, validação real e recuperação autorizada de históricos sem IA, o 404 sem PDF, o 410 se a retenção o apagou, e a URL assinada de 300 s (a página) ou os bytes (a API) | `GET /jobs/{public_id}/pdf` | `download_job_pdf` | total | lead | feita · tests_app/test_admin_api_jobs.py::test_download_job_pdf_gives_the_bytes_of_the_latest_attempt_as_an_attachment |
 | `POST /admin/jobs/{public_id}/syncs/{sync_id}/resend` | Sincronização com a planilha que falhou volta para pendente e é disparada de novo | `actions.jobs.resend_sync`: `integration_syncs.resend` e o disparo (`launching.launch_sync`) | `POST /jobs/{public_id}/syncs/{sync_id}/resend` | `resend_job_sync` | total | externo | feita · tests_app/test_admin_api_job_actions.py::test_resend_job_sync_returns_the_failed_sync_to_pending_and_launches_it |
 
@@ -577,3 +577,33 @@ mas não declara fatos comerciais em nome delas. Toda gestão e consulta abaixo 
 | --- | --- | --- | --- | --- | --- |
 | `list_event_credentials` | `GET /event-sources/{source_id}/credentials` | Metadados de credenciais sem segredo ou hash | leitura | — | feita · tests_app/test_journey_events.py::test_credential_expiry_rotation_replay_and_policy_revision |
 | `list_submission_journey_events` | `GET /submissions/{submission_id}/journey/events` | Histórico paginado por recebimento e ID local, com filtros GET na tela de jornada | leitura | lead | feita · tests_app/test_journey_events.py::test_history_paginates_and_multiple_sources_do_not_merge |
+
+### Simulação por campos e origem esperada
+
+Os POSTs HTML de prompt, pontuação, captura e início de teste aceitam `input_mode=fields|json`;
+sem o campo, mantêm o JSON legado. A tela oferece os seis tipos já compilados e mantém JSON em
+Avançado, sem mesclar entradas. Respostas visuais usam namespace HTML `_simulation_`, separado dos controles
+administrativos; o adaptador restaura os nomes do domínio sem alterar JSON/API. O modo visual exige `expected` da origem salva; erros 422/409
+preservam respostas permitidas e data. A confirmação da chamada paga é explícita na tela nova.
+
+Os requests API correspondentes recebem `expected_version` opcional (`get_form_draft.version`),
+sem alterar a semântica dos clientes antigos. Divergência retorna `409 state_conflict`. O início
+revalida o snapshot após configuration-lock → Form, antes de DraftTest, auditoria e trigger;
+respostas, definição, prompt e fingerprints pertencem à mesma origem. Confirmação da API,
+pausas e `Retry-After` permanecem. MCP deriva esse argumento do OpenAPI, sem ferramenta por campo.
+GET, prompt, pontuação e captura não chamam IA ou fornecedores nem criam submissão, pedido ou
+outbox público. Evidências: `tests_app/test_admin_simulation.py`,
+`test_stale_expected_version_refuses_without_effects`,
+`test_edit_between_assembly_and_lock_refuses_before_enqueue` e
+`test_expected_version_conflict_is_compatible_and_has_no_effects`.
+
+### Projeção adicional do plano
+
+| `operation_id` | Operação da API | O que faz | Papel | Marcas | Status |
+| --- | --- | --- | --- | --- | --- |
+| `get_job_plan_projection` | `GET /jobs/{public_id}/plan-projection` | Documento JSON projetado pela versão histórica; audiência participante por omissão e interna autorizada preservada | total | lead | feita · tests_app/test_admin_plan_projection.py::test_projection_http_and_html_have_no_hidden_internal_document |
+
+A prévia HTML usa somente o código do pedido e fixa a audiência participante e a tentativa atual.
+É dado pessoal integral: o MCP só anuncia a ferramenta para chave total com
+`GERADOR_MCP_LEAD_DATA=1`, grava o HTML em arquivo privado e retorna metadados, hash e caminho.
+A leitura não libera, não gera, não envia e não assina um link de PDF; o download da prévia fica desativado.

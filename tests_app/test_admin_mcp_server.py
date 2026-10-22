@@ -89,6 +89,7 @@ def test_the_server_lists_one_tool_per_operation_the_key_allows(world: World) ->
     assert names == operation_ids(world.api.document) - {
         "download_job_pdf",
         "get_job_plan_projection",
+        "render_job_participant_preview",
     }
     assert len(listed.tools) == 82
     for tool in listed.tools:
@@ -102,14 +103,17 @@ def test_the_hints_reach_the_client_for_every_tool(world: World) -> None:
 
     document = world.api.document
     operations = {
-        operation["operationId"]: operation
+        operation["operationId"]: (method, operation)
         for item in document["paths"].values()
         for method, operation in item.items()
         if method in ("get", "put", "post", "delete", "patch")
     }
     for tool in listed.tools:
-        operation = operations[tool.name]
-        assert tool.annotations.readOnlyHint is (operation["x-required-role"] == "leitura")
+        method, operation = operations[tool.name]
+        assert tool.annotations.readOnlyHint is (
+            (method == "get" or operation["x-required-role"] == "leitura")
+            and not operation.get("x-destructive", False)
+        )
         assert tool.annotations.destructiveHint is bool(operation.get("x-destructive", False))
         assert tool.annotations.openWorldHint is bool(operation.get("x-external-effect", False))
 
