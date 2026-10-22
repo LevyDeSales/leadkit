@@ -243,7 +243,8 @@ jobs:
     # volta de versão e pelo primeiro deploy, sem nenhum pedido sem 200 nas trocas. No fim, uma
     # segunda stack sobe ao lado da primeira, com outro nome e outro domínio.
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Bootstrap, atualização/rollback e duas stacks somam quase 30 min; reserve margem no runner.
+    timeout-minutes: 45
     # O mesmo roteiro conserva a adoção0 e prova separadamente a transição pública1→2.
     strategy:
       fail-fast: false
