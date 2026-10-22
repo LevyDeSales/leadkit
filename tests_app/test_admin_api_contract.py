@@ -588,7 +588,17 @@ def _errors(
             found.append(f"{where}: a resposta {status} não declara o cabeçalho {header}")
     if "409" in responses:
         text = str(responses["409"].get("description", ""))
-        if versioned and "version_conflict" not in text:
+        # #34: a origem opcional da simulação conflita com o estado do snapshot;
+        # não é uma gravação otimista do recurso. As demais escritas mantêm version_conflict.
+        snapshot = operation.get("operationId") in {
+            "assemble_form_draft_prompt",
+            "score_form_draft",
+            "test_capture_form_draft",
+            "start_form_draft_test",
+        }
+        if snapshot and "state_conflict" not in text:
+            found.append(f"{where}: o 409 da simulação fala de `state_conflict`")
+        if versioned and not snapshot and "version_conflict" not in text:
             found.append(f"{where}: o 409 de uma operação com versão fala de `version_conflict`")
         if not versioned and "version_conflict" in text:
             found.append(
