@@ -42,3 +42,41 @@ def actions(row: HubRow) -> list[tuple[str, str]]:
     if row.receiver:
         result.extend([("Conferir eventos", base + "#eventos"), ("Abrir teste", base + "#teste")])
     return result
+
+
+def next_action(row: HubRow) -> tuple[str, str] | None:
+    """Sugere apenas uma navegação já oferecida pela associação local."""
+    available = actions(row)
+    if not available:
+        return None
+
+    def at(anchor: str) -> tuple[str, str]:
+        return next((action for action in available if action[1].endswith(anchor)), available[0])
+
+    if row.receiver is None:
+        return available[0]
+    configuration = (
+        at("/admin/destinations/default#endereco") if row.serving == "default" else available[0]
+    )
+    if row.receiver.credential_unreadable:
+        return configuration
+    profile = row.form.profile if row.form else None
+    if row.form and (not row.form.exists or profile is None):
+        return configuration
+    if row.connector == "baserow":
+        mapped = row.mapping and (
+            row.mapping.capture_present if profile == "capture" else row.mapping.pdf_present
+        )
+        if not mapped or row.form_issues:
+            return at("#mapeamento")
+        if row.receiver.active is False:
+            return at("#ativacao")
+    elif row.form_issues:
+        return at("#eventos")
+    # As contagens são históricas: orientam revisão, sem atribuir falhas à revisão atual.
+    if profile and getattr(row.history, profile).failed:
+        return at("#sincronizacoes" if row.connector == "baserow" else "#teste")
+    success = row.history.last_success
+    if success and success.stream == profile and success.configuration_match == "current":
+        return None
+    return at("#teste")
