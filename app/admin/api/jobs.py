@@ -34,6 +34,7 @@ from pydantic import AwareDatetime
 from app.admin.actions import jobs as job_actions
 from app.admin.api import keys
 from app.admin.api.common import (
+    HtmlResponse,
     PageParams,
     PdfResponse,
     decode_keyset,
@@ -369,6 +370,51 @@ def get_job_plan_projection(
     values = asdict(found)
     document = values.pop("document")
     return JobPlanProjection(**values, lead_data={"document": document})
+
+
+@router.operation(
+    "GET",
+    "/jobs/{public_id}/participant-preview",
+    operation_id="render_job_participant_preview",
+    role="total",
+    lead_data=True,
+    heavy=True,
+    errors={
+        404: "Pedido não encontrado.",
+        409: "Prévia histórica indisponível (`state_conflict`).",
+    },
+    summary="Ver prévia real da participante",
+    description="Renderiza somente a tentativa atual pela versão histórica, sem liberar acesso, gerar plano, escrever auditoria ou assinar link de PDF. Todo o HTML é dado pessoal; exige papel total. Custa 5 fichas.",
+    returns="HTML da participante, com download desativado e política sem scripts.",
+    response_model=None,
+    response_class=HtmlResponse,
+)
+def render_job_participant_preview(
+    public_id: Annotated[str, Path(description="Código do pedido.")],
+) -> HtmlResponse:
+    from app.admin.api.previews import RESULT_PAGE_POLICY
+    from app.admin.participant_preview import PreviewUnavailable, render_job_result
+
+    try:
+        found = render_job_result(get_deps(), public_id)
+    except PreviewUnavailable:
+        raise ApiError(
+            "state_conflict",
+            "A prévia da tentativa atual não está disponível. Confira a versão histórica do formulário.",
+        ) from None
+    if found is None:
+        raise ApiError("not_found", "Pedido não encontrado.")
+    return HtmlResponse(
+        found.html,
+        headers={
+            "Content-Disposition": 'inline; filename="previa-participante.html"',
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+            "Referrer-Policy": "no-referrer",
+            "Content-Security-Policy": RESULT_PAGE_POLICY,
+            "X-Frame-Options": "DENY",
+        },
+    )
 
 
 @router.operation(
