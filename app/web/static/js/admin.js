@@ -84,3 +84,44 @@
     goTo(area, Number(link.dataset.line));
   });
 })();
+
+// Simulação administrativa: condições puras, sem persistência local ou envio público.
+document.addEventListener("DOMContentLoaded", () => {
+  document.querySelectorAll("form[data-simulation]").forEach((form) => {
+    const fields = form.querySelector("[data-simulation-fields]");
+    const block = form.querySelector("[data-simulation-conditions]");
+    const rules = block ? JSON.parse(block.textContent) : null;
+    const answerName = (name) => name.slice("_simulation_".length);
+    const update = () => {
+      const visual = form.querySelector('[name="input_mode"]:checked')?.value === "fields";
+      fields.hidden = !visual;
+      const answers = {};
+      fields.querySelectorAll("[data-question]").forEach((question) => {
+        const controls = [...question.querySelectorAll("input,textarea")];
+        const name = controls[0] ? answerName(controls[0].name) : null;
+        const chosen = controls.filter((control) =>
+          !["radio", "checkbox"].includes(control.type) || control.checked);
+        if (name) answers[name] = controls[0].type === "checkbox"
+          ? chosen.map((control) => control.value) : chosen[0]?.value || "";
+      });
+      const state = rules && window.FormConditions ? window.FormConditions.evaluate(rules, answers) : null;
+      fields.querySelectorAll("[data-question]").forEach((question) => {
+        const visible = visual && (!state || !state.hidden.includes(answerName(question.dataset.question)));
+        question.hidden = !visible;
+        question.querySelectorAll("input,textarea").forEach((control) => {
+          const option = control.closest("[data-option]");
+          const available = !option || !state || !state.options[answerName(question.dataset.question)]
+            || state.options[answerName(question.dataset.question)].includes(option.dataset.option);
+          if (option) option.hidden = !available;
+          control.disabled = !visible || !available;
+        });
+      });
+      form.querySelector('[name="answers"]').disabled = visual;
+    };
+    form.addEventListener("input", update);
+    form.addEventListener("change", update);
+    update();
+    form.querySelector("[data-simulation-errors]")?.focus();
+  });
+
+});

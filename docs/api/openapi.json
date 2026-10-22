@@ -212,6 +212,18 @@
             ],
             "title": "Answers"
           },
+          "expected_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Versão de get_form_draft.version (Draft.token). Se divergir do rascunho usado, 409 state_conflict antes de qualquer efeito. Ausente mantém compatibilidade.",
+            "title": "Expected Version"
+          },
           "simulated_date": {
             "anyOf": [
               {
@@ -3583,6 +3595,18 @@
               }
             ],
             "title": "Answers"
+          },
+          "expected_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Versão de get_form_draft.version (Draft.token). Se divergir do rascunho usado, 409 state_conflict antes de qualquer efeito. Ausente mantém compatibilidade.",
+            "title": "Expected Version"
           },
           "simulated_date": {
             "anyOf": [
@@ -12023,6 +12047,18 @@
               }
             ],
             "title": "Answers"
+          },
+          "expected_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Versão de get_form_draft.version (Draft.token). Se divergir do rascunho usado, 409 state_conflict antes de qualquer efeito. Ausente mantém compatibilidade.",
+            "title": "Expected Version"
           }
         },
         "title": "ScoreFormDraftRequest",
@@ -12274,6 +12310,18 @@
             ],
             "title": "Confirm",
             "type": "boolean"
+          },
+          "expected_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Versão de get_form_draft.version (Draft.token). Se divergir do rascunho usado, 409 state_conflict antes de qualquer efeito. Ausente mantém compatibilidade.",
+            "title": "Expected Version"
           },
           "simulated_date": {
             "anyOf": [
@@ -17515,7 +17563,7 @@
                 }
               }
             },
-            "description": "O rascunho exige geração PDF (`state_conflict`)."
+            "description": "A versão esperada diverge do rascunho usado ou o rascunho exige geração PDF (`state_conflict`)."
           },
           "422": {
             "content": {
@@ -17871,7 +17919,7 @@
                 }
               }
             },
-            "description": "Formulário de captura não monta prompt (`state_conflict`); use test_capture_form_draft."
+            "description": "A versão esperada diverge do rascunho usado ou o formulário é captura (`state_conflict`); para captura, use test_capture_form_draft."
           },
           "422": {
             "content": {
@@ -18465,6 +18513,16 @@
               }
             },
             "description": "O formulário não existe (`not_found`)."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "A versão esperada diverge do rascunho usado (`state_conflict`)."
           },
           "422": {
             "content": {

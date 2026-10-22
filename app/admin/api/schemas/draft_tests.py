@@ -46,6 +46,10 @@ SIMULATED_DATE_FIELD = "simulated_date"  # o campo `date` da página, na API
 class DraftTestInput(ApiInput):
     """As respostas e a data simulada de um prompt, de uma pontuação ou de um teste."""
 
+    expected_version: str | None = Field(
+        default=None,
+        description="Versão de get_form_draft.version (Draft.token). Se divergir do rascunho usado, 409 state_conflict antes de qualquer efeito. Ausente mantém compatibilidade.",
+    )
     answers: dict[str, Any] | None = Field(
         default=None,
         description=ANSWERS_TEXT,
@@ -71,6 +75,10 @@ class AssembleFormDraftPromptRequest(DraftTestInput):
 class ScoreFormDraftRequest(ApiInput):
     """As respostas com que pontuar o rascunho. A pontuação só lê as respostas: não tem data."""
 
+    expected_version: str | None = Field(
+        default=None,
+        description="Versão de get_form_draft.version (Draft.token). Se divergir do rascunho usado, 409 state_conflict antes de qualquer efeito. Ausente mantém compatibilidade.",
+    )
     answers: dict[str, Any] | None = Field(
         default=None,
         description=ANSWERS_TEXT,

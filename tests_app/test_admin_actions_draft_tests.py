@@ -384,3 +384,51 @@ def test_starting_logs_only_ids_and_the_author(
 
     assert str(started.test_id) in caplog.text and ACTOR in caplog.text
     assert "Outra Contadora" not in caplog.text
+
+
+@pytest.mark.parametrize("operation", ["prompt", "score", "start"])
+def test_stale_expected_version_refuses_without_effects(deps: Deps, published, operation):
+    engine = Engine()
+    before = counts(deps)
+    with pytest.raises(draft_tests.DraftVersionConflict):
+        if operation == "start":
+            start(deps, engine, expected_version="stale")
+        else:
+            actions.testing(
+                deps, SLUG, now=NOW, scoring=operation == "score", expected_version="stale"
+            )
+    assert counts(deps) == before
+    assert engine.received == []
+
+
+def test_edit_between_assembly_and_lock_refuses_before_enqueue(deps: Deps, published, monkeypatch):
+    from app.forms import drafts
+
+    original = draft_tests.assemble
+
+    def assemble_then_edit(draft, **options):
+        assembled = original(draft, **options)
+        drafts.replace_document(
+            deps,
+            SLUG,
+            {**draft.document, "intro": "Introdução revisada."},
+            actor=ACTOR,
+            expected=draft.token,
+        )
+        return assembled
+
+    monkeypatch.setattr(draft_tests, "assemble", assemble_then_edit)
+    engine = Engine()
+    with pytest.raises(draft_tests.DraftVersionConflict):
+        start(deps, engine)
+    assert rows_of_tests(deps) == 0
+    assert engine.received == []
+    with deps.sessions() as session:
+        assert (
+            session.scalar(
+                sa.select(sa.func.count())
+                .select_from(AuditLog)
+                .where(AuditLog.action == "form.draft.test")
+            )
+            == 0
+        )

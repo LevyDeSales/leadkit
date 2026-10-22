@@ -1494,3 +1494,65 @@ def api_starts_in(
         return response
 
     return call
+
+
+@pytest.mark.parametrize(
+    "operation", ["assemble_form_draft_prompt", "score_form_draft", "start_form_draft_test"]
+)
+def test_expected_version_conflict_is_compatible_and_has_no_effects(
+    writer, deps, worker, operation
+):
+    before = unchanged(deps)
+    body = (
+        {"expected_version": "stale", "confirm": True}
+        if operation == "start_form_draft_test"
+        else {"expected_version": "stale"}
+    )
+    response = writer.post(url_of(operation, slug=SLUG), json=body)
+    assert response.status_code == 409
+    assert response.json()["code"] == "state_conflict"
+    assert before()
+    assert worker.queued == []
+
+
+@pytest.mark.parametrize(
+    "operation",
+    [
+        "assemble_form_draft_prompt",
+        "score_form_draft",
+        "test_capture_form_draft",
+        "start_form_draft_test",
+    ],
+)
+def test_mcp_forwards_optional_expected_version_and_refuses_stale_origin(
+    writer, deps, worker, tmp_path, operation
+):
+    from admin_mcp_live import Live
+    from admin_mcp_world import Asker
+
+    slug = SLUG
+    if operation == "test_capture_form_draft":
+        slug = drafts.create(
+            deps,
+            title="Pesquisa sintética",
+            slug="version-capture",
+            actor="testes",
+            generation="none",
+        )
+    live = Live(writer, tmp_path)
+    try:
+        assert "expected_version" in live.tools[operation].input_schema["properties"]
+        before = unchanged(deps)
+        result = live.call(
+            operation,
+            {"slug": slug, "expected_version": "stale", "confirm": True}
+            if operation == "start_form_draft_test"
+            else {"slug": slug, "expected_version": "stale"},
+            Asker(True),
+        )
+        assert result.is_error
+        assert "409 state_conflict" in result.text
+        assert before()
+        assert worker.queued == []
+    finally:
+        live.close()

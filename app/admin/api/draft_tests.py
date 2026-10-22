@@ -131,6 +131,7 @@ def _testing(
     scoring: bool = False,
     prompt_only: bool = False,
     refused: str,
+    expected_version: str | None = None,
 ) -> draft_test_actions.Testing:
     """O estado do teste, ou o `404` do formulário e o `422` das respostas, da data e do rascunho."""
     try:
@@ -142,7 +143,10 @@ def _testing(
             scoring=scoring,
             prompt_only=prompt_only,
             now=now(request),
+            expected_version=expected_version,
         )
+    except draft_tests.DraftVersionConflict:
+        raise ApiError("state_conflict", draft_tests.VERSION_CONFLICT) from None
     except UnknownForm:
         raise ApiError("not_found", NOT_FOUND) from None
     if state.problems:
@@ -166,7 +170,7 @@ def _found(request: Request, slug: str, test_id: str) -> draft_test_actions.Foun
     operation_id="assemble_form_draft_prompt",
     role="leitura",
     errors={
-        409: "Formulário de captura não monta prompt (`state_conflict`); use test_capture_form_draft.",
+        409: "A versão esperada diverge do rascunho usado ou o formulário é captura (`state_conflict`); para captura, use test_capture_form_draft.",
         404: "O formulário não existe (`not_found`).",
         422: "As respostas, a data ou o rascunho não valem (`validation_failed`): o motivo vem em "
         "`errors`, com `answers.<pergunta>` para uma resposta, `answers` para uma resposta a uma "
@@ -196,7 +200,13 @@ def assemble_form_draft_prompt(
     slug: FORM, body: AssembleFormDraftPromptRequest, request: Request
 ) -> AssembledPrompt:
     state = _testing(
-        request, slug, answers=body.answers, day=body.day, refused=NOT_ASSEMBLED, prompt_only=True
+        request,
+        slug,
+        answers=body.answers,
+        day=body.day,
+        refused=NOT_ASSEMBLED,
+        prompt_only=True,
+        expected_version=body.expected_version,
     )
     assert state.assembled is not None  # sem problemas, o prompt montou
     return AssembledPrompt.of(state.assembled)
@@ -208,6 +218,7 @@ def assemble_form_draft_prompt(
     operation_id="score_form_draft",
     role="leitura",
     errors={
+        409: "A versão esperada diverge do rascunho usado (`state_conflict`).",
         404: "O formulário não existe (`not_found`).",
         422: "As respostas ou o rascunho não valem (`validation_failed`): o motivo vem em "
         "`errors`, com `answers.<pergunta>` para uma resposta, `answers` para uma resposta a uma "
@@ -230,7 +241,14 @@ def assemble_form_draft_prompt(
     response_model=FormDraftScore,
 )
 def score_form_draft(slug: FORM, body: ScoreFormDraftRequest, request: Request) -> FormDraftScore:
-    state = _testing(request, slug, answers=body.answers, scoring=True, refused=NOT_SCORED)
+    state = _testing(
+        request,
+        slug,
+        answers=body.answers,
+        scoring=True,
+        refused=NOT_SCORED,
+        expected_version=body.expected_version,
+    )
     assert state.scored is not None  # sem problemas, a pontuação calculou
     return FormDraftScore.of(state.scored)
 
@@ -323,6 +341,7 @@ async def start_form_draft_test(
             request.app.state.test_trigger,
             slug,
             actor=key.actor,
+            expected_version=body.expected_version,
             answers=body.answers,
             day=body.day,
             now=now(request),
@@ -331,6 +350,8 @@ async def start_form_draft_test(
         raise ApiError("not_found", NOT_FOUND) from None
     except DefinitionError as refused:
         raise _invalid(NOT_STARTED, refused.problems) from None
+    except draft_tests.DraftVersionConflict:
+        raise ApiError("state_conflict", draft_tests.VERSION_CONFLICT) from None
     except draft_tests.DraftTestRefused as refused:
         if refused.paused:
             raise ApiError(
@@ -420,7 +441,7 @@ class CaptureTestResult(BaseModel):
     response_model=CaptureTestResult,
     errors={
         404: "Formulário não encontrado.",
-        409: "O rascunho exige geração PDF (`state_conflict`).",
+        409: "A versão esperada diverge do rascunho usado ou o rascunho exige geração PDF (`state_conflict`).",
         422: "Respostas, data ou definição inválidas.",
     },
 )
@@ -432,7 +453,10 @@ def test_capture_form_draft(
     if draft is None:
         raise ApiError("not_found", NOT_FOUND)
     try:
+        draft_tests.check_version(draft, body.expected_version)
         result = drafts.test_capture(draft, answers=body.answers, day=body.day, now=now(request))
+    except draft_tests.DraftVersionConflict:
+        raise ApiError("state_conflict", draft_tests.VERSION_CONFLICT) from None
     except DefinitionError as exc:
         raise _invalid(NOT_STARTED, exc.problems) from None
     return CaptureTestResult(
