@@ -465,3 +465,21 @@ def test_result_preview_distinguishes_pdf_availability_from_access(deps, monkeyp
     assert not result.pdf_state.available
     assert SENTINEL not in result.html
     assert 'aria-disabled="true"' in result.html
+
+
+def test_participant_page_and_api_serve_the_same_observed_document(deps, api_client):
+    from test_admin import login
+    from test_public import tags
+
+    job = generated(deps)
+    client = api_client("total")
+    assert login(client).status_code == 303
+    page = client.get(f"/admin/jobs/{job.public_id}/participant")
+    assert page.status_code == 200, page.text
+    response = client.get(f"/admin/api/v1/jobs/{job.public_id}/participant-preview")
+    assert response.status_code == 200
+    (frame,) = tags(page.text, "iframe")
+    assert frame["srcdoc"] == response.text
+    assert frame["sandbox"] == "" and "src" not in frame
+    assert SENTINEL not in page.text
+    assert "&lt;!doctype html&gt;" in page.text

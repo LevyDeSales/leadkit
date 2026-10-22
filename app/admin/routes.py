@@ -495,19 +495,23 @@ def job_detail(request: Request, public_id: str) -> Response:
 def participant_plan(request: Request, public_id: str) -> Response:
     from dataclasses import asdict
 
-    from app.admin.queries import jobs as queries
+    from app.admin.participant_preview import PreviewUnavailable, render_job_result
 
-    deps = get_deps()
     try:
-        with deps.sessions() as session:
-            found = queries.get_job_plan_projection(
-                session, public_id, forms=deps.forms, audience="participant"
-            )
-    except queries.ProjectionUnavailable as exc:
-        return _error(request, 409, str(exc))
+        found = render_job_result(get_deps(), public_id)
+    except PreviewUnavailable:
+        return _error(
+            request,
+            409,
+            "A prévia da tentativa atual não está disponível. Confira a versão histórica do formulário.",
+        )
     if found is None:
         return _error(request, 404, JOB_NOT_FOUND)
-    return _page(request, "admin/participant_plan.html", {"projection": asdict(found)})
+    return _page(
+        request,
+        "admin/participant_plan.html",
+        {"projection": asdict(found.projection), "result": found},
+    )
 
 
 @protected.post("/jobs/{public_id}/reprocess")
