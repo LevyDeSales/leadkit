@@ -5,8 +5,10 @@ from dataclasses import asdict
 
 import sqlalchemy as sa
 
+from app.admin.capture_reading import answer_rows
+from app.errors import TerminalError
 from app.models import CaptureReceipt, Submission
-from app.submission_identity import resolve_identity
+from app.submission_identity import identity_from_answers, submission_form
 
 
 def listing(session, forms, *, with_lead=False, form=None, version=None, after=None, limit=50):
@@ -60,10 +62,24 @@ def _row(session, forms, row, with_lead):
     )
     if with_lead:
         submission = session.get_one(Submission, row.id)
-        identity = resolve_identity(forms, submission)
+        spec = None
+        identity = None
+        try:
+            spec = submission_form(forms, submission)
+        except TerminalError:
+            # Sem versão histórica, não presumimos rótulos nem contato do cadastro compartilhado.
+            pass
+        if spec is not None:
+            try:
+                identity = identity_from_answers(submission, spec)
+            except TerminalError:
+                # Respostas inválidas não impedem a leitura interna dos valores originais.
+                pass
         found["lead_data"] = {
-            "identity": asdict(identity),
+            "identity": asdict(identity) if identity is not None else None,
+            "identity_unavailable": identity is None,
             "answers": submission.answers,
+            "answer_rows": answer_rows(spec, submission.answers),
             "consent": submission.consent,
             "tracking": submission.tracking,
             "scores": submission.scores,
