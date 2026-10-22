@@ -8,12 +8,13 @@
 
 Baserow envia dados para uma tabela. Webhook envia eventos a um serviço receptor. Nenhum deles é o botão de continuidade da participante: esse destino fica na conclusão do formulário.
 
-1. Use “Conector” e “Formulário” e clique em “Filtrar” para localizar a associação.
+1. Em “Para onde vão as respostas?”, escolha “Formulário” e, se necessário, “Conector”; clique em “Filtrar”. A seleção só consulta registros locais, sem acessar o fornecedor, ativar conexões ou fazer envios.
 2. Confira finalidade, eventos, revisão e situação. No Baserow, confira também se há mapeamento para “Captura sem PDF” ou “Plano com PDF”, conforme a finalidade publicada.
 3. Leia “Última confirmação de envio”: a data pode corresponder à revisão atual, anterior ou não registrada. Um sucesso antigo não comprova que a configuração atual funciona.
-4. Abra “Configurar”, “Mapear”, “Abrir teste”, “Revisar ativação” ou “Rever envios”, conforme as ações disponíveis.
+4. Leia “Próximo passo”. A indicação prioriza receptor ou credencial a corrigir, perfil e mapeamento pendentes, depois falhas registradas no perfil do formulário. Uma falha histórica pede revisão; as contagens não dizem que a revisão atual falhou. “Outras ações” conserva os caminhos para configuração, mapeamento, teste, ativação e envios quando disponíveis.
+5. No Baserow, leia o aviso antes de clicar em “Consultar campos da planilha no Baserow”: essa ação abre a configuração na seção indicada e consulta os campos atuais ao vivo. O perfil “Captura sem PDF” ou “Plano com PDF” é preservado quando disponível. Não envia linha de teste nem ativa a conexão.
 
-**Resultado:** você navega aos detalhes sem fazer envios. “Abrir teste” apenas abre a seção. Os botões de mandar teste fazem envio externo. Uma conexão ativa significa envio habilitado; não garante compatibilidade atual com o provedor. Os contadores do catálogo são globais, mesmo quando há filtros; o resumo do receptor padrão é compartilhado, não deve ser somado às linhas dos formulários.
+**Resultado:** a central e seus filtros mostram fatos locais. Abrir o detalhe Baserow faz a consulta ao vivo descrita acima, sem enviar respostas. “Abrir teste” apenas abre a seção. Os botões de mandar teste fazem envio externo. Uma conexão ativa significa envio habilitado; não garante compatibilidade atual com o provedor. “Sem verificação registrada” não significa teste aprovado; a confirmação de transporte é mostrada separadamente. Se a linha mostra “Usa padrão”, existe um receptor efetivo herdado: alterar esse padrão pode afetar outros formulários. Os contadores em “Conectores e contadores globais” são globais, mesmo quando há filtros; o resumo do receptor padrão é compartilhado, não deve ser somado às linhas dos formulários.
 
 **Se houver credencial ilegível ou perfil incompatível:** abra os detalhes e peça ajuda técnica antes de ativar ou reenviar. A central mostra fatos locais conservados, não uma consulta completa de saúde do serviço externo.
 
@@ -21,7 +22,7 @@ Baserow envia dados para uma tabela. Webhook envia eventos a um serviço recepto
 
 **Objetivo:** gravar respostas e dados autorizados para uso interno. Combine tabela e permissões com a administradora técnica antes de conectar.
 
-**Onde entrar:** formulário → “Integração com o Baserow” ou central → “Configurar”. O formulário precisa ter versão publicada para o mapeamento.
+**Onde entrar:** formulário → “Integração com o Baserow” ou central → “Consultar campos da planilha no Baserow”. O formulário precisa ter versão publicada para o mapeamento.
 
 1. Em “Finalidade da conexão”, escolha “Interna — respostas e dados comerciais”. Baserow não aceita finalidade participante.
 2. Preencha “Endereço do Baserow” com a base fornecida pela administradora, “Número da tabela” e “Token de banco de dados”. Esse token precisa permitir ler, criar e atualizar linhas da tabela. Não é sua senha de login.

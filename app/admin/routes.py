@@ -798,6 +798,7 @@ def integration_hub_page(
             "limit": limit,
             "next_url": next_url,
             "actions": integration_hub_views.actions,
+            "next_action": integration_hub_views.next_action,
             "hub_timezone": ZoneInfo("America/Sao_Paulo"),
         },
     )

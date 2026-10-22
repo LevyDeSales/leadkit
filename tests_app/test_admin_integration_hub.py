@@ -375,7 +375,7 @@ def test_unconfigured_baserow_only_links_to_existing_connection_section(deps: De
     page = admin_client(deps).get("/admin/integrations?connector=baserow&form_slug=demo")
     links = Links()
     links.feed(page.text)
-    assert links.links == ["/admin/forms/demo/baserow#conexao"]
+    assert links.links == ["/admin/forms/demo/baserow#conexao"] * 2
 
 
 def test_readiness_snapshot_is_pure_and_preserves_connector_rules():
@@ -405,3 +405,263 @@ def test_readiness_snapshot_is_pure_and_preserves_connector_rules():
     integration.active = False
     destination.events = ["submissao.persistida"]
     assert problems_for(spec, destination=destination, integrations=[integration]) == []
+
+
+def guidance_row(*, connector="baserow", profile="pdf"):
+    """Associação sintética com contrato público da consulta local."""
+    from app.admin.queries.integration_hub import HubForm, HubRow, MappingState, Receiver
+
+    return HubRow(
+        key=f"{connector}:form:demo",
+        connector=connector,
+        scope_kind="form",
+        form_slug="demo",
+        form=HubForm("demo", "Pesquisa sintética", True, True, 1, profile),
+        configured=True,
+        serving="own",
+        receiver=Receiver(
+            "form",
+            "demo",
+            "1",
+            "example.test",
+            1 if connector == "baserow" else None,
+            "internal",
+            "explicit",
+            ["plano.concluido"],
+            True if connector == "baserow" else None,
+            False,
+        ),
+        mapping=MappingState(True, True) if connector == "baserow" else None,
+        form_issues=[],
+    )
+
+
+def test_form_integration_next_action_matches_local_state():
+    from dataclasses import replace
+
+    from app.admin.integration_hub_views import actions, next_action
+
+    row = replace(guidance_row(), configured=False, serving="none", receiver=None, mapping=None)
+    assert next_action(row) == ("Configurar", "/admin/forms/demo/baserow#conexao")
+    assert next_action(row) in actions(row)
+
+
+def test_next_action_prioritizes_effective_receiver_mapping_and_profile_failures():
+    from dataclasses import replace
+    from datetime import UTC, datetime
+
+    from app.admin.integration_hub_views import actions, next_action
+    from app.admin.queries.integration_hub import (
+        Counts,
+        FormIssue,
+        History,
+        LastSuccess,
+        MappingState,
+    )
+
+    pdf = guidance_row()
+    capture = guidance_row(profile="capture")
+    webhook = guidance_row(connector="webhook")
+    inherited = replace(
+        webhook,
+        configured=False,
+        serving="default",
+        receiver=replace(
+            webhook.receiver,
+            scope_kind="default",
+            form_slug=None,
+        ),
+    )
+    cases = [
+        (replace(pdf, receiver=replace(pdf.receiver, credential_unreadable=True)), "#conexao"),
+        (
+            replace(inherited, receiver=replace(inherited.receiver, credential_unreadable=True)),
+            "/admin/destinations/default#endereco",
+        ),
+        (replace(pdf, mapping=MappingState(False, True)), "?profile=pdf#mapeamento"),
+        (replace(capture, mapping=MappingState(True, False)), "?profile=capture#mapeamento"),
+        (replace(pdf, form=replace(pdf.form, profile=None)), "#conexao"),
+        (replace(pdf, form_issues=[FormIssue("integrations", "Perfil a revisar")]), "#mapeamento"),
+        (
+            replace(webhook, form_issues=[FormIssue("integrations", "Evento não aceito")]),
+            "#eventos",
+        ),
+        (replace(pdf, receiver=replace(pdf.receiver, active=False)), "#ativacao"),
+        (replace(pdf, history=History(pdf=Counts(failed=1))), "#sincronizacoes"),
+        (replace(capture, history=History(capture=Counts(failed=1))), "#sincronizacoes"),
+        (replace(webhook, history=History(pdf=Counts(failed=1))), "#teste"),
+        (replace(pdf, history=History(capture=Counts(failed=7))), "#teste"),
+        (inherited, "/admin/destinations/default#teste"),
+    ]
+    for row, suffix in cases:
+        assert row.provider_verification == "not_checked"
+        selected = next_action(row)
+        assert selected in actions(row)
+        assert selected[1].endswith(suffix), (row.key, suffix, selected)
+    current = replace(
+        pdf,
+        history=History(
+            last_success=LastSuccess(datetime(2026, 10, 22, tzinfo=UTC), "pdf", "current")
+        ),
+    )
+    assert next_action(current) is None
+    orphan = replace(pdf, form=replace(pdf.form, exists=False))
+    assert next_action(orphan) is None
+
+
+def render_guidance(rows):
+    from types import SimpleNamespace
+    from zoneinfo import ZoneInfo
+
+    from app.admin.integration_hub_views import actions, next_action
+    from app.web.templating import templates
+
+    return templates.get_template("admin/integrations.html").render(
+        catalog=[],
+        items=rows,
+        forms=[row.form for row in rows if row.form],
+        connector="",
+        form_slug="demo",
+        limit=50,
+        next_url=None,
+        actions=actions,
+        next_action=next_action,
+        hub_timezone=ZoneInfo("America/Sao_Paulo"),
+        session=SimpleNamespace(csrf_token="synthetic", username="Operadora sintética"),
+        flash=None,
+        env_label="Teste local",
+        version_label="Teste sintético",
+        operator_guide_url="https://example.test/guia",
+    )
+
+
+def test_integration_statuses_remain_distinct():
+    from dataclasses import replace
+
+    row = guidance_row(connector="webhook")
+    inherited = replace(
+        row,
+        configured=False,
+        serving="default",
+        receiver=replace(
+            row.receiver,
+            scope_kind="default",
+            form_slug=None,
+        ),
+    )
+    html = render_guidance([inherited])
+    assert "Para onde vão as respostas de Pesquisa sintética?" in html
+    assert "Usa padrão" in html
+    assert "Sem receptor" not in html
+    assert "Sem verificação registrada" in html
+    assert "Sem confirmação registrada" in html
+    assert "Alterar o padrão afeta também outros formulários" in html
+    assert "Próximo passo" in html
+    assert "Outras ações" in html
+    assert "Histórico de entregas" in html
+    assert "todas as revisões" in html
+
+
+def test_previous_revision_is_not_current_success():
+    from dataclasses import replace
+    from datetime import UTC, datetime
+
+    from app.admin.integration_hub_views import next_action
+    from app.admin.queries.integration_hub import History, LastSuccess
+
+    row = guidance_row()
+    for match in ("previous", "unknown"):
+        historical = replace(
+            row,
+            history=History(
+                last_success=LastSuccess(
+                    datetime(2026, 10, 22, tzinfo=UTC),
+                    "pdf",
+                    match,
+                )
+            ),
+        )
+        assert next_action(historical)[0] == "Abrir teste"
+        html = render_guidance([historical])
+        assert "Não confirma a configuração atual" in html
+        assert "Sem verificação registrada" in html
+        assert "Consultar campos da planilha no Baserow" in html
+        assert "consulta os campos ao vivo" in html
+
+
+def test_explicit_baserow_detail_preserves_live_fields_without_sending(deps, api_client):
+    from conftest import FakeBaserow
+    from test_admin_destinations import admin_client
+    from test_integrations import connect_form
+
+    connect_form(deps)
+    provider = FakeBaserow().install(deps)
+    provider.calls.clear()
+    client = admin_client(deps)
+    page = client.get("/admin/forms/demo/baserow?profile=pdf#mapeamento")
+    assert page.status_code == 200
+    assert "Esta página consulta os campos atuais no Baserow ao abrir" in page.text
+    assert len(provider.calls) == 1
+    assert all(request.method == "GET" for request in provider.requests)
+    assert "Relatório" in page.text and "Mapeamento" in page.text
+    provider.calls.clear()
+    from admin_api_support import url_of
+
+    response = api_client("leitura").get(url_of("get_form_integration", slug="demo"))
+    assert response.status_code == 200
+    assert len(provider.calls) == 1
+    assert all(request.method == "GET" for request in provider.requests)
+
+
+def test_hub_guidance_uses_route_context_and_keeps_navigation_local(
+    deps, api_client, tmp_path, monkeypatch
+):
+    from admin_mcp_live import Live
+    from conftest import FakeBaserow
+    from test_admin_destinations import admin_client
+    from test_integrations import connect_form
+
+    connect_form(deps)
+    store(deps, None)
+    provider = FakeBaserow().install(deps)
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Navegação local não produz envio nem geração")
+
+    monkeypatch.setattr(deps.webhook, "send", forbidden)
+    monkeypatch.setattr(deps.llm, "generate", forbidden)
+    monkeypatch.setattr(deps.pdf, "render", forbidden)
+    page_client = admin_client(deps)
+    for query in ("", "?form_slug=demo", "?connector=baserow&form_slug=demo"):
+        page = page_client.get("/admin/integrations" + query)
+        assert page.status_code == 200
+        assert "Próximo passo: Abrir teste" in page.text
+        assert "Consultar campos da planilha no Baserow" in page.text
+        assert provider.calls == []
+    client = api_client("leitura")
+    response = client.get("/admin/api/v1/integrations?form_slug=demo")
+    assert response.status_code == 200
+    assert provider.calls == []
+    live = Live(client, tmp_path)
+    try:
+        result = live.ok("list_integrations", {"form_slug": "demo"})
+        assert len(result["items"]) == 2
+        assert provider.calls == []
+    finally:
+        live.close()
+
+
+def test_missing_form_profile_does_not_treat_inherited_receiver_as_absent():
+    from dataclasses import replace
+
+    from app.admin.integration_hub_views import next_action
+
+    row = guidance_row(connector="webhook")
+    row = replace(
+        row,
+        configured=False,
+        serving="default",
+        form=replace(row.form, profile=None),
+        receiver=replace(row.receiver, scope_kind="default", form_slug=None),
+    )
+    assert next_action(row) == ("Configurar padrão", "/admin/destinations/default#endereco")
