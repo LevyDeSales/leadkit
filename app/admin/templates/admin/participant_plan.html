@@ -3,8 +3,15 @@
 {% block title %}Plano da participante{% endblock %}
 {% block content %}
 <h1>Plano da participante</h1>
-<p>Documento público do plano · tentativa {{ projection.attempt }} · {{ projection.form_slug }} · versão {{ projection.form_version_number }}.</p>
-<p>Esta visualização não concede acesso público nem envia o plano.</p>
-<pre class="json" tabindex="0" aria-label="Plano da participante em JSON">{{ projection.document | tojson(indent=2) }}</pre>
+<p>Prévia da tentativa {{ projection.attempt }} · {{ projection.form_slug }} · versão {{ projection.form_version_number }}.</p>
+<p>Esta revisão interna não libera o acesso da participante, não gera outro plano e não envia notificações.</p>
+{% if result.access_state.state == "held" %}
+<p role="status">Plano retido. Você pode revisar a prévia antes de decidir pela liberação no pedido.</p>
+{% endif %}
+<iframe class="pdf-frame" title="Prévia visual do plano da participante" sandbox="" srcdoc="{{ result.html }}" width="100%" height="720"></iframe>
+<details>
+  <summary>Detalhes do plano em JSON</summary>
+  <pre class="json" tabindex="0" aria-label="Plano da participante em JSON">{{ projection.document | tojson(indent=2) }}</pre>
+</details>
 <a class="btn" href="/admin/jobs/{{ projection.public_id }}">Voltar ao pedido interno</a>
 {% endblock %}

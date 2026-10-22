@@ -8,7 +8,7 @@ As instruções abaixo explicam como operar o editor. O conteúdo das perguntas,
 
 **Onde entrar:** “Formulários” → seu formulário → “Editar o rascunho”.
 
-1. Em “Página pública”, ajuste “Título”, “Introdução” e “Tempo para responder, em minutos” (de 1 a 60). Os avisos opcionais têm título, texto e link; são texto puro, sem formatação de código.
+1. No índice “Perguntas”, em “Página pública”, ajuste “Título”, “Introdução” e “Tempo para responder, em minutos” (de 1 a 60). Os avisos opcionais têm título, texto e link; são texto puro, sem formatação de código.
 2. Em “Etapas e perguntas”, use “Adicionar etapa” para criar uma tela e “Adicionar pergunta” dentro dela.
 3. Abra a pergunta e preencha “Rótulo”, que é o texto que a participante lê. Escolha “Tipo”, “Ajuda”, “Obrigatória” e os limites apresentados para esse tipo.
 4. Confira “Nome da resposta”. Ele identifica a resposta nas integrações e nas instruções de geração. Evite mudá-lo após publicar sem revisar as dependências com a administradora técnica.
@@ -36,7 +36,7 @@ As instruções abaixo explicam como operar o editor. O conteúdo das perguntas,
 
 ## Conferir identidade e consentimento
 
-**Onde entrar:** “Identidade da lead” e “Consentimento”, no rascunho.
+**Onde entrar:** índice “Dados e consentimentos”, no rascunho. O link para “Identidade da lead” leva às perguntas usadas na identificação.
 
 1. Relacione as perguntas usadas para identificar e-mail, nome e telefone conforme os campos apresentados. O e-mail é obrigatório na identidade.
 2. Revise “Autorização do processamento” e “Aviso sobre o uso dos dados”.
@@ -49,7 +49,7 @@ As instruções abaixo explicam como operar o editor. O conteúdo das perguntas,
 
 ## Ajustar geração, pontuação e dados de apoio
 
-**Onde entrar:** no rascunho, nas seções “Modelo do plano”, “Pontuação”, “Dados do formulário” e “Instruções, prompt e o resto”.
+**Onde entrar:** no índice do rascunho, “Dados e consentimentos” reúne os dados de apoio; “Plano e apresentação” reúne o modelo do plano e o acesso ao editor do PDF; “Avançado” oferece os detalhes de pontuação, instruções, prompt e JSON. O resumo “Configuração salva” mostra as escolhas persistidas. O link de integrações permite consultar seus fatos e confirmações; salvar o rascunho não testa nem ativa destinos.
 
 “Instruções” são as orientações fixas da geração. “Prompt” é o pedido montado com as respostas a cada envio. A tela usa também a palavra “LLM” para o serviço de inteligência artificial. “Modelo do plano” descreve quais campos a geração deve preencher; o rótulo de um campo no painel não muda sozinho o PDF.
 
@@ -60,3 +60,13 @@ A pontuação tem pontos por opção, fórmulas, faixas, prioridade e persona. U
 Listas e calendários em “Dados do formulário” dão informações de apoio à geração. Algumas partes usam “Valor (JSON)”; “O resto da definição (JSON)” e os campos de instruções também exigem estrutura correta. Peça à administradora técnica para alterar fórmulas, referências, calendários, JSON ou templates quando não souber como preservar a estrutura. Você pode conferir o resultado e aprovar o conteúdo sem escrever código.
 
 **Se o teste ou salvamento recusar:** siga o caminho do erro, preserve a versão publicada e encaminhe a mensagem segura à administradora técnica. Não apague uma regra de validação só para permitir a publicação.
+
+## Escolher o que acontece após o envio
+
+**Onde entrar:** índice “Após o envio”.
+
+Em “Finalidade do formulário”, escolha gerar plano e PDF ou somente salvar respostas. A liberação automática ou manual só se aplica ao PDF. Em “Depois de salvar as respostas”, escolha acompanhar o resultado, mostrar uma confirmação, oferecer um botão ou encaminhar a outro destino. Conclusão e liberação são escolhas distintas. Os avisos de espera e falha ficam em detalhes nessa tarefa.
+
+Ao trocar PDF por somente respostas, a tela avisa que salvar retira a geração, o modelo e a apresentação do rascunho. Você pode cancelar no aviso e conservar toda a edição. Sem JavaScript, marque a confirmação explícita para prosseguir; para cancelar antes de salvar, escolha novamente “Gerar plano e PDF”. Enquanto a troca não for salva, os campos da configuração continuam disponíveis, inclusive após um erro. Voltar a gerar PDF depois de salvar a retirada começa pelo modelo inicial.
+
+A versão publicada só muda em uma publicação separada. Consentimentos de novidades permanecem opcionais, separados da autorização de processamento. A prévia da conclusão usa a origem salva e mantém o botão externo desativado.

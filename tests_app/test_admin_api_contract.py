@@ -273,6 +273,7 @@ LEAD_STATE: dict[str, frozenset[str]] = {
         }
     ),
     "download_job_pdf": frozenset(),
+    "render_job_participant_preview": frozenset(),  # HTML pessoal integral, sem estado JSON.
     "get_job_plan_projection": frozenset(
         {"public_id", "form_slug", "form_version", "form_version_number", "attempt", "audience"}
     ),

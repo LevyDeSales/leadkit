@@ -15,10 +15,11 @@ modelo não aceita mais é `PreviewUnavailable`, e o PDF que o adaptador não co
 `PdfFailed`, com a mensagem fixa do adaptador (ela não traz dado nenhum). Uma página de resultado que
 não renderiza com o plano de agora também volta como `DefinitionError`, com o template e a linha.
 
-**Nada aqui grava, audita ou chama o LLM.** O PDF e a página de resultado usam o plano de exemplo do
-rascunho ou o do último teste, e as respostas de exemplo: nenhum dado de lead entra. O PDF sai do
-adaptador do pedido (o WeasyPrint em produção), que só abre arquivos do app, as imagens do formulário e
-`data:`.
+**Nada aqui grava, audita ou chama o LLM.** As prévias de rascunho usam somente exemplos ou o
+último teste, sem dados de participante. O PDF sai do adaptador do pedido (o WeasyPrint em produção),
+que só abre arquivos do app, as imagens do formulário e `data:`. A moldura `render_participant_result`
+recebe o HTML pessoal já projetado pela ação confiável de `participant_preview`; não recebe o
+plano integral nem cria links de acesso.
 """
 
 from __future__ import annotations
@@ -225,3 +226,28 @@ def _render(
     if content_policy is not None:
         context = {**context, "content_policy": content_policy}
     return templates.get_template(name).render(context)
+
+
+def render_participant_result(
+    fragment: str,
+    *,
+    title: str,
+    generated_date: str,
+    held: bool,
+    pdf_state: str,
+    base_href: str,
+    content_policy: str,
+) -> str:
+    """Emoldura somente HTML já projetado, sem link público ou download demonstrativo ativo."""
+    return _render(
+        "admin/participant_result_frame.html",
+        {
+            "preview": Markup(fragment),
+            "title": title,
+            "date": generated_date,
+            "held": held,
+            "pdf_state": pdf_state,
+        },
+        base_href,
+        content_policy,
+    )

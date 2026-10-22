@@ -34,13 +34,14 @@
 
 **Onde entrar:** abra o formulário e clique em “Editar o rascunho”.
 
-1. Faça as alterações necessárias. “Adicionar”, “Remover”, “Subir” e “Descer” organizam o que está na tela, mas ainda exigem salvamento.
-2. Clique em “Salvar o rascunho”. O sistema confere a definição inteira.
-3. Confira a indicação de salvamento e as mudanças pendentes antes de sair da página ou abrir uma prévia.
+1. Use o índice “Perguntas”, “Dados e consentimentos”, “Após o envio”, “Plano e apresentação” e “Avançado” para chegar à tarefa. Todas fazem parte do mesmo salvamento.
+2. Faça as alterações necessárias. “Adicionar”, “Remover”, “Subir” e “Descer” organizam o que está na tela, mas ainda exigem salvamento. Com JavaScript, “Edição ainda não salva” acompanha essas mudanças; sem JavaScript, a indicação só muda quando você envia a edição.
+3. Clique em “Salvar o rascunho” ou “Salvar e abrir prévia”. O sistema confere a definição inteira e só abre a prévia depois de confirmar o salvamento.
+4. Confira “Rascunho salvo” e a “Versão publicada”, apresentada separadamente. A configuração salva no resumo e a origem da prévia e do teste não incluem alterações ainda abertas nesta página.
 
 **Resultado:** o rascunho aceito fica disponível para teste e publicação. Não há promessa de salvamento automático; mudar a tela não comprova que foi salvo. A versão pública continua igual.
 
-**Se aparecer “O rascunho não foi salvo”:** abra cada link do resumo de problemas, corrija e salve de novo. Se houver aviso de alteração por outra aba ou pessoa, preserve sua proposta em local autorizado, reabra o rascunho atual e compare antes de reaplicar. Não sobrescreva sem conferir.
+**Se aparecer “O rascunho não foi salvo”:** os valores continuam na página. Abra cada link do resumo de problemas, inclusive em “Avançado”, corrija e salve de novo. Os detalhes com erros ficam abertos; com JavaScript, o foco vai ao primeiro campo com problema. Se o salvamento não puder ser confirmado, a edição permanece não salva: confira o rascunho antes de sair. Se houver aviso de alteração por outra aba ou pessoa, preserve sua proposta em local autorizado, reabra o rascunho atual e compare antes de reaplicar. Não sobrescreva sem conferir.
 
 ## Usar um arquivo de formulário existente
 

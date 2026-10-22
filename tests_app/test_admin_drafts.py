@@ -1120,3 +1120,146 @@ def test_a_form_that_does_not_exist_has_no_draft(client: TestClient) -> None:
     response = client.get("/admin/forms/nao-existe/draft")
 
     assert response.status_code == 404 and "não tem rascunho" in text(response.text)
+
+
+def test_editor_keeps_values_after_invalid_save(client: TestClient) -> None:
+    fields = editor(client)
+    broken_json(fields)
+    fields["title"] = "Proposta sintética preservada"
+    response = post(client, DRAFT, **fields)
+    assert response.status_code == 422
+    assert "Edição ainda não salva" in text(response.text)
+    assert form_fields(response.text, EDITOR_FORM)["title"] == fields["title"]
+    assert textareas(response.text)["definition"] == fields["definition"]
+    assert hidden(response.text, "expected") == fields["expected"]
+    assert "location" not in response.headers
+
+
+def test_editor_rejects_stale_token(client: TestClient) -> None:
+    stale = editor(client)
+    assert save(client, add_prompt_line).status_code == 303
+    stale["title"] = "Edição de outra aba"
+    response = post(client, DRAFT, **stale)
+    assert response.status_code == 409
+    assert "Edição ainda não salva" in text(response.text)
+    assert "Abra o rascunho atual em outra aba" in text(response.text)
+    assert "compare e reaplique" in text(response.text)
+    assert "salvar de novo substitui" not in text(response.text)
+    assert form_fields(response.text, EDITOR_FORM)["title"] == stale["title"]
+    assert hidden(response.text, "expected") == stale["expected"]
+    assert post(client, DRAFT, **form_fields(response.text, EDITOR_FORM)).status_code == 409
+
+
+def test_save_and_preview_redirects_only_after_commit(client: TestClient, deps: Deps) -> None:
+    fields = editor(client)
+    fields["title"] = "Título salvo antes da prévia"
+    response = post(client, DRAFT, **fields, after_save="preview")
+    assert response.status_code == 303
+    assert response.headers["location"] == f"{DRAFT}/preview"
+    assert editor(client)["title"] == fields["title"]
+    preview = client.get(response.headers["location"])
+    assert "rascunho salvo" in text(preview.text)
+    assert deps.forms.current(SLUG).title != fields["title"]
+
+
+@pytest.mark.parametrize("destination", ["https://example.test/escape", "", "PREVIEW"])
+def test_editor_rejects_invalid_after_save_before_writing(
+    client: TestClient, destination: str
+) -> None:
+    fields = editor(client)
+    original_title = fields["title"]
+    fields["title"] = "Não deve ser gravado"
+    response = post(client, DRAFT, **fields, after_save=destination)
+    assert response.status_code == 422
+    assert "Edição ainda não salva" in text(response.text)
+    assert "location" not in response.headers
+    assert editor(client)["title"] == original_title
+    assert form_fields(response.text, EDITOR_FORM)["title"] == fields["title"]
+
+
+def test_editor_preserves_entries_when_commit_fails(client: TestClient, deps: Deps) -> None:
+    fields = editor(client)
+    fields["title"] = "Edição preservada na falha"
+
+    def reject_commit(session) -> None:
+        raise sa.exc.OperationalError("commit", {}, RuntimeError("synthetic_transaction_failure"))
+
+    sa.event.listen(deps.sessions, "before_commit", reject_commit)
+    try:
+        response = post(client, DRAFT, **fields, after_save="preview")
+    finally:
+        sa.event.remove(deps.sessions, "before_commit", reject_commit)
+    assert response.status_code == 503
+    assert "location" not in response.headers
+    assert "Edição ainda não salva" in text(response.text)
+    assert "synthetic_transaction_failure" not in response.text
+    assert form_fields(response.text, EDITOR_FORM)["title"] == fields["title"]
+    assert editor(client)["title"] != fields["title"]
+    assert "Rascunho salvo." not in text(client.get(DRAFT).text)
+
+
+def test_save_and_preview_uses_saved_slug_after_rename(client: TestClient) -> None:
+    created = post(
+        client, "/admin/forms/new", title="Formulário sintético", slug="antes", source=""
+    )
+    assert created.status_code == 303, created.text
+    fields = editor(client, "/admin/forms/antes/draft")
+    fields["slug"] = "depois"
+    response = post(client, "/admin/forms/antes/draft", **fields, after_save="preview")
+    assert response.status_code == 303, response.text
+    assert response.headers["location"] == "/admin/forms/depois/draft/preview"
+    assert client.get(response.headers["location"]).status_code == 200
+    assert client.get("/admin/forms/antes/draft").status_code == 404
+
+
+def test_editor_task_index_keeps_one_save_form_and_published_version(client: TestClient) -> None:
+    response = client.get(DRAFT)
+    for anchor, label in [
+        ("perguntas", "Perguntas"),
+        ("dados-consentimentos", "Dados e consentimentos"),
+        ("apos-envio", "Após o envio"),
+        ("plano-apresentacao", "Plano e apresentação"),
+        ("avancado", "Avançado"),
+    ]:
+        assert f'href="#{anchor}"' in response.text
+        assert f'id="{anchor}"' in response.text
+        assert label in text(response.text)
+    assert response.text.count('id="editor-form"') == 1
+    assert "Versão publicada: 1" in text(response.text)
+    assert "Rascunho salvo" in text(response.text)
+    assert hidden(response.text, "expected") not in text(response.text)
+
+
+def test_editor_preserves_published_version_and_question_ids_when_cancelling_capture(
+    client: TestClient,
+    deps: Deps,
+) -> None:
+    fields = editor(client)
+    fields["title"] = "Edição mantida ao cancelar"
+    fields["generation"] = "none"
+    fields["completion.mode"] = "confirmation"
+    response = post(client, DRAFT, **fields)
+    assert response.status_code == 422
+    assert "Confirme a retirada da geração" in text(response.text)
+    recovered = form_fields(response.text, EDITOR_FORM)
+    for name in fields:
+        if name.startswith(("steps.", "plan.")) or name in ("prompt", "instructions", "title"):
+            assert recovered[name] == fields[name], name
+    # Cancelar a troca conserva a configuração que ainda está no formulário integral.
+    recovered["generation"] = "pdf"
+    assert post(client, DRAFT, **recovered).status_code == 303
+    saved = editor(client)
+    for name in fields:
+        if name.startswith(("steps.", "plan.")) or name in ("prompt", "instructions", "title"):
+            assert saved[name] == fields[name], name
+    assert deps.forms.current(SLUG).title == json.loads(DEFINITION)["title"]
+    # Confirmar remove geração só do rascunho, sem renomear perguntas ou valores.
+    saved["generation"] = "none"
+    saved["confirm_generation_removal"] = "on"
+    assert post(client, DRAFT, **saved).status_code == 303
+    capture = editor(client)
+    assert capture["generation"] == "none"
+    for name in fields:
+        if name.startswith("steps."):
+            assert capture[name] == fields[name], name
+    assert deps.forms.current(SLUG).generation == "pdf"

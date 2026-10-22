@@ -1,0 +1,28 @@
+{% extends "public/base.html" %}
+{% block title %}Prévia: {{ title }}{% endblock %}
+{% block scripts %}{% endblock %}
+{% block main %}
+<main id="conteudo" class="container page">
+  <h1>Seu plano está pronto</h1>
+  <p class="lead">Este plano foi preparado a partir das suas respostas.</p>
+  {% if held %}
+  <p role="status">Plano retido: esta revisão interna não libera o acesso da participante.</p>
+  {% endif %}
+  <section class="filecard" aria-labelledby="arquivo-titulo">
+    <h2 id="arquivo-titulo">Plano da participante</h2>
+    <p>Gerado em {{ date }}.</p>
+    {% if pdf_state == "available" %}
+    <p>PDF da tentativa atual disponível no armazenamento.</p>
+    {% elif pdf_state in ("missing", "removed") %}
+    <p>PDF da tentativa atual ausente ou removido.</p>
+    {% else %}
+    <p>Disponibilidade do PDF da tentativa atual não confirmada.</p>
+    {% endif %}
+    <span class="btn btn--primary" aria-disabled="true">Baixar PDF</span>
+    <p class="fineprint">Prévia administrativa: o download permanece desativado.</p>
+  </section>
+  {{ preview }}
+  <p class="fineprint">Plano gerado com apoio de inteligência artificial. É uma orientação inicial e não substitui consultoria nem parecer técnico.</p>
+</main>
+{% endblock %}
+{% block footer %}<p>Revisar esta prévia não libera nem envia o plano.</p>{% endblock %}
