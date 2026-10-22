@@ -239,17 +239,26 @@ class Rollout:
             raise RolloutError("O nó local não confirma a saída; mantenha a pausa.")
 
     @staticmethod
-    def valid_finished_at(value, observed_at):
-        if not isinstance(value, str) or not re.fullmatch(
-            r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,9})?Z",
-            value,
-        ):
-            return False
-        try:
-            finished = datetime.fromisoformat(value).timestamp()
-            return 0 < finished <= observed_at / 10**9
-        except (ValueError, OverflowError):
-            return False
+    def valid_execution_times(started_at, finished_at, observed_at):
+        timestamps = []
+        for value in (started_at, finished_at):
+            match = (
+                re.fullmatch(
+                    r"([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})"
+                    r"(?:\.([0-9]{1,9}))?Z",
+                    value,
+                )
+                if isinstance(value, str)
+                else None
+            )
+            if not match:
+                return False
+            try:
+                seconds = int(datetime.fromisoformat(match[1] + "+00:00").timestamp())
+                timestamps.append(seconds * 10**9 + int((match[2] or "").ljust(9, "0")))
+            except (ValueError, OverflowError):
+                return False
+        return 0 < timestamps[0] <= timestamps[1] <= observed_at
 
     def inspected_exit(self, task, proof, until):
         cid = task["Status"]["ContainerStatus"]["ContainerID"]
@@ -263,6 +272,7 @@ class Rollout:
                 "since",
                 "observed_at",
                 "task_id",
+                "started_at",
                 "finished_at",
                 "exit_code",
             }
@@ -276,10 +286,12 @@ class Rollout:
             and self.observed_since <= proof["observed_at"] <= until
             and type(proof["exit_code"]) is int
             and 0 <= proof["exit_code"] <= 255
-            and self.valid_finished_at(proof["finished_at"], proof["observed_at"])
+            and self.valid_execution_times(
+                proof["started_at"], proof["finished_at"], proof["observed_at"]
+            )
         )
 
-    def removed_container(self, task, present):
+    def removed_container(self, task, present, *, waiting=False):
         cid = task["Status"]["ContainerStatus"]["ContainerID"]
         image = self.observed_images.get(cid)
         if (
@@ -287,7 +299,7 @@ class Rollout:
             or not DIGEST.fullmatch(image)
             or not re.fullmatch(r"[a-f0-9]{64}", cid)
             or task["NodeID"] != self.node
-            or (task["ID"] in present and task["Status"]["State"] not in TERMINAL)
+            or (task["ID"] in present and task["Status"]["State"] not in TERMINAL and not waiting)
         ):
             raise RolloutError("Um container ausente não tem saída comprovada; mantenha a pausa.")
         self.confirm_local_node()
@@ -298,10 +310,12 @@ class Rollout:
                 "Um container existente não pôde ser inspecionado; mantenha a pausa."
             )
         until = time.time_ns()
+        # Só observe() pode aguardar uma Task defasada, depois de obter prova positiva.
+        state = task["Status"]["State"] if task["ID"] in present and waiting else "remove"
         if cid in self.exit_proofs:
             proof = self.exit_proofs[cid]
             if self.inspected_exit(task, proof, until):
-                return {"Image": image, "State": {"Running": False}}, "remove"
+                return {"Image": image, "State": {"Running": False}}, state
             if (
                 isinstance(proof, dict)
                 and set(proof) == {"container_id", "image", "node_id", "since", "time_nano"}
@@ -313,7 +327,7 @@ class Rollout:
                 and type(proof["time_nano"]) is int
                 and self.observed_since <= proof["time_nano"] <= until
             ):
-                return {"Image": image, "State": {"Running": False}}, "remove"
+                return {"Image": image, "State": {"Running": False}}, state
             raise RolloutError("A prova de saída não corresponde à observação; mantenha a pausa.")
         raw = self.docker(
             "events",
@@ -356,7 +370,7 @@ class Rollout:
             "since": self.observed_since,
             "time_nano": destroyed,
         }
-        return {"Image": image, "State": {"Running": False}}, "remove"
+        return {"Image": image, "State": {"Running": False}}, state
 
     def container(self, role, task, *, deadline=None):
         cid = task["Status"]["ContainerStatus"]["ContainerID"]
@@ -365,20 +379,9 @@ class Rollout:
             # A task pode ter saído durante wait ou entre o inventário e inspect.
             present = {item["ID"] for item in self.tasks(role)}
             task = self.tracked[role][task["ID"]]
-            while (
-                deadline is not None
-                and task["ID"] in present
-                and task["Status"]["State"] not in TERMINAL
-                and self.inspected_exit(task, self.exit_proofs.get(cid), time.time_ns())
-            ):
-                if time.monotonic() >= deadline:
-                    raise RolloutError(
-                        "A task não confirmou o estado terminal no prazo; mantenha a pausa."
-                    )
-                time.sleep(0.2)
-                present = {item["ID"] for item in self.tasks(role)}
-                task = self.tracked[role][task["ID"]]
-            return self.removed_container(task, present)
+            return self.removed_container(task, present, waiting=deadline is not None)
+        # Uma inspeção nova só conserva a prova se reconfirmar a mesma execução encerrada.
+        previous = self.exit_proofs.pop(cid, None)
         try:
             container = json.loads(raw.stdout)[0]
             image = container["Image"]
@@ -397,10 +400,7 @@ class Rollout:
                 "A imagem de um container observado mudou; mantenha o gate bloqueado."
             )
         self.observed_images.setdefault(cid, image)
-        if container["State"]["Running"]:
-            # Um restart invalida qualquer saída anteriormente observada para este ID.
-            self.exit_proofs.pop(cid, None)
-        else:
+        if not container["State"]["Running"]:
             self.confirm_local_node()
             observed_at = time.time_ns()
             proof = {
@@ -410,12 +410,18 @@ class Rollout:
                 "since": self.observed_since,
                 "observed_at": observed_at,
                 "task_id": task["ID"],
+                "started_at": container["State"].get("StartedAt"),
                 "finished_at": container["State"].get("FinishedAt"),
                 "exit_code": container["State"].get("ExitCode"),
             }
             if not self.inspected_exit(task, proof, observed_at):
                 raise RolloutError("A inspeção não comprova a saída do processo; mantenha a pausa.")
-            self.exit_proofs[cid] = proof
+            if self.inspected_exit(task, previous, observed_at) and all(
+                previous[key] == value for key, value in proof.items() if key != "observed_at"
+            ):
+                self.exit_proofs[cid] = previous
+            else:
+                self.exit_proofs[cid] = proof
         return container, task["Status"]["State"]
 
     def observe(self, role, *, wait=False, wait_ids=None):

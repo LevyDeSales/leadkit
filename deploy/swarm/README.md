@@ -132,13 +132,17 @@ compatibilidade de toda a frota. A atestação é uma declaração do host opera
 app valida o contrato e o epoch, sem ganhar acesso ao daemon.
 
 O Swarm pode remover tasks e containers depois da escala para zero. O helper conserva a
-inspeção positiva de encerramento: `State.Running=false`, `FinishedAt` válido e não futuro,
-`ExitCode` inteiro válido e identidade real do container. A prova vincula task, CID completo,
-imagem imutável, nó e instante da observação. Se o container desaparecer depois, essa prova
+inspeção positiva de encerramento: `State.Running=false`, `StartedAt` e `FinishedAt` válidos,
+com início ≤ fim ≤ observação, `ExitCode` inteiro válido e identidade real do container. A ordem
+preserva os nanossegundos do Docker; um encerramento histórico anterior à observação é permitido.
+A prova vincula task, CID completo, imagem imutável, nó, início da execução e instante da
+observação. Inspeções idênticas do mesmo encerramento conservam a mesma prova, inclusive o
+`observed_at`, para permitir comparação estável de snapshots semeados com `exit_proofs`.
+Um novo `StartedAt`, término ou código de saída substitui a prova; processo vivo, identidade
+diferente ou inspeção contraditória invalidam a anterior. Se o container desaparecer depois, essa prova
 permite confirmar a saída sem depender de um evento `destroy` ainda retido. Cada uso exige
 novamente nó disponível, daemon local identificado, listagem local bem-sucedida sem aquele
-container e Task terminal ou removida do inventário. Uma inspeção que encontre o processo
-vivo invalida a prova anterior para aquele CID.
+container e Task terminal ou removida do inventário.
 
 Sem inspeção positiva de encerramento conservada, a alternativa continua exigindo imagem e
 CID previamente observados e evento local `destroy` do mesmo ID, com `timeNano` dentro da
@@ -148,6 +152,7 @@ não comprovam parada. O ensaio CI reutiliza essa prova também antes do DDL e a
 Depois de `wait` ou de um `inspect` que falhe, o helper renova o inventário antes de decidir
 se a task terminou ou foi removida. Se uma saída positiva já foi comprovada mas a Task ainda
 não ficou terminal, a coleta com espera concede até 30 segundos por task para convergência,
+inclusive quando o container desapareceu durante `wait` e há evento `destroy` local válido,
 contados após o retorno de `docker wait` quando necessário, conferindo novamente o inventário;
 prazo esgotado mantém o bloqueio. `docker wait` e `DesiredState`
 isolados nunca substituem a prova do processo. Os objetos recebidos precisam corresponder
