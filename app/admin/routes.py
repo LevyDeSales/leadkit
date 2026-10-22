@@ -1382,7 +1382,9 @@ DRAFT_SAVED = "Rascunho salvo. O que está no ar só muda quando você publicar.
 DRAFT_SAVED_EQUAL = "Rascunho salvo igual à versão publicada: não há mudança para publicar."
 DRAFT_CHANGED = (
     "O rascunho mudou desde que você abriu esta página (outra aba ou uma publicação). Nada foi "
-    "salvo. Os campos abaixo têm o seu texto: salvar de novo substitui o rascunho atual."
+    "salvo. Os campos abaixo conservam sua proposta. Preserve-a antes de sair desta página. "
+    "Abra o rascunho atual em outra aba, compare e reaplique as alterações desejadas; "
+    "salve a partir da versão atual."
 )
 
 
