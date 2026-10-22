@@ -17,6 +17,7 @@ SWARM_DIR = Path(__file__).resolve().parent.parent / "deploy" / "swarm"
 
 FAKE_DOCKER = r"""#!/usr/bin/env python3
 import copy
+from datetime import datetime, timezone
 import hashlib
 import json
 import os
@@ -68,6 +69,8 @@ def reap_during_observation(state, cid):
         if task['Status']['ContainerStatus']['ContainerID'] == cid:
             state.setdefault('reaped_tasks', {})[cid] = copy.deepcopy(task)
             outcome=os.getenv('STUB_RACE_OUTCOME','removed')
+            if os.getenv('STUB_TASK_LAG') and task['Status']['State'] == 'shutdown':
+                outcome='terminal'
             if outcome in {'active','terminal'}:
                 task['DesiredState']='remove'
                 task['Status']['State']='running' if outcome=='active' else 'shutdown'
@@ -92,6 +95,8 @@ else:
         for role in ('api','worker'):
             apply(state, role, 'leadkit:old' if floor == 0 else 'leadkit:one' if int(os.getenv('STUB_INITIAL_CONTRACT', str(floor))) == 1 and os.getenv('STUB_TARGET_CONTRACT') == '2' else 'gerador-planos:abc123', 1)
             state['services'][role]['PreviousSpec'] = copy.deepcopy(state['services'][role]['Spec'])
+            if os.getenv('STUB_INITIAL_PREVIOUS_MISSING'):
+                state['services'][role].pop('PreviousSpec', None)
 
 code = 0
 out = ''
@@ -102,6 +107,8 @@ if head == ['image','inspect']:
         out = '[]' if 'RepoDigests' in fmt else image_id(args[-1])
     else:
         out = json.dumps([{'Id': image_id(args[-1])}])
+    if os.getenv('STUB_OLD_IMAGE_UNRESOLVABLE') and args[-1] in {'leadkit:old', 'leadkit:one'} and not state.get('scaled'):
+        code=1
 elif head == ['image','tag']:
     pass
 elif head == ['network','inspect']:
@@ -143,7 +150,7 @@ elif head == ['service','scale']:
             apply(state, role, state['services'][role]['Spec']['TaskTemplate']['ContainerSpec']['Image'],int(replicas))
     if os.getenv('STUB_SCALE_FAIL'): code=1
     state['scaled'] = True
-    if os.getenv('STUB_REAP_RACE'):
+    if os.getenv('STUB_REAP_RACE') or os.getenv('STUB_TASK_LAG'):
         for task in state['tasks'].values():
             if task['DesiredState'] == 'shutdown':
                 task['Status']['State'] = 'running'
@@ -211,6 +218,12 @@ elif args[:1] == ['inspect']:
                     state['containers'][cid]={'Image':b,'State':{'Running':True,'Health':{'Status':'healthy'}}}
                     state['late_live_cid']=cid
     if kind=='task':
+        for cid, count in list(state.get('waited', {}).items()):
+            state['waited'][cid] += 1
+            if count >= 3 and os.getenv('STUB_TASK_LAG') != 'forever':
+                for task in state['tasks'].values():
+                    if task['Status']['ContainerStatus']['ContainerID'] == cid:
+                        task['Status']['State'] = 'shutdown'
         values=[copy.deepcopy(state['tasks'][x]) for x in names]
         if os.getenv('STUB_REMOTE_NODE'):
             for value in values: value['NodeID']='remote-node'
@@ -233,11 +246,31 @@ elif args[:1] == ['inspect']:
             values=[]
         else:
             values=[copy.deepcopy(state['containers'][x]) for x in names]
+            for cid, value in zip(names, values):
+                value['Id']=cid
+                value['State']['ExitCode']=0
+                value['State']['FinishedAt']='0001-01-01T00:00:00Z' if value['State']['Running'] else datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+                if not value['State']['Running']:
+                    fault = os.getenv('STUB_STOP_FAULT')
+                    if fault == 'id': value['Id'] = 'f' * 64
+                    if fault == 'image': value['Image'] = 'unknown'
+                    if fault == 'exit_missing': value['State'].pop('ExitCode')
+                    if fault == 'exit_type': value['State']['ExitCode'] = False
+                    if fault == 'exit_range': value['State']['ExitCode'] = -1
+                    if fault == 'finished_missing': value['State'].pop('FinishedAt')
+                    if fault == 'finished_zero': value['State']['FinishedAt'] = '0001-01-01T00:00:00Z'
+                    if fault == 'finished_future': value['State']['FinishedAt'] = '2999-01-01T00:00:00Z'
+                    if fault == 'finished_invalid': value['State']['FinishedAt'] = 'SYNTHETIC_PRIVATE_ERROR'
+                if os.getenv('STUB_REAP_AFTER_STOP') and not value['State']['Running']:
+                    reap_during_observation(state, cid)
             if os.getenv('STUB_OBSERVED_IMAGE_DRIFT') and state.get('scaled'):
                 for value in values: value['Image']=a if value['Image']==b else b
     out=json.dumps(values)
 elif head == ['container','wait']:
     out='0'
+    if os.getenv('STUB_TASK_LAG'):
+        state['containers'][args[-1]]['State']['Running'] = False
+        state.setdefault('waited', {})[args[-1]] = 0
     if os.getenv('STUB_REAP_RACE') == 'wait': reap_during_observation(state, args[-1])
 elif args[:1] == ['ps']:
     if '-aq' in args:
@@ -1116,8 +1149,9 @@ def test_upgrade_failure_after_ddl_keeps_old_return_paused_and_resumes(server, f
     assert rollout_state(server)["phase"] == "verified"
 
 
-def test_contract_one_rollback_is_refused_at_floor_two_before_mutation(server):
-    result = deploy(server, STUB_NETWORK="1", STUB_CONTRACT_FLOOR="2", ROLLBACK="1")
+@pytest.mark.parametrize("rollback", ["0", "1"])
+def test_contract_one_target_is_refused_at_floor_two_before_mutation(server, rollback):
+    result = deploy(server, STUB_NETWORK="1", STUB_CONTRACT_FLOOR="2", ROLLBACK=rollback)
     assert result.returncode == 1
     assert not any(
         call.startswith(("image tag", "service scale", "stack deploy", "service update"))
@@ -1157,3 +1191,217 @@ def test_contract_two_recovery_normalizes_return_consumed_by_automatic_rollback(
     for service in state["attested"]["services"].values():
         assert service["contract"] == service["previous_contract"] == 2
         assert service["retired"] and all(not row["running"] for row in service["retired"])
+
+
+def test_bootstrap_preserves_inspected_exit_after_removal_without_destroy_event(server):
+    result = deploy(
+        server,
+        STUB_NETWORK="1",
+        STUB_CONTRACT_FLOOR="0",
+        STUB_TARGET_CONTRACT="2",
+        STUB_REAP_AFTER_STOP="1",
+        STUB_NO_DESTROY="1",
+    )
+    assert result.returncode == 0, result.stderr
+    state = rollout_state(server)
+    assert state["floor"] == 2 and state["phase"] == "verified"
+    for service in state["attested"]["services"].values():
+        assert service["contract"] == service["previous_contract"] == 2
+        assert service["retired"] and all(not row["running"] for row in service["retired"])
+
+
+@pytest.mark.parametrize("reap", ["", "1"])
+def test_bootstrap_waits_for_terminal_task_after_positive_process_exit(server, reap):
+    result = deploy(
+        server,
+        STUB_NETWORK="1",
+        STUB_CONTRACT_FLOOR="0",
+        STUB_TASK_LAG="1",
+        STUB_REAP_AFTER_STOP=reap,
+        STUB_RACE_OUTCOME="active",
+        STUB_NO_DESTROY="1",
+    )
+    assert result.returncode == 0, result.stderr
+    state = rollout_state(server)
+    assert state["phase"] == "verified"
+    assert state["waited"] and all(count >= 3 for count in state["waited"].values())
+
+
+@pytest.mark.parametrize("floor", ["0", "1"])
+def test_mandatory_pause_does_not_resolve_missing_return_before_quiescence(server, floor):
+    result = deploy(
+        server,
+        STUB_NETWORK="1",
+        STUB_CONTRACT_FLOOR=floor,
+        STUB_TARGET_CONTRACT="2",
+        STUB_INITIAL_PREVIOUS_MISSING="1",
+        STUB_OLD_IMAGE_UNRESOLVABLE="1",
+    )
+    assert result.returncode == 0, result.stderr
+    state = rollout_state(server)
+    assert state["floor"] == 2 and state["phase"] == "verified"
+    for service in state["attested"]["services"].values():
+        assert service["contract"] == service["previous_contract"] == 2
+    scale = next(i for i, call in enumerate(server.calls) if call.startswith("service scale "))
+    migration = next(i for i, call in enumerate(server.calls) if call.endswith(" migrate"))
+    assert scale < migration
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "id",
+        "image",
+        "exit_missing",
+        "exit_type",
+        "exit_range",
+        "finished_missing",
+        "finished_zero",
+        "finished_future",
+        "finished_invalid",
+    ],
+)
+def test_invalid_inspected_exit_blocks_ddl_without_destroy(server, fault):
+    result = deploy(
+        server,
+        STUB_NETWORK="1",
+        STUB_CONTRACT_FLOOR="0",
+        STUB_REAP_AFTER_STOP="1",
+        STUB_NO_DESTROY="1",
+        STUB_STOP_FAULT=fault,
+    )
+    assert result.returncode == 1
+    assert not any(call.endswith((" migrate", " attest")) for call in server.calls)
+    assert "SYNTHETIC_PRIVATE_ERROR" not in result.stdout + result.stderr
+
+
+@pytest.fixture
+def rollout_client(server, monkeypatch):
+    from deploy.swarm.rollout import Rollout
+
+    for key, value in {
+        "PATH": f"{server.bin_dir}{os.pathsep}{os.environ['PATH']}",
+        "STUB_CALLS": str(server.calls_file),
+        "STUB_NETWORK": "1",
+        "STUB_CONTRACT_FLOOR": "0",
+        "STUB_NO_DESTROY": "1",
+        "STUB_REAP_AFTER_STOP": "1",
+        "IMAGE": "gerador-planos:abc123",
+    }.items():
+        monkeypatch.setenv(key, value)
+    rollout = Rollout(server.folder, "gerador-planos:abc123", "gerador-planos", False)
+    return rollout
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("container_id", "f" * 64),
+        ("image", "sha256:" + "f" * 64),
+        ("node_id", "other-node"),
+        ("task_id", "other-task"),
+        ("since", 0),
+        ("observed_at", 0),
+        ("exit_code", True),
+        ("finished_at", "invalid"),
+        ("extra", 1),
+    ],
+)
+def test_altered_inspected_proof_cannot_authorize_removed_container(
+    rollout_client,
+    field,
+    value,
+):
+    from deploy.swarm.rollout import RolloutError
+
+    rollout = rollout_client
+    rollout.node = "local-node"
+    rollout.observe("api")
+    rollout.docker("service", "scale", "--detach=false", "gerador-planos_api=0")
+    rows = rollout.observe("api")
+    cid = rows[0]["container_id"]
+    rollout.exit_proofs[cid][field] = value
+    with pytest.raises(RolloutError, match="prova de saída"):
+        rollout.observe("api")
+
+
+def test_terminal_task_convergence_has_deadline_before_ddl(rollout_client, monkeypatch, server):
+    from deploy.swarm.rollout import RolloutError
+
+    monkeypatch.setenv("STUB_TASK_LAG", "forever")
+    monkeypatch.delenv("STUB_REAP_AFTER_STOP")
+    clock = [0.0]
+    monkeypatch.setattr("deploy.swarm.rollout.time.monotonic", lambda: clock[0])
+
+    def advance(seconds):
+        clock[0] += 10
+
+    monkeypatch.setattr("deploy.swarm.rollout.time.sleep", advance)
+    with pytest.raises(RolloutError, match="estado terminal no prazo"):
+        rollout_client.execute()
+    assert clock[0] == 30
+    assert not any(call.endswith((" migrate", " attest")) for call in server.calls)
+
+
+def test_process_grace_period_does_not_consume_task_convergence_deadline(
+    rollout_client,
+    monkeypatch,
+    server,
+):
+    monkeypatch.setenv("STUB_TASK_LAG", "1")
+    monkeypatch.delenv("STUB_REAP_AFTER_STOP")
+    clock = [0.0]
+    run = subprocess.run
+
+    def docker_run(args, **kwargs):
+        if args[:3] == ["docker", "container", "wait"]:
+            clock[0] += 60
+        return run(args, **kwargs)
+
+    monkeypatch.setattr("deploy.swarm.rollout.subprocess.run", docker_run)
+    monkeypatch.setattr("deploy.swarm.rollout.time.monotonic", lambda: clock[0])
+    monkeypatch.setattr("deploy.swarm.rollout.time.sleep", lambda seconds: None)
+    rollout_client.execute()
+    assert rollout_state(server)["phase"] == "verified"
+
+
+@pytest.mark.parametrize("fault", ["STUB_NODE_CHANGE", "STUB_NODE_LOST", "STUB_LOCAL_LIST_FAIL"])
+def test_inspected_exit_does_not_bypass_uncertain_daemon_or_inventory(server, fault):
+    result = deploy(
+        server,
+        STUB_NETWORK="1",
+        STUB_CONTRACT_FLOOR="0",
+        STUB_REAP_AFTER_STOP="1",
+        STUB_NO_DESTROY="1",
+        **{fault: "1"},
+    )
+    assert result.returncode == 1
+    assert not any(call.endswith((" migrate", " attest")) for call in server.calls)
+
+
+def test_observed_restart_invalidates_exit_proof_before_subsequent_removal(
+    rollout_client,
+    server,
+    monkeypatch,
+):
+    import json
+
+    from deploy.swarm.rollout import RolloutError
+
+    monkeypatch.setenv("STUB_RACE_OUTCOME", "terminal")
+    rollout = rollout_client
+    rollout.node = "local-node"
+    rollout.observe("api")
+    rollout.docker("service", "scale", "--detach=false", "gerador-planos_api=0")
+    row = rollout.observe("api")[0]
+    cid = row["container_id"]
+    state_path = Path(str(server.calls_file) + ".state")
+    state = rollout_state(server)
+    state["containers"][cid] = {"Image": row["image"], "State": {"Running": True}}
+    state_path.write_text(json.dumps(state))
+    assert rollout.observe("api")[0]["running"]
+    state = rollout_state(server)
+    del state["containers"][cid]
+    state_path.write_text(json.dumps(state))
+    with pytest.raises(RolloutError, match="Falta prova local"):
+        rollout.observe("api")

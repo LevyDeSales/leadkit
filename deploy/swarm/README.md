@@ -131,23 +131,35 @@ Ausência de observação fecha o gate. `/readyz`, conexão Hatchet ou uma répl
 compatibilidade de toda a frota. A atestação é uma declaração do host operacional autorizado; o
 app valida o contrato e o epoch, sem ganhar acesso ao daemon.
 
-O Swarm pode remover tasks e containers depois da escala para zero. Nesse caso, o helper só
-comprova a saída se já observou o ID completo, o nó e a imagem imutável do container, a task
-está terminal ou foi removida do inventário e o mesmo daemon local confirma a destruição.
-Isso exige nó disponível, listagem local bem-sucedida sem aquele container e evento local
-`destroy` do mesmo ID, com `timeNano` dentro da janela iniciada antes da observação. A consulta
+O Swarm pode remover tasks e containers depois da escala para zero. O helper conserva a
+inspeção positiva de encerramento: `State.Running=false`, `FinishedAt` válido e não futuro,
+`ExitCode` inteiro válido e identidade real do container. A prova vincula task, CID completo,
+imagem imutável, nó e instante da observação. Se o container desaparecer depois, essa prova
+permite confirmar a saída sem depender de um evento `destroy` ainda retido. Cada uso exige
+novamente nó disponível, daemon local identificado, listagem local bem-sucedida sem aquele
+container e Task terminal ou removida do inventário. Uma inspeção que encontre o processo
+vivo invalida a prova anterior para aquele CID.
+
+Sem inspeção positiva de encerramento conservada, a alternativa continua exigindo imagem e
+CID previamente observados e evento local `destroy` do mesmo ID, com `timeNano` dentro da
+janela iniciada antes da observação, além das mesmas verificações de nó e inventário. A consulta
 de eventos tem fim absoluto; falha de `inspect`, ausência ou `DesiredState=remove` isolados
 não comprovam parada. O ensaio CI reutiliza essa prova também antes do DDL e após a retomada.
 Depois de `wait` ou de um `inspect` que falhe, o helper renova o inventário antes de decidir
-se a task terminou ou foi removida. Os objetos recebidos precisam corresponder exatamente aos
-IDs de tasks solicitados, sem omissões ou duplicados. Uma imagem diferente para um container
+se a task terminou ou foi removida. Se uma saída positiva já foi comprovada mas a Task ainda
+não ficou terminal, a coleta com espera concede até 30 segundos por task para convergência,
+contados após o retorno de `docker wait` quando necessário, conferindo novamente o inventário;
+prazo esgotado mantém o bloqueio. `docker wait` e `DesiredState`
+isolados nunca substituem a prova do processo. Os objetos recebidos precisam corresponder
+exatamente aos IDs de tasks solicitados, sem omissões ou duplicados. Uma imagem diferente para um container
 já observado é inconsistência e bloqueia o roteiro; não substitui a identidade conservada.
 Se esse refresh descobrir outra task durante a coleta, o helper recusa a coleta incompleta
 antes de comprovar a pausa ou executar DDL. Repita o roteiro após investigar o inventário;
 não há tentativa automática que possa omitir o processo recém-descoberto.
 
 Eventos Docker guardam somente os últimos 256 registros globais; não são um histórico durável.
-Evento ausente, antigo, perdido após restart, inválido ou de outro ID mantém o bloqueio.
+Sem inspeção positiva conservada, evento ausente, antigo, perdido após restart, inválido ou
+de outro ID mantém o bloqueio.
 Uma prova positiva já validada é conservada durante a execução, com nova conferência do nó
 e inventário local em cada uso. O CI conserva somente essa evidência operacional na baseline
 privada do ensaio para a conferência final, sem depender da retenção posterior do evento.
@@ -169,6 +181,10 @@ O helper compara a capacidade executada pelo ID imutável com o piso persistido 
 migration, begin ou alteração da stack. Alvo abaixo do piso e rollback que elevaria o piso são
 recusados. Piso0 ou alvo acima do piso exigem pausa/drenagem antes do DDL. Recuperação com
 Current/Previous abaixo do piso também repete a prova, mesmo quando suas réplicas já estão em zero.
+Quando bootstrap ou elevação de piso já exigem pausa, o helper não consulta antecipadamente a
+capacidade das referências antigas para tomar essa mesma decisão. PreviousSpec ausente permanece
+sem identidade/capacidade atribuída; pausa, prova de saída e normalização do retorno em zero
+continuam obrigatórias antes do DDL, assim como Current/Previous compatíveis antes da atestação.
 Ausência de processo sem prova positiva, inventário desconhecido ou réplica antiga viva mantém
 os serviços bloqueados. A prova continua limitada ao manager local observado.
 

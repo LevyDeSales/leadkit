@@ -15,6 +15,7 @@ import subprocess
 import tempfile
 import time
 import uuid
+from datetime import datetime
 from pathlib import Path
 
 TERMINAL = {"complete", "shutdown", "failed", "rejected", "remove"}
@@ -227,6 +228,57 @@ class Rollout:
                     )
         return tasks
 
+    def confirm_local_node(self):
+        node = self.decoded("node", "inspect", self.node)[0]
+        local = self.docker("info", "--format", "{{.Swarm.NodeID}}").stdout.strip()
+        if (
+            local != self.node
+            or node["Status"]["State"] != "ready"
+            or node.get("ManagerStatus", {}).get("Reachability") != "reachable"
+        ):
+            raise RolloutError("O nó local não confirma a saída; mantenha a pausa.")
+
+    @staticmethod
+    def valid_finished_at(value, observed_at):
+        if not isinstance(value, str) or not re.fullmatch(
+            r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,9})?Z",
+            value,
+        ):
+            return False
+        try:
+            finished = datetime.fromisoformat(value).timestamp()
+            return 0 < finished <= observed_at / 10**9
+        except (ValueError, OverflowError):
+            return False
+
+    def inspected_exit(self, task, proof, until):
+        cid = task["Status"]["ContainerStatus"]["ContainerID"]
+        return (
+            isinstance(proof, dict)
+            and set(proof)
+            == {
+                "container_id",
+                "image",
+                "node_id",
+                "since",
+                "observed_at",
+                "task_id",
+                "finished_at",
+                "exit_code",
+            }
+            and proof["container_id"] == cid
+            and proof["image"] == self.observed_images.get(cid)
+            and proof["node_id"] == self.node == task["NodeID"]
+            and proof["task_id"] == task["ID"]
+            and type(proof["since"]) is int
+            and proof["since"] == self.observed_since
+            and type(proof["observed_at"]) is int
+            and self.observed_since <= proof["observed_at"] <= until
+            and type(proof["exit_code"]) is int
+            and 0 <= proof["exit_code"] <= 255
+            and self.valid_finished_at(proof["finished_at"], proof["observed_at"])
+        )
+
     def removed_container(self, task, present):
         cid = task["Status"]["ContainerStatus"]["ContainerID"]
         image = self.observed_images.get(cid)
@@ -238,16 +290,9 @@ class Rollout:
             or (task["ID"] in present and task["Status"]["State"] not in TERMINAL)
         ):
             raise RolloutError("Um container ausente não tem saída comprovada; mantenha a pausa.")
-        node = self.decoded("node", "inspect", self.node)[0]
-        local = self.docker("info", "--format", "{{.Swarm.NodeID}}").stdout.strip()
-        if (
-            local != self.node
-            or node["Status"]["State"] != "ready"
-            or node.get("ManagerStatus", {}).get("Reachability") != "reachable"
-        ):
-            raise RolloutError("O nó local não confirma a saída; mantenha a pausa.")
-        # Não basta inspect falhar: o daemon precisa listar e comprovar a destruição
-        # do ID completo cuja imagem já foi observada, inclusive após remover a task.
+        self.confirm_local_node()
+        # Não basta inspect falhar: confira a ausência local antes de usar a prova
+        # positiva de encerramento ou de destruição do ID/imagem já observados.
         if self.docker("ps", "-aq", "--no-trunc", "--filter", f"id={cid}").stdout.strip():
             raise RolloutError(
                 "Um container existente não pôde ser inspecionado; mantenha a pausa."
@@ -255,6 +300,8 @@ class Rollout:
         until = time.time_ns()
         if cid in self.exit_proofs:
             proof = self.exit_proofs[cid]
+            if self.inspected_exit(task, proof, until):
+                return {"Image": image, "State": {"Running": False}}, "remove"
             if (
                 isinstance(proof, dict)
                 and set(proof) == {"container_id", "image", "node_id", "since", "time_nano"}
@@ -311,18 +358,37 @@ class Rollout:
         }
         return {"Image": image, "State": {"Running": False}}, "remove"
 
-    def container(self, role, task):
+    def container(self, role, task, *, deadline=None):
         cid = task["Status"]["ContainerStatus"]["ContainerID"]
         raw = self.docker("inspect", "--type", "container", cid, optional=True)
         if raw.returncode:
             # A task pode ter saído durante wait ou entre o inventário e inspect.
             present = {item["ID"] for item in self.tasks(role)}
             task = self.tracked[role][task["ID"]]
+            while (
+                deadline is not None
+                and task["ID"] in present
+                and task["Status"]["State"] not in TERMINAL
+                and self.inspected_exit(task, self.exit_proofs.get(cid), time.time_ns())
+            ):
+                if time.monotonic() >= deadline:
+                    raise RolloutError(
+                        "A task não confirmou o estado terminal no prazo; mantenha a pausa."
+                    )
+                time.sleep(0.2)
+                present = {item["ID"] for item in self.tasks(role)}
+                task = self.tracked[role][task["ID"]]
             return self.removed_container(task, present)
         try:
             container = json.loads(raw.stdout)[0]
             image = container["Image"]
-            if not DIGEST.fullmatch(image):
+            if (
+                not DIGEST.fullmatch(image)
+                or not re.fullmatch(r"[a-f0-9]{64}", cid)
+                or container["Id"] != cid
+                or task["NodeID"] != self.node
+                or type(container["State"]["Running"]) is not bool
+            ):
                 raise ValueError
         except (ValueError, KeyError, IndexError, TypeError):
             raise RolloutError("Um container não tem identidade de imagem comprovada.") from None
@@ -331,6 +397,25 @@ class Rollout:
                 "A imagem de um container observado mudou; mantenha o gate bloqueado."
             )
         self.observed_images.setdefault(cid, image)
+        if container["State"]["Running"]:
+            # Um restart invalida qualquer saída anteriormente observada para este ID.
+            self.exit_proofs.pop(cid, None)
+        else:
+            self.confirm_local_node()
+            observed_at = time.time_ns()
+            proof = {
+                "container_id": cid,
+                "image": image,
+                "node_id": self.node,
+                "since": self.observed_since,
+                "observed_at": observed_at,
+                "task_id": task["ID"],
+                "finished_at": container["State"].get("FinishedAt"),
+                "exit_code": container["State"].get("ExitCode"),
+            }
+            if not self.inspected_exit(task, proof, observed_at):
+                raise RolloutError("A inspeção não comprova a saída do processo; mantenha a pausa.")
+            self.exit_proofs[cid] = proof
         return container, task["Status"]["State"]
 
     def observe(self, role, *, wait=False, wait_ids=None):
@@ -338,14 +423,28 @@ class Rollout:
         observations = []
         for task in list(self.tracked[role].values()):
             cid = task["Status"]["ContainerStatus"]["ContainerID"]
-            container, state = self.container(role, task)
+            waiting = wait and (wait_ids is None or task["ID"] in wait_ids)
+            task_deadline = time.monotonic() + 30 if waiting else None
+            container, state = self.container(role, task, deadline=task_deadline)
             running = container["State"]["Running"]
-            if wait and running and (wait_ids is None or task["ID"] in wait_ids):
+            if waiting and running:
                 # O Docker espera o processo efetivamente sair, inclusive durante o grace period.
                 self.docker("container", "wait", cid, optional=True)
+                task_deadline = time.monotonic() + 30
                 self.tasks(role)
                 task = self.tracked[role][task["ID"]]
-                container, state = self.container(role, task)
+                container, state = self.container(role, task, deadline=task_deadline)
+                running = container["State"]["Running"]
+            # A saída do processo pode anteceder a atualização da Task pelo manager.
+            while waiting and not running and state not in TERMINAL:
+                if time.monotonic() >= task_deadline:
+                    raise RolloutError(
+                        "A task não confirmou o estado terminal no prazo; mantenha a pausa."
+                    )
+                time.sleep(0.2)
+                self.tasks(role)
+                task = self.tracked[role][task["ID"]]
+                container, state = self.container(role, task, deadline=task_deadline)
                 running = container["State"]["Running"]
             image = container["Image"]
             if not DIGEST.fullmatch(image):
@@ -568,13 +667,14 @@ class Rollout:
         os.environ["IMAGE"] = self.pinned
         initial = self.services() if network else {}
         bootstrap = floor == 0
-        incompatible_return = any(
-            self.capability(service["image_ref"]) < floor
-            or not service["previous_ref"]
-            or self.capability(service["previous_ref"]) < floor
-            for service in initial.values()
-        )
-        pause = bootstrap or self.target_contract > floor or incompatible_return
+        pause = bootstrap or self.target_contract > floor
+        if not pause:
+            pause = any(
+                not service["previous_ref"]
+                or self.capability(service["image_ref"]) < floor
+                or self.capability(service["previous_ref"]) < floor
+                for service in initial.values()
+            )
         if floor:
             self.contract("begin", {"epoch": self.epoch})
         if pause:
