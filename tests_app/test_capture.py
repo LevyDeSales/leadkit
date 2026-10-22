@@ -546,7 +546,16 @@ def test_admin_editor_can_switch_pdf_to_capture_and_back_explicitly(deps):
         fields["generation"] = "none"
         fields["completion.mode"] = "confirmation"
 
-    assert save(api, capture, draft=path).status_code == 303
+    refused = save(api, capture, draft=path)
+    assert refused.status_code == 422
+    assert "Confirme a retirada da geração" in refused.text
+    assert api.get(f"/admin/forms/{slug}/draft/pdf").status_code == 200
+
+    def confirmed_capture(fields):
+        capture(fields)
+        fields["confirm_generation_removal"] = "on"
+
+    assert save(api, confirmed_capture, draft=path).status_code == 303
     assert api.get(f"/admin/forms/{slug}/draft/pdf").status_code == 409
 
     def pdf(fields):

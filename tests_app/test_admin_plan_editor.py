@@ -892,9 +892,20 @@ def test_a_box_with_a_problem_is_open_and_marked(rich: TestClient) -> None:
     response = post(rich, RICH, **fields)
 
     assert response.status_code == 422
-    opened = [str(box["id"]) for box in tags(response.text, "details") if "open" in box]
-    assert "f-plan-fields-4" in opened and "f-plan-fields-4-items-fields-1" in opened
-    assert "f-plan-fields-0" not in opened
+    boxes = {
+        str(box["id"]): box
+        for box in tags(response.text, "details", class_="edit-q")
+        if str(box.get("id", "")).startswith("f-plan-fields-")
+    }
+    for target in ("f-plan-fields-4", "f-plan-fields-4-items-fields-1"):
+        assert "open" in boxes[target]
+        summary = re.search(
+            rf'<details[^>]*id="{target}"[^>]*>\s*<summary>(.*?)</summary>',
+            response.text,
+            re.DOTALL,
+        )
+        assert summary is not None and "com problema" in text(summary.group(1))
+    assert "open" not in boxes["f-plan-fields-0"]
 
 
 def test_changing_a_rule_of_the_plan_asks_for_a_test_before_publishing(
