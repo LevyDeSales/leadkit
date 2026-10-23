@@ -1308,7 +1308,7 @@ def test_compare_form_versions_reads_two_versions_section_by_section(
     assert body["versions"] == [2, 1] and body["draft_pending"] is True
     assert changed_keys(body) == ["pagina"] and body["changed_sections"] == 1
     page_section = next(item for item in body["sections"] if item["key"] == "pagina")
-    assert page_section["title"] == "Página pública: título, introdução e tempo"
+    assert page_section["title"] == "Página pública: título, introdução, logo e tempo"
     lines = [(line["kind"], line["text"][1:].strip()) for line in page_section["lines"]]
     assert ("add", f'"intro": "{NEWER}",') in lines
     assert ("del", f'"intro": "{json.loads(DEFINITION)["intro"]}",') in lines

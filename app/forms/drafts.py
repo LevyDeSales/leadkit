@@ -1045,10 +1045,12 @@ SOURCE_BROKEN = (
 @dataclass(frozen=True)
 class _Origin:
     """A definição de onde a cópia parte e a versão dela: o número da versão publicada, ou None
-    para o rascunho de um formulário que ainda não foi publicado."""
+    para o rascunho de um formulário que ainda não foi publicado. `images` resolve os nomes
+    segundo essa mesma escolha: pins publicados ou conteúdo atual do rascunho."""
 
     document: dict[str, Any]
     version: int | None
+    images: Mapping[str, AssetRef]
 
 
 def _origin(session: Session, source: str, *, slug: str, title: str) -> _Origin | None:
@@ -1070,7 +1072,12 @@ def _origin(session: Session, source: str, *, slug: str, title: str) -> _Origin 
         }
     if isinstance(document.get("consent"), Mapping):
         document["consent"] = {**document["consent"], "version": f"{slug}-v1"}
-    return _Origin(document, version)
+    images = (
+        form_assets.version_refs(session, source, version)
+        if version is not None
+        else form_assets.live_refs(session, base)
+    )
+    return _Origin(document, version, images)
 
 
 def problems_by_field(problems: Sequence[Problem]) -> dict[str, str]:
@@ -1134,7 +1141,7 @@ def create(
                 _prepare_pdf(start)
         document = as_stored(session, start)
     try:
-        compile_definition(document, version_number=FIRST_VERSION)
+        spec = compile_definition(document, version_number=FIRST_VERSION)
     except DefinitionError as exc:  # o modelo inicial sempre compila; uma origem pode não compilar
         count = f"{len(exc.problems)} {'problema' if len(exc.problems) == 1 else 'problemas'}"
         raise DefinitionError([Problem("source", SOURCE_BROKEN.format(count=count))]) from None
@@ -1142,7 +1149,22 @@ def create(
         _insert_form(deps, document, actor=actor, action="form.create", details={})
     else:
         details = {"source": source, "source_version": origin.version}
-        _insert_form(deps, document, actor=actor, action="form.duplicate", details=details)
+        images = {}
+        if spec.screen and spec.screen.opening_logo:
+            name = spec.screen.opening_logo.src[6:]
+            if name not in origin.images:
+                raise DefinitionError(
+                    [
+                        Problem(
+                            "source", "a imagem do logo de abertura da origem não está disponível"
+                        )
+                    ]
+                )
+            images[name] = origin.images[name]
+            details["images"] = {name: origin.images[name].sha256}
+        _insert_form(
+            deps, document, actor=actor, action="form.duplicate", details=details, images=images
+        )
     return slug
 
 
@@ -1153,6 +1175,7 @@ def _insert_form(
     actor: str,
     action: str,
     details: Mapping[str, Any],
+    images: Mapping[str, AssetRef] | None = None,
 ) -> None:
     """Grava o formulário novo, sem versão, o rascunho dele e a auditoria, numa transação só."""
     digest = fingerprint(document)
@@ -1175,6 +1198,13 @@ def _insert_form(
         )
         if form_id is None:  # outro formulário com o mesmo slug passou na frente
             raise DefinitionError([Problem("slug", SLUG_IN_DATABASE)])
+        for name, ref in (images or {}).items():
+            try:
+                form_assets.copy_image(
+                    deps, session, form_id=form_id, name=name, ref=ref, actor=actor
+                )
+            except form_assets.AssetRefused as exc:
+                raise DefinitionError([Problem("source", exc.message)]) from None
         session.add(
             FormDraft(
                 form_id=form_id,
@@ -1505,8 +1535,10 @@ def publish(
             try:  # fixa o conteúdo de cada imagem que a versão usa
                 pinned = form_assets.pin_version(session, version_id, slug, found.document)
             except form_assets.MissingImages as missing:  # uma imagem saiu no meio do caminho
-                problems = [Problem("pdf", missing.message())]
-                raise PublishRefused(found, [IMAGE_GONE], problems) from None
+                path = missing.path(found.document)
+                problems = [Problem(path, missing.message())]
+                reason = OPENING_LOGO_MISSING if path == "opening_logo.src" else IMAGE_GONE
+                raise PublishRefused(found, [reason], problems) from None
             session.execute(
                 sa.update(Form).where(Form.id == draft.form_id).values(title=found.spec.title)
             )

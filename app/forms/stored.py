@@ -275,7 +275,7 @@ def import_definition(
         try:  # as imagens que a definição usa ficam fixadas no conteúdo de agora
             form_assets.pin_version(session, version_id, spec.slug, document)
         except form_assets.MissingImages as missing:  # uma imagem saiu no meio do caminho
-            raise DefinitionError([Problem("pdf", missing.message())]) from None
+            raise DefinitionError([Problem(missing.path(document), missing.message())]) from None
         # Quem confirmou mandar dados de contato ao LLM fica registrado (os papéis, nunca valores).
         confirmed = {"contact_in_prompt": cited} if cited else {}
         session.add(
