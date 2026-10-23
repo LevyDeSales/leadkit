@@ -128,6 +128,9 @@ def test_admin_editor_and_preview_keep_logo_until_explicit_publication(deps, gen
     fields["opening_logo.alt"] = "Pesquisa sintética"
     assert post(client, path, **fields).status_code == 303
     assert editor(client, path)["opening_logo.alt"] == "Pesquisa sintética"
+    operation = post(client, path + "/edit", **{**editor(client, path), "op": "add-step"})
+    assert operation.status_code == 200
+    assert ">opening · " in operation.text
     html = client.get(path + "/preview/frame").text
     assert f'src="{logo.asset.ref.url}"' in html
     assert 'alt="Pesquisa sintética"' in html
