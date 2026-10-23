@@ -40,7 +40,14 @@ A versão publicada fica no banco num JSONB (`app.forms.stored`), e por isso:
 - `format`: sempre 1. Muda quando o formato muda de um jeito que a versão anterior não lê.
 - `slug`: o endereço público (`/p/<slug>`), com letras minúsculas, números e hífens (até 48).
 - `title`, `intro` e `minutes`: o título (vai também ao PDF), o texto de entrada da página e o
-  tempo estimado de resposta, de 1 a 60 minutos.
+  tempo estimado de resposta, de 1 a 60 minutos. A introdução é texto puro escapado, com quebras
+  de linha preservadas na abertura.
+- `opening_logo`, opcional: `src` literal no formato `asset:nome` e `alt` (1 a 300 caracteres),
+  acima do título, com proporção responsiva. Ausente ou nulo mantém a abertura sem logo. Funciona
+  em PDF e captura sem PDF; a publicação fixa o conteúdo no mesmo conjunto de imagens da versão.
+  O rascunho resolve a imagem atual. Não altera marca global, templates ou fingerprint do LLM.
+  Runtime anterior ao suporte ao campo o recusa: a adoção e o retorno exigem leitoras compatíveis
+  (ver guia da operadora, imagens-e-pdf.md).
 - `notices`, opcional: o aviso extra das páginas que a lead vê depois do envio, `waiting` (a de
   espera) e `failed` (a de falha, ao lado do código de atendimento), cada um opcional e com:
   - `title` e `text`: o título e o texto; uma linha em branco separa os parágrafos. É texto puro:

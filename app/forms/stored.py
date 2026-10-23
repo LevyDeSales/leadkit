@@ -56,7 +56,7 @@ from app.forms.definition.document import (
     identifier_of,
 )
 from app.forms.definition.images import AssetRef
-from app.forms.definition.resources import resource_problems
+from app.forms.definition.resources import opening_logo_problems, resource_problems
 from app.models import AuditLog, Form, FormVersion, WebhookDestination
 
 if TYPE_CHECKING:
@@ -337,9 +337,11 @@ def publication_problems(
     exemplo, sai do adaptador do PDF (o WeasyPrint em produção), que confere o que a compilação não
     vê, inclusive o arquivo de cada imagem. A compilação já renderizou o prompt, a prévia e o HTML
     do PDF com os exemplos. `document` é a definição como o banco a guarda."""
+    known = assets or {}
+    if problems := opening_logo_problems(document, known.keys()):
+        return problems
     if spec.generation == "none":
         return []
-    known = assets or {}
     pdf_texts = document["pdf"]
     outside = resource_problems(
         pdf_texts["html"],

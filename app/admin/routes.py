@@ -1404,7 +1404,12 @@ def _draft(slug: str) -> drafts.Draft:
 def _editor_page(
     request: Request, draft: drafts.Draft, *, status_code: int = 200, **kwargs: Any
 ) -> Response:
-    page = draft_pages.editor(draft, **kwargs)
+    with get_deps().sessions() as db:
+        choices = tuple(
+            (f"asset:{name}", f"{name} · {asset.scope}")
+            for name, asset in sorted(form_assets.visible(db, draft.slug).items())
+        )
+    page = draft_pages.editor(draft, opening_logo_choices=choices, **kwargs)
     return _page(request, "admin/form_draft.html", {"page": page}, status_code=status_code)
 
 

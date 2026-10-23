@@ -107,7 +107,7 @@ from app.forms.definition.document import (
 )
 from app.forms.definition.images import AssetRef
 from app.forms.definition.normal import answered, part, same_meaning
-from app.forms.definition.resources import resource_problems
+from app.forms.definition.resources import opening_logo_problems, resource_problems
 from app.forms.definition.scoring import ScoreRun, ScoringFailure
 from app.forms.sandbox import TemplateProblem
 from app.forms.stored import (
@@ -138,6 +138,7 @@ SCREEN_FIELDS = (
     "generation",
     "title",
     "intro",
+    "opening_logo",
     "minutes",
     "steps",
     "identity",
@@ -762,9 +763,9 @@ def save_document(
         if isinstance(document.get("slug"), str) and document["slug"] != wanted:
             raise DefinitionError([Problem("slug", SLUG_OF_THE_DOCUMENT)])
         stored = as_stored(session, _with_consent_version(document, draft.document, rename))
-        library = (
-            {n: a.ref for n, a in form_assets.visible(session, slug).items()} if resources else {}
-        )
+        library = {n: a.ref for n, a in form_assets.visible(session, slug).items()}
+    if problems := opening_logo_problems(stored, library.keys()):
+        raise DefinitionError(problems)
     if resources and stored.get("generation", "pdf") == "pdf":
         check_templates(
             template_texts_of(stored), stored, number=draft.next_number, assets=library
@@ -1208,6 +1209,7 @@ CONTACT_UNCONFIRMED = (
 )
 DOES_NOT_COMPILE = "Corrija o rascunho: ele não compila com o código deste deploy."
 PDF_FAILED = "Corrija o rascunho: o PDF de exemplo não foi gerado."
+OPENING_LOGO_MISSING = "Confira a imagem do logo de abertura antes de publicar."
 IMAGE_GONE = (
     "Uma imagem que o PDF ou a prévia usa saiu enquanto você publicava. Confira as imagens e "
     "tente de novo."
@@ -1467,7 +1469,7 @@ def publish(
         raise PublishRefused(found, reasons)
     problems = _pdf_problems(deps, slug, found)
     if problems:
-        raise PublishRefused(found, [PDF_FAILED], problems)
+        raise PublishRefused(found, [_publication_reason(problems)], problems)
     assert found.spec is not None  # sem problemas, a definição compilou
     digest = fingerprint(found.document)
     now = utc_now()
@@ -1536,6 +1538,10 @@ def publish(
     return Published(slug, found.spec.title, found.number, found)
 
 
+def _publication_reason(problems: Sequence[Problem]) -> str:
+    return OPENING_LOGO_MISSING if problems[0].path == "opening_logo.src" else PDF_FAILED
+
+
 def _pdf_problems(deps: Deps, slug: str, found: Review) -> list[Problem]:
     """O que o PDF de exemplo da versão nova não passa: as imagens que ele usa e o adaptador do PDF
     (o WeasyPrint em produção), que confere o que a compilação não vê."""
@@ -1552,7 +1558,7 @@ def _simulation(deps: Deps, slug: str, found: Review, reasons: Sequence[str]) ->
     if found.spec is not None and not found.nothing:
         from_pdf = _pdf_problems(deps, slug, found)
         if from_pdf:
-            reasons, problems = [*reasons, PDF_FAILED], from_pdf
+            reasons, problems = [*reasons, _publication_reason(from_pdf)], from_pdf
     return Simulation(found, tuple(reasons), tuple(problems))
 
 

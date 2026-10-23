@@ -497,12 +497,19 @@ def _discard_unused(deps: Deps, ref: AssetRef) -> None:
 
 
 def used_names(document: Mapping[str, Any]) -> list[str]:
-    """Os nomes de imagem (`asset:<nome>`) que o PDF, o CSS dele e a prévia da definição pedem."""
+    """Os nomes de imagem (`asset:<nome>`) da abertura, PDF, CSS e prévia da definição."""
     pdf = document.get("pdf")
     pdf = pdf if isinstance(pdf, Mapping) else {}
     texts = (pdf.get("html"), pdf.get("css"), document.get("preview"))
     html, css, preview = (text if isinstance(text, str) else "" for text in texts)
-    return asset_names(html, css, preview)
+    names = asset_names(html, css, preview)
+    logo = document.get("opening_logo")
+    if isinstance(logo, Mapping) and isinstance(logo.get("src"), str):
+        address = logo["src"].strip()
+        name = address[6:]
+        if address.startswith("asset:") and name_problem(name) is None and name not in names:
+            names.append(name)
+    return names
 
 
 def live_refs(session: Session, document: Mapping[str, Any]) -> dict[str, AssetRef]:
