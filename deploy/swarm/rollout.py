@@ -103,7 +103,7 @@ class Rollout:
                 and isinstance(value, dict)
                 and set(value) == {"contract"}
                 and type(value["contract"]) is int
-                and value["contract"] in {1, 2}
+                and value["contract"] in {1, 2, 3}
             ):
                 return value["contract"]
         except ValueError:
@@ -727,7 +727,7 @@ class Rollout:
                 "O banco não confirmou o contrato; a stack não foi mexida."
             ) from None
         floor = status.get("minimum_contract")
-        if type(floor) is not int or floor not in {0, 1, 2} or floor > self.target_contract:
+        if type(floor) is not int or floor not in {0, 1, 2, 3} or floor > self.target_contract:
             raise RolloutError("O piso do banco excede a capacidade da imagem; nada foi alterado.")
         self.floor = floor
         if self.rollback and (floor == 0 or self.target_contract > floor):

@@ -379,10 +379,19 @@ class IntegrationSync(Base):
 
 
 class CaptureDelivery(Base):
-    """Intenção transacional por captura e destino fixo; nunca guarda respostas ou credenciais."""
+    """Intenção por submissão/destino; v2 conserva snapshot sob a cascata da submissão."""
 
     __tablename__ = "capture_deliveries"
     __table_args__ = (
+        sa.CheckConstraint(
+            "(schema_version = 1 AND payload IS NULL) OR "
+            "(schema_version = 2 AND integration_id IS NULL AND payload IS NOT NULL "
+            "AND payload @> jsonb_build_object('schema_version', 2, 'event', event, "
+            "'event_id', id::text, 'submission', jsonb_build_object('id', submission_id::text), "
+            "'delivery_authorization', jsonb_build_object('destination_id', "
+            "webhook_destination_id::text, 'revision', config_version, 'purpose', 'internal')))",
+            name="envelope",
+        ),
         sa.CheckConstraint(
             "(integration_id IS NULL) <> (webhook_destination_id IS NULL)", name="destination"
         ),
@@ -409,6 +418,8 @@ class CaptureDelivery(Base):
         index=True,
     )
     event: Mapped[str] = mapped_column(sa.String(64), default="submissao.persistida")
+    schema_version: Mapped[int] = mapped_column(sa.Integer, server_default="1")
+    payload: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
     config_version: Mapped[int] = mapped_column(sa.Integer)
     status: Mapped[str] = mapped_column(sa.String(16), default="pending")
     attempts: Mapped[int] = mapped_column(sa.Integer, default=0)
@@ -672,6 +683,15 @@ class ApiKey(Base):
     revoked_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
     revoked_by: Mapped[str | None] = mapped_column(sa.Text)
     last_used_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+
+
+class WebhookIssuer(Base):
+    """Namespace persistido da instalação, conservado no backup, sem mutação operacional."""
+
+    __tablename__ = "webhook_issuer"
+    __table_args__ = (sa.CheckConstraint("id = 1", name="single_row"),)
+    id: Mapped[int] = mapped_column(sa.SmallInteger, primary_key=True)
+    namespace: Mapped[uuid.UUID] = mapped_column(sa.Uuid)
 
 
 class DeploymentContract(Base):

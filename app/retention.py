@@ -20,8 +20,9 @@ antigos seguram os pedidos deles até vencer; se subir, um prazo próprio que fi
 espera o link vencer.
 
 Apagar, e não anonimizar: o banco do app não é o histórico do funil (o CRM recebe tudo pelo
-webhook) e plano e respostas têm texto livre, que não dá para anonimizar com segurança. A entrega
-não guarda payload: ele é montado na hora do envio a partir das outras tabelas. O mesmo vale para a
+webhook) e plano e respostas têm texto livre, que não dá para anonimizar com segurança. A entrega PDF
+não guarda payload: ele é montado na hora do envio a partir das outras tabelas. A intenção de
+respostas v2 conserva snapshot histórico na outbox e sai pela cascata da mesma submissão. O mesmo vale para a
 sincronização com uma integração (`integration_syncs`), que sai junto com o pedido. As linhas que já foram para
 a planilha do Baserow ficam lá: a retenção dela é da operadora, fora do app.
 

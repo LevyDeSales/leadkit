@@ -496,6 +496,7 @@ class JobDetail:
     deliveries: list[DeliveryView]
     syncs: list[SyncView]
     timeline: list[Attempt]
+    persisted_deliveries: tuple[dict[str, Any], ...] = ()
 
 
 def job_detail(
@@ -581,6 +582,7 @@ def job_detail(
             for pdf in state.pdfs
         ],
         deliveries=delivery_views,
+        persisted_deliveries=state.persisted_deliveries,
         syncs=syncs,
         timeline=_timeline(state, delivery_views, notes),
     )
@@ -1362,7 +1364,9 @@ def probe_view(probe: Probe, *, event: str = "plano.concluido") -> ProbeView:
     """O que o receptor respondeu e o que uma entrega faria com essa resposta (as mesmas regras
     do `plano.concluido`, em `app.adapters.webhook.outcome`)."""
     event_name = (
-        "evento de captura (submissao.persistida)"
+        "envio de respostas após salvar"
+        if event == "submissao.persistida.v2"
+        else "evento de captura (submissao.persistida)"
         if event == "submissao.persistida"
         else "plano.concluido"
     )

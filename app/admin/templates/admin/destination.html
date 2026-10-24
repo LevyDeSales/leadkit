@@ -48,7 +48,7 @@
     </div>
     <div class="field">
       <label for="purpose">Finalidade do receptor</label>
-      <p id="purpose-ajuda">Interna envia o plano integral e dados comerciais que a participante não vê. Participante recebe somente o plano público e seus links autorizados. Trocar o segredo conserva esta escolha.</p>
+      <p id="purpose-ajuda">Interna recebe as respostas e os dados dos eventos selecionados; quando você seleciona planos concluídos, inclui o plano integral. Participante recebe somente o plano público e seus links autorizados. Trocar o segredo conserva esta escolha.</p>
       <select id="purpose" name="purpose" aria-describedby="purpose-ajuda{% if errors.get('purpose') %} purpose-erro{% endif %}"{% if errors.get('purpose') %} aria-invalid="true"{% endif %}>
         <option value="participant"{% if selected_purpose == 'participant' %} selected{% endif %}>Participante — plano público</option>
         <option value="internal"{% if selected_purpose == 'internal' %} selected{% endif %}>Interna — dados comerciais e respostas</option>
@@ -56,14 +56,15 @@
       {% if errors.get('purpose') %}<p class="error" id="purpose-erro" role="alert">{{ errors['purpose'] }}</p>{% endif %}
       {% if page.stored %}<p>Finalidade atual: {{ "interna" if page.stored.purpose == "internal" else "participante" }} · {{ {"legacy": "origem legada", "explicit": "escolha explícita", "default": "padrão seguro"}.get(page.stored.purpose_origin) }}.</p>{% endif %}
     </div>
-    <p>Finalidade do destino efetivo: {{ "interna — plano integral e dados comerciais" if effective_purpose == "internal" else "participante — plano público" if effective_purpose else "nenhum destino" }}.</p>
-    <p>Eventos do destino efetivo: {{ effective_events | join(", ") or "nenhum destino" }}.</p>
+    <p>Finalidade do destino efetivo: {{ "interna — dados dos eventos selecionados" if effective_purpose == "internal" else "participante — plano público" if effective_purpose else "nenhum destino" }}.</p>
+    <p>Eventos do destino efetivo: {% for event in effective_events %}{{ {"plano.concluido":"Plano concluído", "plano.liberado":"Liberação individual", "submissao.persistida":"Captura sem PDF", "submissao.persistida.v2":"Respostas após salvar"}.get(event, event) }}{% if not loop.last %}, {% endif %}{% else %}nenhum destino{% endfor %}.</p>
     <input type="hidden" name="events_present" value="1">
     <fieldset id="eventos" aria-describedby="eventos-ajuda{% if errors.get('events') %} eventos-erro{% endif %}"{% if errors.get('events') %} aria-invalid="true"{% endif %}><legend>Eventos aceitos pelo receptor</legend>
     <p id="eventos-ajuda">Declare a finalidade autorizada. Capturas enviam respostas sem plano ou PDF. Confira também o destino padrão herdado ao remover uma configuração própria.</p>
     <label><input type="checkbox" name="events" value="plano.concluido"{% if 'plano.concluido' in selected_events %} checked{% endif %}>Planos concluídos (PDF)</label>
     <label><input type="checkbox" name="events" value="plano.liberado"{% if 'plano.liberado' in selected_events %} checked{% endif %}>Liberação individual do plano</label>
     <label><input type="checkbox" name="events" value="submissao.persistida"{% if 'submissao.persistida' in selected_events %} checked{% endif %}>Capturas persistidas (sem PDF)</label>
+    {% if page.form_slug %}<label><input type="checkbox" name="events" value="submissao.persistida.v2"{% if 'submissao.persistida.v2' in selected_events %} checked{% endif %}>Enviar respostas ao concluir o formulário</label><p>Com ou sem PDF, envia as respostas depois de salvar. Escolha finalidade interna e retire a seleção legada de captura. Não envia respostas anteriores.</p>{% endif %}
     {% if errors.get("events") %}<p class="error" id="eventos-erro" role="alert">{{ errors["events"] }}</p>{% endif %}</fieldset>
     {% if needs_confirmation %}
     <label class="choice choice--check"><input type="checkbox" name="confirm_http" value="on" required><span class="choice__body"><span class="choice__mark">{{ m.icon('check') }}</span><span>Confirmo que o receptor só aceita http e que os dados das leads vão sem criptografia até ele.</span></span></label>
@@ -72,6 +73,7 @@
   </form>
   {% if page.stored %}
   <p class="muted">Mudar a URL mantém o segredo. Se o receptor novo ainda não o conhece, troque o segredo abaixo.</p>
+  {% if 'submissao.persistida.v2' in page.stored.events %}<p>Mudar a URL impede o envio das respostas ainda pendentes na revisão anterior. Elas conservam o destino e a revisão originais e não seguem para a configuração nova, que vale para os próximos formulários respondidos.</p>{% endif %}
   <dl class="kv">
     <dt>Criado</dt><dd>{{ page.stored.created_by }} · {{ m.when(page.stored.created) }}</dd>
     <dt>Última mudança</dt><dd>{{ page.stored.updated_by }} · {{ m.when(page.stored.updated) }}</dd>
@@ -94,7 +96,7 @@
       <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
       <input type="hidden" name="version" value="{{ page.stored.version }}">
       <h3 id="troca-titulo">Trocar o segredo</h3>
-      <div class="note">{{ m.icon('alert-triangle') }}<p>O segredo atual deixa de valer na hora: ponha o novo no receptor logo em seguida. Novas entregas usam o segredo novo; entregas PDF já fixadas exigem repetir explicitamente com a revisão atual, preservando a finalidade. Até a troca no receptor, ele recusa os eventos. Se a recusa vier como 401 ou 403, a entrega falha na hora e precisa ser reenviada pelo pedido; se vier como 5xx, ela se repete por cerca de 3,5 h.</p></div>
+      <div class="note">{{ m.icon('alert-triangle') }}<p>O segredo atual deixa de valer na hora: ponha o novo no receptor logo em seguida. Novos envios usam o segredo novo.</p><p>As respostas enviadas após salvar conservam a revisão original: trocar o segredo impede os envios ainda pendentes nessa revisão. Não é possível repeti-los com o segredo ou a revisão novos.</p><p>Entregas PDF já fixadas exigem repetir explicitamente com a revisão atual, preservando a finalidade. Até a troca no receptor, ele recusa os eventos. Nesses envios PDF, uma recusa 401 ou 403 exige reenvio pelo pedido; uma resposta 5xx repete por cerca de 3,5 h.</p></div>
       <label class="choice choice--check"><input type="checkbox" name="confirm" value="on" required{% if errors.get("confirm") %} aria-invalid="true" aria-describedby="troca-erro"{% endif %}><span class="choice__body"><span class="choice__mark">{{ m.icon('check') }}</span><span>Entendo que o segredo atual deixa de valer agora.</span></span></label>
       {% if errors.get("confirm") %}<p class="error" id="troca-erro">{{ m.icon('alert-circle') }}{{ errors["confirm"] }}</p>{% endif %}
       <div class="btns"><button class="btn btn--primary" type="submit">Gerar um segredo novo</button></div>
@@ -106,7 +108,7 @@
   <h2 id="teste-titulo">Evento de teste</h2>
   <p>Escolha um teste de conexão (<span class="mono">webhook.teste</span>) ou o envio sintético de respostas (<span class="mono">submissao.persistida</span>). Os eventos são assinados, usam dados fictícios e mostram a resposta do receptor, sem criar uma submissão real.</p>
   {#- Sem JavaScript é um POST comum que devolve a página inteira; com HTMX, troca só o resultado. -#}
-  <form method="post" action="{{ page.base }}/test" hx-post="{{ page.base }}/test" hx-target="#resultado-teste" hx-select="#resultado-teste" hx-swap="outerHTML"><label for="test-event">Finalidade do teste sintético</label><select name="event" id="test-event"><option value="webhook.teste">Conexão</option>{% if page.stored and 'submissao.persistida' in page.stored.events %}<option value="submissao.persistida">Captura persistida (sem submissão real)</option>{% endif %}</select>
+  <form method="post" action="{{ page.base }}/test" hx-post="{{ page.base }}/test" hx-target="#resultado-teste" hx-select="#resultado-teste" hx-swap="outerHTML"><label for="test-event">Finalidade do teste sintético</label><select name="event" id="test-event"><option value="webhook.teste">Conexão</option>{% if page.stored and 'submissao.persistida.v2' in page.stored.events %}<option value="submissao.persistida.v2">Respostas após salvar</option>{% endif %}{% if page.stored and 'submissao.persistida' in page.stored.events %}<option value="submissao.persistida">Captura persistida (sem submissão real)</option>{% endif %}</select>
     <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
     <button class="btn btn--secondary" type="submit">{{ m.icon('send') }}Mandar o evento de teste</button>
   </form>

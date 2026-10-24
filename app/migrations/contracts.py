@@ -13626,3 +13626,67 @@ SIGNATURES["0018_journey_events"] = {
     ],
     "sequence:public.webhook_env_seed_id_seq": ["smallint", "1", "1", "32767", "1", "false", "1"],
 }
+
+SIGNATURES["0019_persisted_webhook_v2"] = {
+    **SIGNATURES["0018_journey_events"],
+    "column:public.capture_deliveries.payload": ["jsonb", "false", "", "", "", ""],
+    "column:public.capture_deliveries.schema_version": ["integer", "true", "1", "", "", ""],
+    "column:public.webhook_issuer.id": [
+        "smallint",
+        "true",
+        "nextval('webhook_issuer_id_seq'::regclass)",
+        "",
+        "",
+        "",
+    ],
+    "column:public.webhook_issuer.namespace": ["uuid", "true", "", "", "", ""],
+    "column:public.webhook_issuer_id_seq.is_called": ["boolean", "true", "", "", "", ""],
+    "column:public.webhook_issuer_id_seq.last_value": ["bigint", "true", "", "", "", ""],
+    "column:public.webhook_issuer_id_seq.log_cnt": ["bigint", "true", "", "", "", ""],
+    "constraint:public.capture_deliveries.ck_capture_deliveries_envelope": [
+        "CHECK ((((schema_version = 1) AND (payload IS NULL)) OR ((schema_version = 2) AND (integration_id IS NULL) AND (payload IS NOT NULL) AND (payload @> jsonb_build_object('schema_version', 2, 'event', event, 'event_id', (id)::text, 'submission', jsonb_build_object('id', (submission_id)::text), 'delivery_authorization', jsonb_build_object('destination_id', (webhook_destination_id)::text, 'revision', config_version, 'purpose', 'internal'))))))",
+        "true",
+        "false",
+        "false",
+    ],
+    "constraint:public.webhook_issuer.ck_webhook_issuer_single_row": [
+        "CHECK ((id = 1))",
+        "true",
+        "false",
+        "false",
+    ],
+    "constraint:public.webhook_issuer.pk_webhook_issuer": [
+        "PRIMARY KEY (id)",
+        "true",
+        "false",
+        "false",
+    ],
+    "function:public.preserve_persisted_webhook()": [
+        "CREATE OR REPLACE FUNCTION public.preserve_persisted_webhook()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\n        BEGIN\n          IF TG_OP = 'UPDATE' THEN\n            IF NEW.schema_version IS DISTINCT FROM OLD.schema_version OR\n              (OLD.schema_version = 2 AND\n               ROW(NEW.id, NEW.submission_id, NEW.event, NEW.integration_id,\n                   NEW.webhook_destination_id, NEW.config_version, NEW.payload)\n               IS DISTINCT FROM\n               ROW(OLD.id, OLD.submission_id, OLD.event, OLD.integration_id,\n                   OLD.webhook_destination_id, OLD.config_version, OLD.payload)) THEN\n              RAISE EXCEPTION 'persisted webhook snapshot is immutable';\n            END IF;\n          ELSIF NEW.schema_version = 2 AND\n            (NEW.payload->>'issuer') IS DISTINCT FROM\n            ('leadkit:' || (SELECT namespace::text FROM webhook_issuer WHERE id = 1)) THEN\n            RAISE EXCEPTION 'persisted webhook issuer is invalid';\n          END IF;\n          RETURN NEW;\n        END $function$\n"
+    ],
+    "function:public.preserve_webhook_issuer()": [
+        "CREATE OR REPLACE FUNCTION public.preserve_webhook_issuer()\n RETURNS trigger\n LANGUAGE plpgsql\nAS $function$\n        BEGIN RAISE EXCEPTION 'webhook issuer is immutable'; END $function$\n"
+    ],
+    "index:public.pk_webhook_issuer": [
+        "CREATE UNIQUE INDEX pk_webhook_issuer ON public.webhook_issuer USING btree (id)",
+        "true",
+        "true",
+        "false",
+        "false",
+    ],
+    "namespace_object:function:public.preserve_persisted_webhook()": ["function"],
+    "namespace_object:function:public.preserve_webhook_issuer()": ["function"],
+    "namespace_object:sequence:public.webhook_issuer_id_seq": ["sequence"],
+    "namespace_object:table:public.webhook_issuer": ["table"],
+    "relation:public.webhook_issuer": ["r", "p", "false", "false", "d", "", ""],
+    "relation:public.webhook_issuer_id_seq": ["S", "p", "false", "false", "n", "", ""],
+    "sequence:public.webhook_issuer_id_seq": ["smallint", "1", "1", "32767", "1", "false", "1"],
+    "trigger:public.capture_deliveries.persisted_webhook_is_immutable": [
+        "CREATE TRIGGER persisted_webhook_is_immutable BEFORE INSERT OR UPDATE ON public.capture_deliveries FOR EACH ROW EXECUTE FUNCTION preserve_persisted_webhook()",
+        "O",
+    ],
+    "trigger:public.webhook_issuer.webhook_issuer_is_immutable": [
+        "CREATE TRIGGER webhook_issuer_is_immutable BEFORE DELETE OR UPDATE ON public.webhook_issuer FOR EACH ROW EXECUTE FUNCTION preserve_webhook_issuer()",
+        "O",
+    ],
+}

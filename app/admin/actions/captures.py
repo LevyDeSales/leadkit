@@ -15,6 +15,21 @@ class Conflict(Exception):
     """Estado, revisão ou finalidade mudou; confira a entrega antes de repetir."""
 
 
+def retry_for_job(deps, public_id, delivery_id, **command):
+    """Resolve o vínculo do pedido antes de usar a mesma autorização de respostas."""
+    import sqlalchemy as sa
+
+    from app.models import Job
+
+    with deps.sessions() as session:
+        submission_id = session.scalar(
+            sa.select(Job.submission_id).where(Job.public_id == public_id)
+        )
+    if submission_id is None:
+        raise Missing
+    return retry(deps, submission_id, delivery_id, **command)
+
+
 def retry(deps, submission_id, delivery_id, *, expected_dispatch, expected_config_version, actor):
     """Reautoriza somente o mesmo destino, na revisão confirmada, sem backfill ou geração."""
     try:
@@ -26,6 +41,8 @@ def retry(deps, submission_id, delivery_id, *, expected_dispatch, expected_confi
         if delivery is None or submission.id != submission_id:
             raise Missing
         if delivery.dispatch_no != expected_dispatch:
+            raise Conflict
+        if delivery.schema_version == 2 and delivery.config_version != expected_config_version:
             raise Conflict
         if delivery.status == "succeeded":
             return state(delivery, delivery.config_version)

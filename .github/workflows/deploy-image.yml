@@ -245,11 +245,11 @@ jobs:
     runs-on: ubuntu-latest
     # Bootstrap, atualização/rollback e duas stacks somam quase 30 min; reserve margem no runner.
     timeout-minutes: 45
-    # O mesmo roteiro conserva a adoção0 e prova separadamente a transição pública1→2.
+    # Baselines públicas0/1/2 separadas; todas adotam o candidato3 com pausa comprovada.
     strategy:
       fail-fast: false
       matrix:
-        adoption_baseline: [pre-projection, contract-one]
+        adoption_baseline: [pre-projection, contract-one, contract-two]
     env:
       CI_ADOPTION_BASELINE: ${{ matrix.adoption_baseline }}
       DOMAIN: planos.ci.test
@@ -447,7 +447,7 @@ jobs:
               result = {}
               for table in ("forms", "form_versions", "leads", "submissions", "jobs", "plans", "artifacts"):
                   rows = session.execute(sa.text(f"SELECT row_to_json(t) FROM {table} t ORDER BY id")).scalars().all()
-                  # A criação das provas2 não entra no snapshot histórico da adoção.
+                  # A criação das provas novas não entra no snapshot histórico da adoção.
                   result[table] = rows
               return result
 
@@ -496,7 +496,7 @@ jobs:
               from app.migrations.compatibility import validate_database
               from app.migrations.contracts import SIGNATURES
               with deps.sessions() as session:
-                  assert validate_database(session.connection(), SIGNATURES) == "0018_journey_events"
+                  assert validate_database(session.connection(), SIGNATURES) == "0019_persisted_webhook_v2"
                   assert all(hashlib.sha256(json.dumps(SIGNATURES[revision], sort_keys=True).encode()).hexdigest() == digest for revision, digest in state["signatures"].items())
                   job = session.get_one(Job, UUID(state["history_job"]))
                   deps.signer.verify(state["history_token"], job)
@@ -509,13 +509,13 @@ jobs:
                       assert all(by_id[str(row["id"])] == row for row in rows)
                   if phase == "blocked":
                       row = session.execute(sa.text("SELECT minimum_contract,phase,epoch,evidence,attested_at FROM deployment_contract WHERE id=1")).one()
-                      assert tuple(row) == (2, "blocked", None, {}, None)
+                      assert tuple(row) == (3, "blocked", None, {}, None)
                       try:
-                          assert_contract(session, required=2)
+                          assert_contract(session, required=3)
                       except DeploymentContractError:
                           return
                       raise AssertionError
-                  assert_contract(session, required=2)
+                  assert_contract(session, required=3)
               import httpx
               server = subprocess.Popen([sys.executable, "-m", "uvicorn", "app.api.main:app", "--host", "127.0.0.1",
                   "--port", "18080", "--no-access-log", "--log-level", "critical"], cwd="/app",
@@ -637,7 +637,7 @@ jobs:
           PYPROBE
           chmod 600 "$RUNNER_TEMP/continuation-probe.py"
 
-      - name: Rehearse real pre-projection bootstrap and forward recovery
+      - name: Rehearse historical bootstrap and drained adoption to contract three
         run: |
           umask 077
           bootstrap_role=none
@@ -652,10 +652,16 @@ jobs:
           case "${CI_ADOPTION_BASELINE:-pre-projection}" in
             pre-projection)
               old_sha=7e199a5f0e2a6cf538f99d486cef0cd9f21bc783
-              old_schema=0015_capture_delivery ;;
+              old_schema=0015_capture_delivery
+              old_contract=0 ;;
             contract-one)
               old_sha=365f8bf2dc94dbe8894020ed5198fe0142a36ab2
-              old_schema=0016_plan_audiences ;;
+              old_schema=0016_plan_audiences
+              old_contract=1 ;;
+            contract-two)
+              old_sha=ecc009f501d157e3ee246d916e8a13b0cb69e629
+              old_schema=0018_journey_events
+              old_contract=2 ;;
             *) exit 1 ;;
           esac
           old_image="leadkit:compat-old-${old_sha:0:8}"
@@ -800,10 +806,12 @@ jobs:
           test "$(psql_compat 'select version_num from alembic_version')" = "$old_schema"
           IMAGE="$old_image" STACK="$compat" DOMAIN=compat.ci.test \
             docker stack deploy --detach=false --resolve-image never -c stack.yaml "$compat"
-          if [ "${CI_ADOPTION_BASELINE:-pre-projection}" = contract-one ]; then
-            # A imagem pública1 confirma seu próprio contrato antes de qualquer DDL2.
-            env -u DOMAIN -u STACK IMAGE="$old_image" ./deploy.sh > baseline-one.log 2>&1
-            test "$(psql_compat "select minimum_contract || ':' || phase from deployment_contract where id=1")" = 1:verified
+          if [ "$old_contract" -gt 0 ]; then
+            # Cada imagem pública confirma sua capacidade e seu próprio piso antes do DDL3.
+            docker run --rm --network none "$old_image" python -m app.deployment_contract capability \
+              | python3 -c 'import json,sys; assert json.load(sys.stdin) == {"contract":int(sys.argv[1])}' "$old_contract"
+            env -u DOMAIN -u STACK IMAGE="$old_image" ./deploy.sh > baseline-contract.log 2>&1
+            test "$(psql_compat "select minimum_contract || ':' || phase from deployment_contract where id=1")" = "$old_contract:verified"
           fi
           old_identity=$(docker image inspect --format '{{.Id}}' "$old_image")
           probe "$old_identity" baseline
@@ -952,7 +960,7 @@ jobs:
               ("remote_task", "Há task em outro nó ou nó desconhecido"),
               ("docker_operation", "Docker recusou uma operação"),
               ("docker_unavailable", "Docker indisponível ou operação sem conclusão"),
-              ("image_contract", "A imagem não comprova contrato2"),
+              ("image_contract", "A imagem não comprova contrato conhecido"),
               ("database_contract", "O banco não confirmou o contrato"),
               ("pause_unconfirmed", "não ficou pausado; não execute a migration"),
               ("migration_failure", "as migrations falharam"),
@@ -974,8 +982,8 @@ jobs:
           test -s before-ddl
           test -e ddl-committed-launcher-failed
           cat before-ddl
-          test "$(psql_compat 'select version_num from alembic_version')" = 0018_journey_events
-          test "$(psql_compat "select minimum_contract || ':' || phase from deployment_contract where id=1")" = 2:blocked
+          test "$(psql_compat 'select version_num from alembic_version')" = 0019_persisted_webhook_v2
+          test "$(psql_compat "select minimum_contract || ':' || phase from deployment_contract where id=1")" = 3:blocked
           for role in api worker; do
             bootstrap_role="$role"
             test "$(docker service inspect --format '{{.Spec.Mode.Replicated.Replicas}}' "${compat}_$role")" = 0
@@ -989,11 +997,11 @@ jobs:
           contract_before=$(psql_compat "select md5(row_to_json(d)::text) from deployment_contract d where id=1")
           : > "$folder/operation-trace"
           if env -u DOMAIN -u STACK PATH="$folder/bin:$PATH" IMAGE="$old_image" ./deploy.sh > refuse-old.log 2>&1; then
-            echo 'Imagem antiga não pode voltar após0018'; exit 1
+            echo 'Imagem antiga não pode voltar após0019'; exit 1
           fi
           test "$(versions)" = "$before"
-          test "$(psql_compat "select minimum_contract || ':' || phase from deployment_contract where id=1")" = 2:blocked
-          # O rollback explícito também recusa1 antes de tag, begin, DDL ou serviço.
+          test "$(psql_compat "select minimum_contract || ':' || phase from deployment_contract where id=1")" = 3:blocked
+          # O rollback explícito também recusa a baseline antes de tag, begin, DDL ou serviço.
           if env -u DOMAIN -u STACK PATH="$folder/bin:$PATH" ROLLBACK=1 IMAGE="$old_image" ./deploy.sh > refuse-old-rollback.log 2>&1; then exit 1; fi
           test "$(versions)" = "$before"
           test "$(psql_compat "select md5(row_to_json(d)::text) from deployment_contract d where id=1")" = "$contract_before"
@@ -1006,8 +1014,39 @@ jobs:
           if not observed or any(operation not in allowed for operation in observed):
               raise SystemExit(1)
           PYNOMUTATE
+          if [ "$old_contract" = 2 ]; then
+            # Exercita os entrypoints reais do binário2 contra o piso3, sem trocar serviços.
+            docker run --rm -i --network "${compat}_internal" --env-file app.env \
+              "$old_identity" python -I - <<'PYREFUSE'
+          def verify_refusal():
+              from fastapi.testclient import TestClient
+              from app.api.main import create_app
+              from app.deployment_contract import DeploymentContractError
+              from app.worker import ready_deps
+
+              def start_api():
+                  with TestClient(create_app()):
+                      pass
+
+              for start in (start_api, ready_deps):
+                  try:
+                      start()
+                  except DeploymentContractError:
+                      continue
+                  raise ValueError
+
+          try:
+              verify_refusal()
+          except Exception:
+              print('{"stage":"contract_two_runtime","result":"failed"}')
+              raise SystemExit(1) from None
+          print('{"stage":"contract_two_runtime","result":"refused","checks":2}')
+          PYREFUSE
+            test "$(versions)" = "$before"
+            test "$(psql_compat "select md5(row_to_json(d)::text) from deployment_contract d where id=1")" = "$contract_before"
+          fi
           env -u DOMAIN -u STACK IMAGE=gerador-planos:ci ./deploy.sh
-          test "$(psql_compat "select minimum_contract || ':' || phase from deployment_contract where id=1")" = 2:verified
+          test "$(psql_compat "select minimum_contract || ':' || phase from deployment_contract where id=1")" = 3:verified
           candidate=$(docker image inspect --format '{{.Id}}' gerador-planos:ci)
           for role in api worker; do
             bootstrap_role="$role"
@@ -1023,23 +1062,40 @@ jobs:
             "$folder/bin/docker" ci-prove-stopped "$container"
           done < old-containers
           probe "$candidate" create
-          # Imagem distinta de mesmo código2: atualização e rollback reais, sem target1 apósDDL.
+          # Imagem distinta de mesmo código3: atualização3→3 e rollback3→3 reais.
           docker build --quiet --tag leadkit:compat-return - <<'DOCKERFILE'
           FROM gerador-planos:ci
-          LABEL ci.continuation-return="compatible-two"
+          LABEL ci.continuation-return="compatible-three"
           DOCKERFILE
+          return_identity=$(docker image inspect --format '{{.Id}}' leadkit:compat-return)
+          test "$return_identity" != "$candidate"
+          before=$(versions)
           env -u DOMAIN -u STACK IMAGE=leadkit:compat-return ./deploy.sh
+          test "$(versions)" != "$before"
+          for role in api worker; do
+            current=$(docker service inspect --format '{{.Spec.TaskTemplate.ContainerSpec.Image}}' "${compat}_$role")
+            previous=$(docker service inspect --format '{{.PreviousSpec.TaskTemplate.ContainerSpec.Image}}' "${compat}_$role")
+            test "$(docker image inspect --format '{{.Id}}' "$current")" = "$return_identity"
+            test "$(docker image inspect --format '{{.Id}}' "$previous")" = "$candidate"
+          done
+          before=$(versions)
           env -u DOMAIN -u STACK ROLLBACK=1 IMAGE="$candidate" ./deploy.sh
-          test "$(psql_compat "select minimum_contract || ':' || phase from deployment_contract where id=1")" = 2:verified
+          test "$(versions)" != "$before"
+          test "$(psql_compat "select minimum_contract || ':' || phase from deployment_contract where id=1")" = 3:verified
           for role in api worker; do
             for spec in Spec PreviousSpec; do
               reference=$(docker service inspect --format "{{.$spec.TaskTemplate.ContainerSpec.Image}}" "${compat}_$role")
               identity=$(docker image inspect --format '{{.Id}}' "$reference")
-              docker run --rm --network none "$identity" python -m app.deployment_contract capability | python3 -c 'import json,sys; assert json.load(sys.stdin) == {"contract":2}'
+              if [ "$spec" = Spec ]; then
+                test "$identity" = "$candidate"
+              else
+                test "$identity" = "$return_identity"
+              fi
+              docker run --rm --network none "$identity" python -m app.deployment_contract capability | python3 -c 'import json,sys; assert json.load(sys.stdin) == {"contract":3}'
               probe "$identity" return
             done
           done
-          echo 'Bootstrap real: saída antesDDL, falha apósDDL, recusa de retorno antigo e recuperação2 comprovadas'
+          echo 'Bootstrap real: saída antesDDL, falha apósDDL, recusa de retorno antigo e recuperação3 comprovadas'
 
       - name: Check that two stack names never share a Traefik name
         run: |
@@ -1395,7 +1451,7 @@ jobs:
                           db = {"task": task, "container": cid, "started": item["started"], "restarts": item["restarts"]}
               if mode in {"verified", "snapshot"}:
                   query = "select minimum_contract || ':' || phase from deployment_contract where id=1"
-                  if docker("exec", db["container"], "sh", "-c", 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "$1"', "sh", query) != "2:verified": raise ValueError
+                  if docker("exec", db["container"], "sh", "-c", 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "$1"', "sh", query) != "3:verified": raise ValueError
               print(json.dumps(sorted(fleet, key=lambda row: (row["role"], row["task"])) if mode == "snapshot" else db, sort_keys=True))
           except Exception:
               print("A frota não confirmou identidade, saúde ou contrato do ensaio.", file=sys.stderr)
@@ -1528,7 +1584,7 @@ jobs:
           test -n "$db_before"
           data_before=$(recovery_data)
           test -n "$data_before"
-          test "$(psql_db "select minimum_contract || ':' || phase from deployment_contract where id=1")" = 2:blocked
+          test "$(psql_db "select minimum_contract || ':' || phase from deployment_contract where id=1")" = 3:blocked
           # O wrapper observa o checkpoint real antes de migrate; não substitui o daemon.
           recovery_bin="$RUNNER_TEMP/recovery-bin"
           mkdir -p "$recovery_bin"
@@ -1558,7 +1614,7 @@ jobs:
           test "$(recovery_data)" = "$data_before"
           assert_image gerador-planos:ci-novo
           assert_return_image gerador-planos:ci-novo
-          test "$(psql_db "select minimum_contract || ':' || phase from deployment_contract where id=1")" = 2:verified
+          test "$(psql_db "select minimum_contract || ':' || phase from deployment_contract where id=1")" = 3:verified
           before=$(running)
           IMAGE=gerador-planos:ci-novo ./deploy.sh
           after=$(running)
@@ -1572,10 +1628,10 @@ jobs:
           test "$(recovery_data)" = "$data_before"
           assert_image gerador-planos:ci-novo
           assert_return_image gerador-planos:ci-novo
-          test "$(psql_db "select minimum_contract || ':' || phase from deployment_contract where id=1")" = 2:verified
+          test "$(psql_db "select minimum_contract || ':' || phase from deployment_contract where id=1")" = 3:verified
 
           echo "::group::4. volta para a versão anterior com o banco à frente da imagem"
-          # A recuperação terminou com frota saudável, retorno normalizado e contrato2 verificado.
+          # A recuperação terminou com frota saudável, retorno normalizado e contrato3 verificado.
           start_probe
           # Status/begin aceitam o piso compatível, mas migrate recusa a revisão desconhecida.
           # Os serviços não mudam e o gate fica bloqueado; o retorno explícito não roda migration.
@@ -1592,7 +1648,7 @@ jobs:
           grep -F 'revisão incompatível' "$RUNNER_TEMP/back-sem-rollback.log"
           grep -F 'a imagem não foi atualizada' "$RUNNER_TEMP/back-sem-rollback.log"
           test "$(versions)" = "$before"
-          test "$(psql_db "select minimum_contract || ':' || phase from deployment_contract where id=1")" = 2:blocked
+          test "$(psql_db "select minimum_contract || ':' || phase from deployment_contract where id=1")" = 3:blocked
           ROLLBACK=1 IMAGE=gerador-planos:ci ./deploy.sh > "$RUNNER_TEMP/back.log" 2>&1 || { cat "$RUNNER_TEMP/back.log"; exit 1; }
           cat "$RUNNER_TEMP/back.log"
           grep -F 'sem migrations' "$RUNNER_TEMP/back.log"

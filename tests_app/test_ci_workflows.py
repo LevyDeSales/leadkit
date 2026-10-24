@@ -409,8 +409,8 @@ def test_swarm_rehearsal_accepts_the_real_guard_refusal(request, tmp_path: Path)
     database_url = engine.url.render_as_string(hide_password=False)
     env = {
         "STUB_NETWORK": "1",
-        "STUB_CONTRACT_FLOOR": "2",
-        "STUB_TARGET_CONTRACT": "2",
+        "STUB_CONTRACT_FLOOR": "3",
+        "STUB_TARGET_CONTRACT": "3",
         "GUARD_PYTHON": sys.executable,
         "GUARD_ROOT": str(ROOT),
         "DATABASE_URL": database_url,
@@ -427,7 +427,7 @@ def test_swarm_rehearsal_accepts_the_real_guard_refusal(request, tmp_path: Path)
         connection.exec_driver_sql("UPDATE alembic_version SET version_num = 'ci_futura'")
         connection.execute(
             DeploymentContract.__table__.update().values(
-                minimum_contract=2, phase="verified", epoch=uuid4(), attested_at=sa.func.now()
+                minimum_contract=3, phase="verified", epoch=uuid4(), attested_at=sa.func.now()
             )
         )
     try:
@@ -446,7 +446,7 @@ def test_swarm_rehearsal_accepts_the_real_guard_refusal(request, tmp_path: Path)
                 connection.exec_driver_sql(
                     "select minimum_contract || ':' || phase from deployment_contract where id=1"
                 ).scalar_one()
-                == "2:blocked"
+                == "3:blocked"
             )
         log = tmp_path / "back-sem-rollback.log"
         log.write_text(refused.stdout + refused.stderr)
@@ -517,7 +517,8 @@ def test_historical_migration_failure_reports_only_safe_category_and_keeps_failu
     rehearsal = next(
         step["run"]
         for step in steps_of("swarm")
-        if step.get("name") == "Rehearse real pre-projection bootstrap and forward recovery"
+        if step.get("name")
+        == "Rehearse historical bootstrap and drained adoption to contract three"
     )
     start = rehearsal.index('docker run --rm --network "${compat}_internal"')
     command = rehearsal[rehearsal.rfind("\n", 0, start) + 1 :]
@@ -584,7 +585,8 @@ def test_historical_source_is_readable_by_image_user_before_build_without_openin
     rehearsal = next(
         step["run"]
         for step in steps_of("swarm")
-        if step.get("name") == "Rehearse real pre-projection bootstrap and forward recovery"
+        if step.get("name")
+        == "Rehearse historical bootstrap and drained adoption to contract three"
     )
     prefix = rehearsal[: rehearsal.index('cp "$CONF/stack.yaml"')]
     probe = (
@@ -640,7 +642,8 @@ def test_early_adoption_refusal_is_diagnosed_without_accepting_it_as_post_ddl_fa
     rehearsal = next(
         step["run"]
         for step in steps_of("swarm")
-        if step.get("name") == "Rehearse real pre-projection bootstrap and forward recovery"
+        if step.get("name")
+        == "Rehearse historical bootstrap and drained adoption to contract three"
     )
     wrapper_folder = server.folder / "bin"
     wrapper_folder.mkdir()
@@ -685,7 +688,8 @@ def test_bootstrap_err_trap_keeps_exit_cleanup_and_only_reports_safe_location(
     rehearsal = next(
         step["run"]
         for step in steps_of("swarm")
-        if step.get("name") == "Rehearse real pre-projection bootstrap and forward recovery"
+        if step.get("name")
+        == "Rehearse historical bootstrap and drained adoption to contract three"
     )
     prefix = rehearsal[: rehearsal.index('case "${CI_ADOPTION_BASELINE')]
     cleanup = rehearsal[rehearsal.index("cleanup_compat()") :]
@@ -758,7 +762,8 @@ def test_docker_wrapper_records_only_closed_operation_and_preserves_failure(
     rehearsal = next(
         step["run"]
         for step in steps_of("swarm")
-        if step.get("name") == "Rehearse real pre-projection bootstrap and forward recovery"
+        if step.get("name")
+        == "Rehearse historical bootstrap and drained adoption to contract three"
     )
     wrapper = tmp_path / "docker"
     wrapper.write_text(rehearsal.split("cat > bin/docker <<'SH'\n", 1)[1].split("\nSH\n", 1)[0])
@@ -794,7 +799,8 @@ def test_bootstrap_evidence_never_publishes_private_helper_logs(tmp_path: Path) 
     rehearsal = next(
         step["run"]
         for step in steps_of("swarm")
-        if step.get("name") == "Rehearse real pre-projection bootstrap and forward recovery"
+        if step.get("name")
+        == "Rehearse historical bootstrap and drained adoption to contract three"
     )
     first = rehearsal[rehearsal.index("test -s before-ddl") :]
     first = first[: first.index('test "$(psql_compat')]
@@ -809,7 +815,7 @@ def test_bootstrap_evidence_never_publishes_private_helper_logs(tmp_path: Path) 
             "bash",
             "-e",
             "-c",
-            "versions() { echo synthetic; }; before=synthetic; psql_compat() { echo 2:blocked; };\n"
+            "versions() { echo synthetic; }; before=synthetic; psql_compat() { echo 3:blocked; };\n"
             + first
             + refused,
         ],
@@ -832,7 +838,8 @@ def test_first_adoption_report_validates_operation_before_emitting_it(
     rehearsal = next(
         step["run"]
         for step in steps_of("swarm")
-        if step.get("name") == "Rehearse real pre-projection bootstrap and forward recovery"
+        if step.get("name")
+        == "Rehearse historical bootstrap and drained adoption to contract three"
     )
     parser = rehearsal.split("python3 - \"$adoption_exit\" <<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
     (tmp_path / "first-adoption.log").write_text(
@@ -863,7 +870,8 @@ def test_migration_wrapper_keeps_controlled_post_commit_failure(tmp_path: Path) 
     rehearsal = next(
         step["run"]
         for step in steps_of("swarm")
-        if step.get("name") == "Rehearse real pre-projection bootstrap and forward recovery"
+        if step.get("name")
+        == "Rehearse historical bootstrap and drained adoption to contract three"
     )
     wrapper = tmp_path / "docker"
     wrapper.write_text(rehearsal.split("cat > bin/docker <<'SH'\n", 1)[1].split("\nSH\n", 1)[0])
@@ -919,7 +927,8 @@ def test_bootstrap_proves_old_container_exit_without_requiring_retention(
     rehearsal = next(
         step["run"]
         for step in steps_of("swarm")
-        if step.get("name") == "Rehearse real pre-projection bootstrap and forward recovery"
+        if step.get("name")
+        == "Rehearse historical bootstrap and drained adoption to contract three"
     )
     wrapper = server.folder / "wrapper-docker"
     wrapper.write_text(rehearsal.split("cat > bin/docker <<'SH'\n", 1)[1].split("\nSH\n", 1)[0])
@@ -1108,7 +1117,7 @@ elif args[:2]==['inspect','--type']:
     row=next((row for role in ('db','api','worker') for row in active(role) if identity==row[0 if kind=='task' else 1]),None)
     if row is None: sys.stderr.write('SYNTHETIC_PRIVATE_DAEMON_ERROR'); raise SystemExit(1)
     print(row[1] if kind=='task' else json.dumps(row[2]))
-elif args[0]=='exec': print('2:blocked' if fault=='adoption_contract' else '2:verified')
+elif args[0]=='exec': print('3:blocked' if fault=='adoption_contract' else '3:verified')
 else:
     sys.stderr.write('SYNTHETIC_PRIVATE_DAEMON_ERROR'); raise SystemExit(2)
 """
@@ -1286,11 +1295,11 @@ def test_preflight_and_migration_evidence_require_distinct_proofs(
             **os.environ,
             "RUNNER_TEMP": str(tmp_path),
             "OBSERVED_VERSION": "changed" if fault == "changed_service" else "original",
-            "OBSERVED_CONTRACT": "2:verified"
+            "OBSERVED_CONTRACT": "3:verified"
             if fault == "verified"
             else "0:blocked"
             if fault == "wrong_floor"
-            else "2:blocked",
+            else "3:blocked",
         },
     )
     assert result.returncode == expected, result.stdout + result.stderr
@@ -1470,7 +1479,8 @@ def test_post_ddl_rehearsal_accepts_only_the_composed_schema_and_blocked_floor(t
     rehearsal = next(
         step["run"]
         for step in steps_of("swarm")
-        if step.get("name") == "Rehearse real pre-projection bootstrap and forward recovery"
+        if step.get("name")
+        == "Rehearse historical bootstrap and drained adoption to contract three"
     )
     assertions = rehearsal.split("test -s before-ddl\n", 1)[1].split(
         "for role in api worker; do", 1
@@ -1480,8 +1490,8 @@ def test_post_ddl_rehearsal_accepts_only_the_composed_schema_and_blocked_floor(t
     script = (
         """psql_compat() {
       case "$1" in
-        *version_num*) echo 0018_journey_events ;;
-        *) echo 2:blocked ;;
+        *version_num*) echo 0019_persisted_webhook_v2 ;;
+        *) echo 3:blocked ;;
       esac
     }
 """
@@ -1495,14 +1505,21 @@ def test_post_ddl_rehearsal_accepts_only_the_composed_schema_and_blocked_floor(t
 
 def test_swarm_rehearses_both_initial_adoption_and_the_real_public_contract_one_baseline():
     swarm = load("deploy-image.yml")["jobs"]["swarm"]
-    assert swarm["strategy"]["matrix"]["adoption_baseline"] == ["pre-projection", "contract-one"]
+    assert swarm["strategy"]["matrix"]["adoption_baseline"] == [
+        "pre-projection",
+        "contract-one",
+        "contract-two",
+    ]
     assert swarm["strategy"]["fail-fast"] is False
     rehearsal = next(
         step["run"]
         for step in steps_of("swarm")
-        if step.get("name") == "Rehearse real pre-projection bootstrap and forward recovery"
+        if step.get("name")
+        == "Rehearse historical bootstrap and drained adoption to contract three"
     )
     assert "365f8bf2dc94dbe8894020ed5198fe0142a36ab2" in rehearsal
+    assert "ecc009f501d157e3ee246d916e8a13b0cb69e629" in rehearsal
+    assert "old_schema=0018_journey_events" in rehearsal
     assert "old_schema=0016_plan_audiences" in rehearsal
     assert "old_schema=0015_capture_delivery" in rehearsal
 
@@ -1523,8 +1540,11 @@ def test_composed_image_probe_is_isolated_and_checks_real_http_capabilities():
     assert 'pdf.content.startswith(b"%PDF")' in probe
     assert '"replay"] == (phase == "return")' in probe
     assert 'body["release_id"] == state["release_id"]' in probe
-    assert 'phase == "blocked"' in probe and "assert_contract(session, required=2)" in probe
-    assert 'validate_database(session.connection(), SIGNATURES) == "0018_journey_events"' in probe
+    assert 'phase == "blocked"' in probe and "assert_contract(session, required=3)" in probe
+    assert (
+        'validate_database(session.connection(), SIGNATURES) == "0019_persisted_webhook_v2"'
+        in probe
+    )
 
 
 def test_composed_probe_creates_and_replays_both_capabilities_over_http(database_url, tmp_path):
@@ -1551,6 +1571,12 @@ def test_composed_probe_creates_and_replays_both_capabilities_over_http(database
     probe = probe.replace('"/app"', repr(str(ROOT)))
     probe = probe.replace('"/proof"', repr(str(tmp_path)))
     probe = probe.replace("18080", str(port))
+    probe = probe.replace(
+        "except Exception:\n",
+        "except Exception as error:\n    import traceback\n    Path("
+        + repr(str(tmp_path / "probe-diagnostic.json"))
+        + ").write_text(json.dumps([{'line':frame.lineno, 'name':frame.name} for frame in traceback.extract_tb(error.__traceback__)]))\n",
+    )
     script = tmp_path / "probe.py"
     script.write_text(probe)
     script.chmod(0o600)
@@ -1569,7 +1595,9 @@ def test_composed_probe_creates_and_replays_both_capabilities_over_http(database
                 with sessions.begin() as session:
                     epoch = uuid4()
                     deployment_contract.begin_rollout(session, epoch=epoch)
-                    deployment_contract.attest_rollout(session, epoch=epoch, evidence=evidence())
+                    deployment_contract.attest_rollout(
+                        session, epoch=epoch, evidence=evidence(contract=3)
+                    )
             result = subprocess.run(
                 [sys.executable, str(script), phase],
                 cwd=ROOT,
@@ -1608,7 +1636,8 @@ def test_return_one_refusal_audits_operations_before_any_mutation(tmp_path, oper
     rehearsal = next(
         step["run"]
         for step in steps_of("swarm")
-        if step.get("name") == "Rehearse real pre-projection bootstrap and forward recovery"
+        if step.get("name")
+        == "Rehearse historical bootstrap and drained adoption to contract three"
     )
     audit = rehearsal.split("<<'PYNOMUTATE'\n", 1)[1].split("\nPYNOMUTATE", 1)[0]
     trace = tmp_path / "trace"
@@ -1749,7 +1778,8 @@ elif args[:2]==['volume','rm']:
         rehearsal = next(
             s["run"]
             for s in steps_of("swarm")
-            if s.get("name") == "Rehearse real pre-projection bootstrap and forward recovery"
+            if s.get("name")
+            == "Rehearse historical bootstrap and drained adoption to contract three"
         )
         script = 'folder="$RUNNER_TEMP/swarm-compat"; compat=leadkit-compat\n'
         script += rehearsal[
@@ -1891,7 +1921,7 @@ elif a[:2]==['inspect','--type']:
     print(hashlib.sha256(a[-1].encode()).hexdigest() if a[2]=='task' else ('unhealthy' if fault=='unhealthy' else 'healthy') if 'Health.Status' in fmt else ('true:running' if fault=='still_running' else 'false:exited') if 'State.Running' in fmt else identity)
 elif a[:1]==['ps']: print('db-container' if 'gerador-planos_db' in ' '.join(a) else 'retired-container')
 elif a[:1]==['exec']:
-    print(('changed-data' if s['deploys'] and fault=='data_changed' else 'stable-data') if 'md5(' in a[-1] else '2:blocked' if not s['deploys'] or fault=='blocked' else '2:verified')
+    print(('changed-data' if s['deploys'] and fault=='data_changed' else 'stable-data') if 'md5(' in a[-1] else '3:blocked' if not s['deploys'] or fault=='blocked' else '3:verified')
 elif a[:1]==['run']: pass
 else: raise SystemExit(2)
 """

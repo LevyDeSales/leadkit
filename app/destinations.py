@@ -32,6 +32,7 @@ from app.destination_purposes import (
     selected,
 )
 from app.models import AuditLog, WebhookDestination, WebhookEnvSeed, utcnow
+from app.persisted_webhook import V2_SELECTION
 from app.settings import Settings
 
 if TYPE_CHECKING:
@@ -384,7 +385,7 @@ def save(
     if events is not None and (
         not events
         or len(set(events)) != len(events)
-        or set(events) - {"plano.concluido", "submissao.persistida", "plano.liberado"}
+        or set(events) - {"plano.concluido", "submissao.persistida", "plano.liberado", V2_SELECTION}
     ):
         raise InvalidEvents(
             "Selecione os eventos aceitos: plano.concluido, plano.liberado e/ou submissao.persistida."
@@ -407,6 +408,20 @@ def save(
     effective_events = (
         events if events is not None else (current.events if current else ["plano.concluido"])
     )
+    if V2_SELECTION in effective_events:
+        from app.deployment_contract import DeploymentContractError, assert_contract
+
+        if form_slug is None or "submissao.persistida" in effective_events:
+            raise InvalidEvents(
+                "Escolha respostas após salvar somente no destino do formulário, sem a seleção legada de captura."
+            )
+        require_internal(chosen, receiver="O envio de respostas")
+        try:
+            assert_contract(session, required=3)
+        except DeploymentContractError:
+            raise InvalidEvents(
+                "A atualização ainda não permite enviar respostas após salvar. Aguarde a conclusão."
+            ) from None
     if "plano.liberado" in effective_events:
         from app.deployment_contract import assert_contract
 
@@ -478,6 +493,28 @@ def sample_event(event_id: str, form_slug: str | None) -> dict[str, Any]:
     }
 
 
+def _test_generation(session: Session, deps: Deps, form_slug: str) -> str:
+    """Permite testar antes da primeira publicação sem alterar o rascunho ou publicar."""
+    from app.forms import UnknownForm
+    from app.forms.definition import DefinitionError, compile_definition
+    from app.forms.drafts import load
+
+    try:
+        return deps.forms.current(form_slug).generation
+    except UnknownForm:
+        draft = load(session, form_slug)
+        if draft is not None:
+            try:
+                return compile_definition(
+                    draft.document, version_number=draft.next_number
+                ).generation
+            except DefinitionError:
+                pass
+        raise InvalidEvents(
+            "Revise o rascunho do formulário antes de testar o envio de respostas; não é necessário publicar."
+        ) from None
+
+
 def send_test(
     deps: Deps, form_slug: str | None, *, actor: str, event: str = TEST_EVENT
 ) -> Probe | None:
@@ -505,11 +542,44 @@ def send_test(
         secret = deps.cipher.open(row.secret_sealed)
         event_id = str(uuid.uuid4())
         payload = sample_event(event_id, form_slug)
-        if event == "submissao.persistida":
+        if event == V2_SELECTION:
+            from app.deployment_contract import DeploymentContractError, assert_contract
+            from app.models import Submission, WebhookIssuer
+            from app.persisted_webhook import EVENT, build_payload
+
+            require_internal(stored.purpose, receiver="O envio de respostas")
+            if form_slug is None or V2_SELECTION not in stored.events:
+                raise UnsupportedEvent
+            try:
+                assert_contract(session, required=3)
+            except DeploymentContractError:
+                raise InvalidPurpose(
+                    "A atualização ainda não habilitou o envio de respostas."
+                ) from None
+            synthetic = Submission(
+                id=uuid.uuid4(),
+                form_slug=form_slug,
+                form_version="teste",
+                form_version_number=0,
+                created_at=utcnow(),
+                answers={},
+                consent={},
+            )
+            payload = build_payload(
+                delivery_id=uuid.UUID(event_id),
+                issuer=session.get_one(WebhookIssuer, 1).namespace,
+                submission=synthetic,
+                generation=_test_generation(session, deps, form_slug),
+                destination_id=stored.id,
+                destination_revision=stored.version,
+                correlation=None,
+            )
+            payload["test"] = True
+            event = EVENT
+        elif event == "submissao.persistida":
             require_internal(stored.purpose, receiver="O webhook de captura")
-        if event == "submissao.persistida" and event not in stored.events:
-            raise UnsupportedEvent
-        if event == "submissao.persistida":
+            if event not in stored.events:
+                raise UnsupportedEvent
             payload = {
                 "event": event,
                 "event_id": event_id,

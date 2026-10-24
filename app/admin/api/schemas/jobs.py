@@ -21,6 +21,7 @@ from pydantic import AwareDatetime, BaseModel, Field, StringConstraints, model_s
 
 from app.admin.actions.jobs import REASON_MAX_LENGTH, REASON_MIN_LENGTH
 from app.admin.api.common import ConfirmedInput, Page, utc
+from app.admin.api.schemas.capture_deliveries import CaptureDeliveryState
 from app.admin.queries import jobs as queries
 from app.pdf_availability import PdfState, availability_dict
 
@@ -482,6 +483,7 @@ def _sync_of(sync: queries.SyncState) -> dict[str, Any]:
 def _state_fields(state: queries.JobState, run_url_template: str | None) -> dict[str, Any]:
     """Os campos de `JobState`, o estado do pedido, sem nada da lead."""
     return {
+        "persisted_deliveries": state.persisted_deliveries,
         "current_pdf": availability_dict(state.current_pdf),
         "public_id": state.public_id,
         "release": ReleaseStatus(
@@ -566,6 +568,10 @@ class ReleaseStatus(BaseModel):
 
 
 class JobState(BaseModel):
+    persisted_deliveries: list[CaptureDeliveryState] = Field(
+        default_factory=list,
+        description="Sincronização das respostas salvas, independente da geração e liberação do PDF.",
+    )
     release: ReleaseStatus
 
     """O estado de um pedido, sem nada que diga quem é a lead."""

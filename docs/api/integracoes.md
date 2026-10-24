@@ -53,3 +53,40 @@ Veja a [matriz de cobertura](cobertura.md#central-de-integrações) e o [OpenAPI
 A [jornada externa](jornada.md) recebe declarações autenticadas em um contrato separado de
 resolução de encaminhamento e da administração. Sua fonte e credencial não autorizam transportes,
 liberação de plano ou acesso às respostas. O esquema de integrações documenta ambos os serviços.
+# Respostas após salvar: contrato opt-in
+
+Em `save_destination`, configure o destino próprio de um formulário com `purpose: "internal"`
+e `events: ["submissao.persistida.v2"]`, `confirm: true` e `expected_version` observado.
+O seletor é exclusivo com `submissao.persistida`; o default PDF e o envelope legado não mudam
+quando a opção está ausente. PDF pode selecionar somente esse evento ou selecionar também
+`plano.concluido` explicitamente. Baserow conserva seus perfis existentes.
+
+O seletor de configuração não muda o evento no transporte: `X-MCC-Event` e `event` continuam
+`submissao.persistida`. O envelope tem `schema_version: 2`, `event_id`, `issuer`, `occurred_at`,
+`form` (slug, versão textual e numérica), `submission` (id e submitted_at), `generation`,
+`delivery_authorization` (destination_id, revision, purpose interna), `answers` e `consent`.
+`correlation`, quando presente, contém somente reference_id, receiver_id e receiver_revision
+históricos; não concede acesso nem amplia `correlation.v1`.
+
+`issuer` é `leadkit:<UUID>` persistido uma vez no banco, conservado em backup/restore.
+O diagnóstico é identificado por `(issuer, submission.id)`; o transporte, por `(issuer, event_id)`.
+Nome/e-mail não são chaves. Os instantes com timezone representam o registro da submissão,
+não o clique ou COMMIT literal. Consentimento é o JSON original: registros antigos não ganham
+método/origem inventados. Não há link, token ou estado atual do PDF neste envelope.
+
+O snapshot é fixado com submissão, Job/recibo e encaminhamento na mesma transação. O transporte
+reutiliza HMAC-SHA256 sobre timestamp e bytes originais, `X-MCC-Signature: v1=<hex>` e
+`Idempotency-Key: <event_id>`. Retry conserva ID e bytes; timestamp/assinatura de transporte podem
+mudar. O receptor deve autenticar antes de gravar, deduplicar duravelmente por emissor/evento,
+conflitar o mesmo ID com conteúdo divergente e responder2xx somente após commit do recibo/efeito.
+Timeout depois do aceite pode causar outra requisição: a garantia demonstrável é um efeito lógico
+deduplicado, não uma única execução de rede. A prova sintética local não afirma efeito Alltius.
+
+Snapshots têm a mesma cascata de exclusão da submissão, sem prazo próprio, e não são carregados
+nas consultas de estado, logs ou Hatchet. Pausa, mudança de revisão, remoção e retenção não
+redirecionam a intenção nem recriam dados. Remover o destino apaga seu histórico local de entregas
+por cascata, com contagens apresentadas antes da confirmação; respostas permanecem até sua retenção.
+O teste do destino pode enviar envelope sintético da seleção atual, marcado `test:true`, sem criar
+submissão real. Antes da primeira publicação, usa a geração do rascunho canônico válido; rascunho
+inválido pede revisão com erro controlado, sem exigir publicação para testar a conexão. Adoção
+exige piso3 e [roteiro de compatibilidade](../../deploy/swarm/README.md).
