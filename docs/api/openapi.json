@@ -11580,7 +11580,7 @@
             "type": "string"
           },
           "secret": {
-            "description": "O segredo novo do destino. **Só existe nesta resposta**: ponha-o no receptor agora, porque o antigo já não vale. Novos envios usam este segredo; entregas PDF fixadas exigem repetir explicitamente com a revisão atual.",
+            "description": "O segredo novo do destino. **Só existe nesta resposta**: ponha-o no receptor agora, porque o antigo já não vale. Novos envios usam este segredo; entregas PDF fixadas exigem repetir explicitamente com a revisão atual. Intenções de respostas após salvar conservam a revisão original e não podem ser repetidas com o segredo ou a revisão novos.",
             "examples": [
               "<segredo-mostrado-uma-vez>"
             ],
@@ -15327,7 +15327,7 @@
     },
     "/destinations/{scope}/rotate-secret": {
       "post": {
-        "description": "Gera um segredo novo para o destino do escopo `scope` (`default` ou o endereço de um formulário). **O novo aparece só nesta resposta** (`secret`, com `Cache-Control: no-store`): guarde-o e ponha-o no receptor agora. **O antigo deixa de valer na hora**: o envio novo sai assinado com o novo. Entregas PDF fixadas antes da troca exigem repetição explícita com a revisão atual, sem mudar a finalidade; um receptor que ainda confere com o antigo passa a recusar os eventos. É também o que repara um destino cujo segredo não abre com a chave atual (`secret_unreadable`). `expected_version` é a `version` que `get_destination` devolveu; se mudou, `409 version_conflict` e o segredo não muda. Uma chamada repetida, com a versão de antes, é `409 state_conflict` e não repete o segredo novo: se você o perdeu, gere outro com a versão de agora. Por isso a operação é marcada e exige `\"confirm\": true` (sem ele, `422 confirmation_required` e nada acontece). A troca fica na auditoria em nome da chave (`webhook_destination.rotate_secret`), sem o segredo. Sem `WEBHOOK_ENCRYPTION_KEY` no servidor, é `409 state_conflict`.",
+        "description": "Gera um segredo novo para o destino do escopo `scope` (`default` ou o endereço de um formulário). **O novo aparece só nesta resposta** (`secret`, com `Cache-Control: no-store`): guarde-o e ponha-o no receptor agora. **O antigo deixa de valer na hora**: o envio novo sai assinado com o novo. Entregas PDF fixadas antes da troca exigem repetição explícita com a revisão atual, sem mudar a finalidade. Intenções de respostas após salvar conservam a revisão original e não usam o segredo ou a revisão novos. Um receptor que ainda confere com o antigo passa a recusar os eventos. É também o que repara um destino cujo segredo não abre com a chave atual (`secret_unreadable`). `expected_version` é a `version` que `get_destination` devolveu; se mudou, `409 version_conflict` e o segredo não muda. Uma chamada repetida, com a versão de antes, é `409 state_conflict` e não repete o segredo novo: se você o perdeu, gere outro com a versão de agora. Por isso a operação é marcada e exige `\"confirm\": true` (sem ele, `422 confirmation_required` e nada acontece). A troca fica na auditoria em nome da chave (`webhook_destination.rotate_secret`), sem o segredo. Sem `WEBHOOK_ENCRYPTION_KEY` no servidor, é `409 state_conflict`.",
         "operationId": "rotate_destination_secret",
         "parameters": [
           {

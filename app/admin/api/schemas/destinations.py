@@ -336,7 +336,8 @@ class RotatedDestination(Destination):
     secret: str = Field(
         description="O segredo novo do destino. **Só existe nesta resposta**: ponha-o no receptor "
         "agora, porque o antigo já não vale. Novos envios usam este segredo; entregas PDF fixadas "
-        "exigem repetir explicitamente com a revisão atual.",
+        "exigem repetir explicitamente com a revisão atual. Intenções de respostas após salvar conservam "
+        "a revisão original e não podem ser repetidas com o segredo ou a revisão novos.",
         examples=["<segredo-mostrado-uma-vez>"],
         repr=False,
     )

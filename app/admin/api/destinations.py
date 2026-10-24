@@ -310,7 +310,8 @@ def save_destination(
 
 ROTATE_TEXT = (
     "Trocar o segredo faz o atual deixar de valer na hora: o receptor que ainda confere a assinatura "
-    "de cada evento com ele passa a recusá-los até receber o novo."
+    "de cada evento com ele passa a recusá-los até receber o novo. Intenções de respostas após salvar "
+    "conservam a revisão original e não podem ser reenviadas com o novo segredo ou revisão."
 )
 
 
@@ -335,7 +336,8 @@ ROTATE_TEXT = (
         "formulário). **O novo aparece só nesta resposta** (`secret`, com `Cache-Control: "
         "no-store`): guarde-o e ponha-o no receptor agora. **O antigo deixa de valer na hora**: o "
         "envio novo sai assinado com o novo. Entregas PDF fixadas antes da troca exigem repetição "
-        "explícita com a revisão atual, sem mudar a finalidade; um "
+        "explícita com a revisão atual, sem mudar a finalidade. Intenções de respostas após salvar "
+        "conservam a revisão original e não usam o segredo ou a revisão novos. Um "
         "receptor que ainda confere com o antigo passa a recusar os eventos. É também o que repara um "
         "destino cujo segredo não abre com a chave atual (`secret_unreadable`). `expected_version` é a "
         "`version` que `get_destination` devolveu; se mudou, `409 version_conflict` e o segredo não "
