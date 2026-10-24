@@ -17,10 +17,11 @@ from __future__ import annotations
 import uuid
 from typing import Annotated, Any, Literal
 
-from pydantic import AwareDatetime, BaseModel, Field, StringConstraints
+from pydantic import AwareDatetime, BaseModel, Field, StringConstraints, model_serializer
 
 from app.admin.actions.jobs import REASON_MAX_LENGTH, REASON_MIN_LENGTH
 from app.admin.api.common import ConfirmedInput, Page, utc
+from app.admin.api.schemas.capture_deliveries import CaptureDeliveryState
 from app.admin.queries import jobs as queries
 from app.pdf_availability import PdfState, availability_dict
 
@@ -302,13 +303,34 @@ class JobConsent(BaseModel):
     """Os consentimentos que a lead deu."""
 
     privacy_accepted_at: AwareDatetime | None = Field(
-        description="Quando aceitou o tratamento das respostas para gerar o plano."
+        description="Quando o servidor aceitou o consentimento pela caixa ou pela ação de enviar; não comprova horário de clique humano."
     )
     text_version: str | None = Field(
         description="A versão do texto de consentimento que ela viu.", examples=["2027-01-v3"]
     )
     marketing_email: bool = Field(description="Autorizou novidades por e-mail.")
     marketing_whatsapp: bool = Field(description="Autorizou novidades por WhatsApp.")
+    evidence_schema: Literal[2] | None = Field(
+        default=None, description="Esquema da evidência; ausente no histórico legado."
+    )
+    method: Literal["checkbox", "submit"] | None = Field(
+        default=None, description="Método registrado, sem inferir caixa em históricos."
+    )
+    action: Literal["confirm", "submit"] | None = Field(
+        default=None, description="Ação declarada aceita pelo servidor."
+    )
+    source: Literal["public_html", "public_api_declaration"] | None = Field(
+        default=None, description="Adaptador que recebeu a declaração; não certifica gesto humano."
+    )
+
+    @model_serializer(mode="wrap")
+    def recorded_details(self, handler):
+        found = handler(self)
+        return {
+            key: value
+            for key, value in found.items()
+            if key not in {"evidence_schema", "method", "action", "source"} or value is not None
+        }
 
 
 class JobPlan(BaseModel):
@@ -391,6 +413,10 @@ class JobLeadData(BaseModel):
                 text_version=lead.consent.text_version,
                 marketing_email=lead.consent.marketing_email,
                 marketing_whatsapp=lead.consent.marketing_whatsapp,
+                evidence_schema=lead.consent.evidence_schema,
+                method=lead.consent.method,
+                action=lead.consent.action,
+                source=lead.consent.source,
             ),
             plan=JobPlan(
                 version=lead.plan.version,
@@ -457,6 +483,7 @@ def _sync_of(sync: queries.SyncState) -> dict[str, Any]:
 def _state_fields(state: queries.JobState, run_url_template: str | None) -> dict[str, Any]:
     """Os campos de `JobState`, o estado do pedido, sem nada da lead."""
     return {
+        "persisted_deliveries": state.persisted_deliveries,
         "current_pdf": availability_dict(state.current_pdf),
         "public_id": state.public_id,
         "release": ReleaseStatus(
@@ -541,6 +568,10 @@ class ReleaseStatus(BaseModel):
 
 
 class JobState(BaseModel):
+    persisted_deliveries: list[CaptureDeliveryState] = Field(
+        default_factory=list,
+        description="Sincronização das respostas salvas, independente da geração e liberação do PDF.",
+    )
     release: ReleaseStatus
 
     """O estado de um pedido, sem nada que diga quem é a lead."""

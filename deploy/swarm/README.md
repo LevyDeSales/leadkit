@@ -31,7 +31,7 @@ A migration `0016_plan_audiences` introduz o piso1 e deixa participante bloquead
 não conhece audiência e pode enviar o plano integral. Portanto, na primeira adoção:
 
 1. O helper comprova a capacidade conhecida da imagem pelo ID `sha256`, sem rede/env. A distribuição
-   composta atual anuncia2; uma instalação nova chega ao piso2 ao aplicar toda a cadeia.
+   atual anuncia3; uma instalação nova chega ao piso3 ao aplicar toda a cadeia.
 2. Escala **API e worker para zero**, aguarda o fim real dos processos, inclusive tasks em saída,
    e confirma que não há container antigo executando. Atualiza os serviços ainda pausados para
    que também a **PreviousSpec tenha zero réplicas antes do DDL**. A pausa fica no Swarm se o
@@ -101,7 +101,7 @@ python -m app.deployment_contract begin
 python -m app.deployment_contract attest
 ```
 
-`capability` funciona sem configuração/rede e devolve `{"contract":2}` na imagem composta atual. Os outros comandos leem
+`capability` funciona sem configuração/rede e devolve `{"contract":3}` na imagem atual. Os outros comandos leem
 somente `DATABASE_URL` do ambiente; no roteiro, o Docker a recebe pelo `--env-file app.env`, sem
 valor em argv/log. `status` é somente leitura e devolve `minimum_contract`, `phase` e `epoch`.
 Tabela ausente é bootstrap0; tabela presente sem singleton é piso conservador1 e bloqueio.
@@ -216,3 +216,24 @@ como retorno automático ativo. Falha antes da atestação mantém2/blocked, com
 Depois da atestação, retorno usa imagem composta compatível2 e revalida ambas as funcionalidades.
 Atualizações2→2 com Current/Previous compatíveis preservam rolling. Nenhum /readyz substitui
 schema, piso, prova de saída ou atestação. Esta documentação não afirma ensaio de uma instalação.
+
+
+### Adoção do envio de respostas com capacidade3
+
+A migration `0019_persisted_webhook_v2`, após `0018_journey_events`, acrescenta snapshot e
+emissor persistido e fixa piso3, fase bloqueada e evidência/epoch vazios no mesmo commit.
+Antes do DDL, o helper existente deve pausar e comprovar a saída das escritoras API/worker2;
+o guard de startup não encerra processos já vivos. O intake PDF2 não cria essa intenção e o
+retry2 pode trocar sua revisão, portanto não basta esconder a opção na interface.
+
+O mecanismo existente compara capacidade/piso, drena quando necessário, normaliza Current e
+Previous com imagens compatíveis3, inicia epoch e atesta ambas as funções antes de permitir
+selecionar a nova entrega em formulário sintético. O seletor exclusivo também faz o dispatcher
+antigo recusar v2, sem degradar seu envelope. Nenhuma integração real é ativada pela atualização.
+
+Após o commit0019, retorno somente para imagem3 compatível, inclusive rollback automático e
+PreviousSpec. Desligar a opção não reduz o piso nem torna imagem2 segura. Atualizações3→3 e
+retorno3→3 reutilizam o fluxo atual; a primeira adoção2→3 exige pausa e não promete zero downtime.
+Preserve issuer e snapshots no backup/restore; não restaure dump antigo para contornar o piso.
+Os ensaios CI cobrem baselines históricas0/1, baseline2 fixada e capacidade3, com falha apósDDL,
+recuperação, confirmação de frota e recusa de retorno incompatível.

@@ -496,6 +496,7 @@ class JobDetail:
     deliveries: list[DeliveryView]
     syncs: list[SyncView]
     timeline: list[Attempt]
+    persisted_deliveries: tuple[dict[str, Any], ...] = ()
 
 
 def job_detail(
@@ -581,6 +582,7 @@ def job_detail(
             for pdf in state.pdfs
         ],
         deliveries=delivery_views,
+        persisted_deliveries=state.persisted_deliveries,
         syncs=syncs,
         timeline=_timeline(state, delivery_views, notes),
     )
@@ -631,8 +633,16 @@ def _consents(consent: job_queries.Consent) -> list[ConsentView]:
     version = consent.text_version if consent.text_version is not None else "?"
     accepted_at = moment(consent.privacy_at)
     granted = f"{accepted_at.text if accepted_at else 'data não registrada'} · texto {version}"
+    method = {"checkbox": "Confirmação pela caixa", "submit": "Concordância ao enviar"}.get(
+        consent.method, "Método não registrado"
+    )
+    source = {
+        "public_html": "página pública",
+        "public_api_declaration": "declaração pela API pública",
+    }.get(consent.source, "origem não registrada")
+    granted += f" · {method} · {source}"
     return [
-        ConsentView(True, "Tratamento das respostas para gerar o plano", granted),
+        ConsentView(consent.privacy, "Tratamento das respostas para gerar o plano", granted),
         *(
             ConsentView(flag, label, f"Autorizado · texto {version}" if flag else "Não autorizado")
             for flag, label in (
@@ -1354,7 +1364,9 @@ def probe_view(probe: Probe, *, event: str = "plano.concluido") -> ProbeView:
     """O que o receptor respondeu e o que uma entrega faria com essa resposta (as mesmas regras
     do `plano.concluido`, em `app.adapters.webhook.outcome`)."""
     event_name = (
-        "evento de captura (submissao.persistida)"
+        "envio de respostas após salvar"
+        if event == "submissao.persistida.v2"
+        else "evento de captura (submissao.persistida)"
         if event == "submissao.persistida"
         else "plano.concluido"
     )

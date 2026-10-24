@@ -85,6 +85,7 @@ def test_a_request_past_retention_leaves_no_trace_of_the_lead(deps: Deps) -> Non
         "forms": 3,
         "form_versions": 3,
         "deployment_contract": 1,
+        "webhook_issuer": 1,
     }
     assert lead_traces(deps) == []
     with pytest.raises(FileNotFoundError):

@@ -75,6 +75,7 @@ e-mail pede `total`; `leitura` busca só pelo código. `download_job_pdf` entreg
 | `GET /admin/jobs/{public_id}/participant` | Prévia visual e JSON participante da mesma tentativa histórica, sem liberar acesso ou enviar notificações | `participant_preview.render_job_result` | `GET /jobs/{public_id}/participant-preview` | `render_job_participant_preview` | total | lead | feita · tests_app/test_admin_participant_preview.py::test_result_preview_api_is_personal_html_with_safe_errors |
 | `GET /admin/jobs/{public_id}/pdf` | PDF de uma tentativa (a atual, sem `version`), como anexo; é o plano da lead, então só `total` | `actions.jobs.pdf_file`: a tentativa atual sem fallback, validação real e recuperação autorizada de históricos sem IA, o 404 sem PDF, o 410 se a retenção o apagou, e a URL assinada de 300 s (a página) ou os bytes (a API) | `GET /jobs/{public_id}/pdf` | `download_job_pdf` | total | lead | feita · tests_app/test_admin_api_jobs.py::test_download_job_pdf_gives_the_bytes_of_the_latest_attempt_as_an_attachment |
 | `POST /admin/jobs/{public_id}/syncs/{sync_id}/resend` | Sincronização com a planilha que falhou volta para pendente e é disparada de novo | `actions.jobs.resend_sync`: `integration_syncs.resend` e o disparo (`launching.launch_sync`) | `POST /jobs/{public_id}/syncs/{sync_id}/resend` | `resend_job_sync` | total | externo | feita · tests_app/test_admin_api_job_actions.py::test_resend_job_sync_returns_the_failed_sync_to_pending_and_launches_it |
+| `POST /admin/jobs/{public_id}/persisted-deliveries/{delivery_id}/retry` | Repete o envio das respostas salvas, sem gerar ou liberar PDF | `actions.captures.retry_for_job` e `retry`: destino/revisão fixos e epoch observado | `POST /jobs/{public_id}/persisted-deliveries/{delivery_id}/retry` | `retry_job_persisted_delivery` | total | externo | feita · tests_app/test_persisted_webhook_surfaces.py::test_pdf_retry_requires_confirmation_and_preserves_revision |
 
 ### Central de integrações
 
@@ -607,3 +608,14 @@ A prévia HTML usa somente o código do pedido e fixa a audiência participante 
 É dado pessoal integral: o MCP só anuncia a ferramenta para chave total com
 `GERADOR_MCP_LEAD_DATA=1`, grava o HTML em arquivo privado e retorna metadados, hash e caminho.
 A leitura não libera, não gera, não envia e não assina um link de PDF; o download da prévia fica desativado.
+
+### Consentimento por versão
+
+O delta da [issue #53](https://github.com/LevyDeSales/leadkit/issues/53) usa as operações
+existentes de definição, rascunho, publicação e leitura protegida. O [contrato de consentimento](consentimento.md)
+descreve método por versão, evidência e replay, sem ferramenta administrativa paralela.
+`save_form_draft`/`patch_form_draft`, cópia e importação preservam as três opções; revisão/publicação
+mantém confirmação e versão esperada. `get_job` acrescenta detalhes somente em `lead_data`;
+MCP continua derivado do OpenAPI e do opt-in existente. Provas focais:
+`tests_app/test_consent_methods.py`, `tests_app/test_admin_form_editor.py` e contratos
+existentes `test_admin_api_drafts.py`, `test_admin_mcp_server.py` e `test_admin_api_openapi.py`.

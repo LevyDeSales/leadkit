@@ -44,6 +44,10 @@ from app.admin.api.common import (
 )
 from app.admin.api.errors import MEANING, ApiError, ErrorItem
 from app.admin.api.operations import OperationRouter
+from app.admin.api.schemas.capture_deliveries import (
+    CaptureDeliveryState,
+    RetryCaptureDeliveryRequest,
+)
 from app.admin.api.schemas.jobs import (
     DeliveryFilter,
     JobDetail,
@@ -768,3 +772,39 @@ async def release_job_pdf(
             code, "A liberação foi recusada.", errors=[ErrorItem("reason_code", error.code)]
         ) from None
     return ReleasedJobPdf.of(done)
+
+
+@router.operation(
+    "POST",
+    "/jobs/{public_id}/persisted-deliveries/{delivery_id}/retry",
+    operation_id="retry_job_persisted_delivery",
+    role="total",
+    external_effect=True,
+    summary="Repetir o envio das respostas salvas",
+    description="Repete a mesma intenção de respostas no mesmo destino e revisão original. Exige confirmação, epoch e revisão observados. Não reprocessa nem libera PDF.",
+    returns="Estado da sincronização das respostas; o reconciliador despacha a intenção pendente.",
+    response_model=CaptureDeliveryState,
+    errors={
+        404: "Pedido ou entrega não encontrado.",
+        409: "state_conflict: a entrega ou revisão mudou; nada foi feito.",
+    },
+)
+def retry_job_persisted_delivery(
+    public_id: str, delivery_id: str, body: RetryCaptureDeliveryRequest, key: CurrentKey
+) -> CaptureDeliveryState:
+    from app.admin.actions import captures
+
+    try:
+        result = captures.retry_for_job(
+            get_deps(),
+            public_id,
+            delivery_id,
+            expected_dispatch=body.expected_dispatch,
+            expected_config_version=body.expected_config_version,
+            actor=key.actor,
+        )
+    except captures.Missing:
+        raise ApiError("not_found", "Pedido ou entrega não encontrado.") from None
+    except captures.Conflict:
+        raise ApiError("state_conflict", "A entrega ou revisão mudou; nada foi feito.") from None
+    return CaptureDeliveryState(**result)

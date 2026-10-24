@@ -26,8 +26,9 @@ from __future__ import annotations
 
 import re
 from bisect import bisect_left
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from html.parser import HTMLParser
+from typing import Any
 
 from app.forms.definition.document import Problem
 from app.forms.definition.images import SCHEME, asset_name, name_problem
@@ -201,3 +202,15 @@ def asset_names(html: str, css: str, preview: str = "") -> list[str]:
             if found is not None and found[1] and name_problem(found[0]) is None:
                 names[found[0]] = None
     return list(names)
+
+
+def opening_logo_problems(document: Mapping[str, Any], known: Collection[str]) -> list[Problem]:
+    """Confere o logo também quando a definição não gera PDF."""
+    logo = document.get("opening_logo")
+    if (
+        isinstance(logo, Mapping)
+        and isinstance(logo.get("src"), str)
+        and (message := _image_problem(logo["src"], known))
+    ):
+        return [Problem("opening_logo.src", message)]
+    return []

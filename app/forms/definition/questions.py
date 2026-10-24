@@ -348,6 +348,9 @@ def screen_of(
             notice=consent.notice,
             marketing_email=consent.marketing.email,
             marketing_whatsapp=consent.marketing.whatsapp,
+            acquisition_method=consent.acquisition_method,
+            presentation=consent.presentation,
+            position=consent.position,
         ),
     )
 

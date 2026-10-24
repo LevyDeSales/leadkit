@@ -27,6 +27,7 @@ from sqlalchemy.orm import Session
 
 from app.adapters.storage import ArtifactStorage
 from app.admin.localtime import local_midnight
+from app.consent import facts as consent_facts
 from app.errors import TerminalError
 from app.forms import FormRegistry, LeadIdentity
 from app.forms.definition.document import SLUG_PATTERN
@@ -625,6 +626,7 @@ class JobState:
     deliveries: tuple[DeliveryState, ...]  # do mais antigo ao mais novo
     syncs: tuple[SyncState, ...]  # o mais novo primeiro
     timeline: tuple[AttemptState, ...]  # da tentativa 1 à atual
+    persisted_deliveries: tuple[dict[str, Any], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -633,6 +635,11 @@ class Consent:
     text_version: str | None
     marketing_email: bool
     marketing_whatsapp: bool
+    evidence_schema: int | None = None
+    method: str | None = None
+    action: str | None = None
+    source: str | None = None
+    privacy: bool = False
 
 
 @dataclass(frozen=True)
@@ -776,6 +783,8 @@ def read_job(
         )
         for d in delivery_rows
     ]
+    from app.capture_deliveries import listing as persisted_deliveries
+
     state = JobState(
         id=job.id,
         public_id=job.public_id,
@@ -798,6 +807,7 @@ def read_job(
             for a in sorted(artifacts.values(), key=lambda a: a.version, reverse=True)
         ),
         deliveries=tuple(deliveries),
+        persisted_deliveries=tuple(persisted_deliveries(session, submission_id=job.submission_id)),
         syncs=tuple(
             SyncState(
                 id=row.id,
@@ -845,13 +855,7 @@ def _lead_data(session: Session, job: Job, notes: list[Note], forms: FormRegistr
 
 
 def _consent(raw: dict[str, Any]) -> Consent:
-    accepted = raw.get("privacy_at")
-    return Consent(
-        privacy_at=datetime.fromisoformat(accepted) if isinstance(accepted, str) else None,
-        text_version=raw.get("text_version"),
-        marketing_email=bool(raw.get("marketing_email")),
-        marketing_whatsapp=bool(raw.get("marketing_whatsapp")),
-    )
+    return Consent(**consent_facts(raw))
 
 
 def _notes(

@@ -1702,6 +1702,15 @@
             ],
             "title": "Row Id"
           },
+          "schema_version": {
+            "default": 1,
+            "enum": [
+              1,
+              2
+            ],
+            "title": "Schema Version",
+            "type": "integer"
+          },
           "status": {
             "enum": [
               "pending",
@@ -1835,6 +1844,16 @@
             "anyOf": [
               {
                 "$ref": "#/components/schemas/NoticesDoc"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "opening_logo": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OpeningLogoDoc"
               },
               {
                 "type": "null"
@@ -2311,6 +2330,15 @@
       "ConsentDoc": {
         "additionalProperties": false,
         "properties": {
+          "acquisition_method": {
+            "default": "checkbox",
+            "enum": [
+              "checkbox",
+              "submit"
+            ],
+            "title": "Acquisition Method",
+            "type": "string"
+          },
           "marketing": {
             "$ref": "#/components/schemas/MarketingDoc",
             "default": {}
@@ -2321,11 +2349,36 @@
             "title": "Notice",
             "type": "string"
           },
-          "processing": {
-            "maxLength": 2000,
-            "minLength": 1,
-            "title": "Processing",
+          "position": {
+            "default": "first_step",
+            "enum": [
+              "first_step",
+              "before_submit"
+            ],
+            "title": "Position",
             "type": "string"
+          },
+          "presentation": {
+            "default": "panel",
+            "enum": [
+              "panel",
+              "compact"
+            ],
+            "title": "Presentation",
+            "type": "string"
+          },
+          "processing": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Processing"
           },
           "version": {
             "maxLength": 64,
@@ -2336,7 +2389,6 @@
         },
         "required": [
           "version",
-          "processing",
           "notice"
         ],
         "title": "ConsentDoc",
@@ -3034,6 +3086,7 @@
               "enum": [
                 "plano.concluido",
                 "submissao.persistida",
+                "submissao.persistida.v2",
                 "plano.liberado"
               ],
               "type": "string"
@@ -6484,6 +6537,35 @@
       "JobConsent": {
         "description": "Os consentimentos que a lead deu.",
         "properties": {
+          "action": {
+            "anyOf": [
+              {
+                "enum": [
+                  "confirm",
+                  "submit"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Ação declarada aceita pelo servidor.",
+            "title": "Action"
+          },
+          "evidence_schema": {
+            "anyOf": [
+              {
+                "const": 2,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Esquema da evidência; ausente no histórico legado.",
+            "title": "Evidence Schema"
+          },
           "marketing_email": {
             "description": "Autorizou novidades por e-mail.",
             "title": "Marketing Email",
@@ -6493,6 +6575,22 @@
             "description": "Autorizou novidades por WhatsApp.",
             "title": "Marketing Whatsapp",
             "type": "boolean"
+          },
+          "method": {
+            "anyOf": [
+              {
+                "enum": [
+                  "checkbox",
+                  "submit"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Método registrado, sem inferir caixa em históricos.",
+            "title": "Method"
           },
           "privacy_accepted_at": {
             "anyOf": [
@@ -6504,8 +6602,24 @@
                 "type": "null"
               }
             ],
-            "description": "Quando aceitou o tratamento das respostas para gerar o plano.",
+            "description": "Quando o servidor aceitou o consentimento pela caixa ou pela ação de enviar; não comprova horário de clique humano.",
             "title": "Privacy Accepted At"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "enum": [
+                  "public_html",
+                  "public_api_declaration"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Adaptador que recebeu a declaração; não certifica gesto humano.",
+            "title": "Source"
           },
           "text_version": {
             "anyOf": [
@@ -6824,6 +6938,14 @@
               "$ref": "#/components/schemas/JobPdf"
             },
             "title": "Pdfs",
+            "type": "array"
+          },
+          "persisted_deliveries": {
+            "description": "Sincronização das respostas salvas, independente da geração e liberação do PDF.",
+            "items": {
+              "$ref": "#/components/schemas/CaptureDeliveryState"
+            },
+            "title": "Persisted Deliveries",
             "type": "array"
           },
           "public_id": {
@@ -8195,6 +8317,28 @@
         "title": "NotificationData",
         "type": "object"
       },
+      "OpeningLogoDoc": {
+        "additionalProperties": false,
+        "description": "Imagem opcional acima do título, independente da marca e do PDF.",
+        "properties": {
+          "alt": {
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Alt",
+            "type": "string"
+          },
+          "src": {
+            "title": "Src",
+            "type": "string"
+          }
+        },
+        "required": [
+          "src",
+          "alt"
+        ],
+        "title": "OpeningLogoDoc",
+        "type": "object"
+      },
       "Optimization": {
         "description": "O que a otimização fez ao arquivo enviado: como ele era e como ficou.",
         "properties": {
@@ -8568,6 +8712,16 @@
             "anyOf": [
               {
                 "$ref": "#/components/schemas/NoticesDoc"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "opening_logo": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OpeningLogoDoc"
               },
               {
                 "type": "null"
@@ -9732,6 +9886,7 @@
               "enum": [
                 "plano.concluido",
                 "submissao.persistida",
+                "submissao.persistida.v2",
                 "plano.liberado"
               ],
               "type": "string"
@@ -10534,6 +10689,14 @@
               "$ref": "#/components/schemas/JobPdf"
             },
             "title": "Pdfs",
+            "type": "array"
+          },
+          "persisted_deliveries": {
+            "description": "Sincronização das respostas salvas, independente da geração e liberação do PDF.",
+            "items": {
+              "$ref": "#/components/schemas/CaptureDeliveryState"
+            },
+            "title": "Persisted Deliveries",
             "type": "array"
           },
           "public_id": {
@@ -11374,6 +11537,7 @@
               "enum": [
                 "plano.concluido",
                 "submissao.persistida",
+                "submissao.persistida.v2",
                 "plano.liberado"
               ],
               "type": "string"
@@ -11416,7 +11580,7 @@
             "type": "string"
           },
           "secret": {
-            "description": "O segredo novo do destino. **Só existe nesta resposta**: ponha-o no receptor agora, porque o antigo já não vale. Novos envios usam este segredo; entregas PDF fixadas exigem repetir explicitamente com a revisão atual.",
+            "description": "O segredo novo do destino. **Só existe nesta resposta**: ponha-o no receptor agora, porque o antigo já não vale. Novos envios usam este segredo; entregas PDF fixadas exigem repetir explicitamente com a revisão atual. Intenções de respostas após salvar conservam a revisão original e não podem ser repetidas com o segredo ou a revisão novos.",
             "examples": [
               "<segredo-mostrado-uma-vez>"
             ],
@@ -11557,6 +11721,7 @@
                   "enum": [
                     "plano.concluido",
                     "submissao.persistida",
+                    "submissao.persistida.v2",
                     "plano.liberado"
                   ],
                   "type": "string"
@@ -11873,6 +12038,7 @@
               "enum": [
                 "plano.concluido",
                 "submissao.persistida",
+                "submissao.persistida.v2",
                 "plano.liberado"
               ],
               "type": "string"
@@ -12116,10 +12282,11 @@
           },
           "event": {
             "default": "webhook.teste",
-            "description": "Teste sintético do contrato de captura exige que o destino aceite o evento. Não cria submissão.",
+            "description": "Teste sintético do contrato selecionado exige que o destino o aceite; respostas após salvar usam o envelope2. Não cria submissão.",
             "enum": [
               "webhook.teste",
-              "submissao.persistida"
+              "submissao.persistida",
+              "submissao.persistida.v2"
             ],
             "title": "Event",
             "type": "string"
@@ -13098,7 +13265,7 @@
   "info": {
     "description": "Tudo o que o painel admin faz, por chave de API com papel.\n\n**Autenticação.** Só `Authorization: Bearer <chave>`: a chave não vai na URL nem em cookie, e a\nsessão do painel não vale em nenhuma operação (ela só abre esta referência e o `openapi.json`). Cada\noperação diz o papel mínimo (`x-required-role`): `leitura` só consulta; `total` faz tudo o que o\nadmin logado faz. Toda escrita fica na auditoria em nome da chave (`chave:<nome>`).\n\n**Erros.** Um formato só, `{\"code\", \"detail\"}`, com `errors` (`field`, `message`, `line`) no `422`.\nA resposta nunca traz o valor recebido.\n\n**Operações marcadas.** As que apagam ou sobrescrevem algo difícil de desfazer (`x-destructive`) e\nas que mudam o que a lead vê, para onde os dados dela vão ou chamam um serviço de fora\n(`x-external-effect`) exigem `\"confirm\": true` em toda chamada (na query, em `DELETE`). Sem ele, a\nresposta é `422 confirmation_required` e nada acontece.\n\n**Limite de uso.** Cada chave tem um balde de chamadas por minuto; passou, `429 rate_limited` com\n`Retry-After`.\n\n**Fora das operações.** De qualquer endereço podem vir `404 not_found` (caminho sem operação),\n`405 method_not_allowed` (com `Allow`, os métodos do caminho), `413 payload_too_large`,\n`500 internal_error` e `503 unavailable` (banco fora do ar, com `Retry-After`).\n\n## MCP: usar a API pelo Claude\n\nO **MCP** (`python -m app.admin_mcp`) é um programa que roda no computador da operadora e deixa o\nClaude Desktop e o Claude Code chamarem esta API numa conversa. É um cliente HTTP desta API, só por\n`stdio` (não há MCP remoto), com a chave de quem o usa: nada novo sobe no servidor, e a autorização é\na da chave.\n\n**Configurar.** A tela [Configurar o MCP](/admin/mcp), no menu do painel, leva do zero ao servidor\nfuncionando: escolhe ou cria a chave (o segredo aparece uma vez), mostra a instalação, monta o comando\ndo Claude Code ou o bloco do Claude Desktop já com o endereço deste painel e confere a chave.\n\n**Ferramentas por papel.** Cada operação desta referência é uma ferramenta, com o `operationId` como\nnome, o `summary` e a `description` como texto, e os parâmetros e o corpo juntos num só objeto de\nentrada. Uma chave `leitura` recebe as operações de papel `leitura`; uma `total`, todas. Vêm além\ndelas algumas **compostas**, que juntam as chamadas de um fluxo (`attention_overview`,\n`diagnose_order`, `edit_form_draft`, `publish_form_with_review` e `connect_baserow_integration`) e só\nchamam ferramentas que a chave já tem. Para explorar, prefira `leitura`: são menos ferramentas.\n\n**Confirmações.** Uma operação marcada (`x-destructive` ou `x-external-effect`) não executa sozinha: o\nMCP mostra o efeito e o alvo e só chama a API com o sim da pessoa. O `confirm` que o modelo escrever\npor conta própria é ignorado.\n\n**Dado da lead.** Fica desligado: sem `GERADOR_MCP_LEAD_DATA=1`, o nome, o e-mail e as respostas das\nleads não chegam ao modelo, e o argumento `include_lead_data`, a busca `q` de `list_jobs` e a\n`download_job_pdf` não existem. Com a opção e uma chave `total` eles voltam, e o que o Claude ler vai\nao provedor do modelo.\n\n**Pastas.** PDFs e HTML vão para arquivo, em `GERADOR_MCP_DOWNLOAD_DIR` (ou numa pasta só do usuário\nno diretório temporário), e a ferramenta devolve o caminho, nunca os bytes. As imagens\n(`upload_asset` e `replace_asset`) só saem de `GERADOR_MCP_UPLOAD_DIR`, uma pasta que a pessoa\nescolhe e que não tem padrão. **A imagem enviada é servida sem login**: ponha nessa pasta só o que\npode ser público.\n\n**A chave.** Vai no ambiente do cliente (`GERADOR_API_URL` e `GERADOR_API_KEY`), nunca na linha de\ncomando do servidor, e só viaja no cabeçalho `Authorization: Bearer`: não aparece em retorno de\nferramenta, em erro nem em log.\n",
     "title": "Leadkit: API de admin",
-    "version": "1.85.0"
+    "version": "1.86.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -15160,7 +15327,7 @@
     },
     "/destinations/{scope}/rotate-secret": {
       "post": {
-        "description": "Gera um segredo novo para o destino do escopo `scope` (`default` ou o endereço de um formulário). **O novo aparece só nesta resposta** (`secret`, com `Cache-Control: no-store`): guarde-o e ponha-o no receptor agora. **O antigo deixa de valer na hora**: o envio novo sai assinado com o novo. Entregas PDF fixadas antes da troca exigem repetição explícita com a revisão atual, sem mudar a finalidade; um receptor que ainda confere com o antigo passa a recusar os eventos. É também o que repara um destino cujo segredo não abre com a chave atual (`secret_unreadable`). `expected_version` é a `version` que `get_destination` devolveu; se mudou, `409 version_conflict` e o segredo não muda. Uma chamada repetida, com a versão de antes, é `409 state_conflict` e não repete o segredo novo: se você o perdeu, gere outro com a versão de agora. Por isso a operação é marcada e exige `\"confirm\": true` (sem ele, `422 confirmation_required` e nada acontece). A troca fica na auditoria em nome da chave (`webhook_destination.rotate_secret`), sem o segredo. Sem `WEBHOOK_ENCRYPTION_KEY` no servidor, é `409 state_conflict`.",
+        "description": "Gera um segredo novo para o destino do escopo `scope` (`default` ou o endereço de um formulário). **O novo aparece só nesta resposta** (`secret`, com `Cache-Control: no-store`): guarde-o e ponha-o no receptor agora. **O antigo deixa de valer na hora**: o envio novo sai assinado com o novo. Entregas PDF fixadas antes da troca exigem repetição explícita com a revisão atual, sem mudar a finalidade. Intenções de respostas após salvar conservam a revisão original e não usam o segredo ou a revisão novos. Um receptor que ainda confere com o antigo passa a recusar os eventos. É também o que repara um destino cujo segredo não abre com a chave atual (`secret_unreadable`). `expected_version` é a `version` que `get_destination` devolveu; se mudou, `409 version_conflict` e o segredo não muda. Uma chamada repetida, com a versão de antes, é `409 state_conflict` e não repete o segredo novo: se você o perdeu, gere outro com a versão de agora. Por isso a operação é marcada e exige `\"confirm\": true` (sem ele, `422 confirmation_required` e nada acontece). A troca fica na auditoria em nome da chave (`webhook_destination.rotate_secret`), sem o segredo. Sem `WEBHOOK_ENCRYPTION_KEY` no servidor, é `409 state_conflict`.",
         "operationId": "rotate_destination_secret",
         "parameters": [
           {
@@ -22748,6 +22915,145 @@
           "Pedidos"
         ],
         "x-lead-data": true,
+        "x-required-role": "total"
+      }
+    },
+    "/jobs/{public_id}/persisted-deliveries/{delivery_id}/retry": {
+      "post": {
+        "description": "Repete a mesma intenção de respostas no mesmo destino e revisão original. Exige confirmação, epoch e revisão observados. Não reprocessa nem libera PDF.",
+        "operationId": "retry_job_persisted_delivery",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "public_id",
+            "required": true,
+            "schema": {
+              "title": "Public Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "delivery_id",
+            "required": true,
+            "schema": {
+              "title": "Delivery Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RetryCaptureDeliveryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CaptureDeliveryState"
+                }
+              }
+            },
+            "description": "Estado da sincronização das respostas; o reconciliador despacha a intenção pendente."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Sem chave, chave desconhecida ou de segredo errado (`invalid_credentials`: a mesma resposta nos três casos), ou chave vencida (`key_expired`) ou revogada (`key_revoked`). Leva `WWW-Authenticate: Bearer`.",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Sempre `Bearer`: o único esquema que a API aceita.",
+                "schema": {
+                  "examples": [
+                    "Bearer"
+                  ],
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "A chave tem papel `leitura` e a operação pede `total` (`forbidden_role`)."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Pedido ou entrega não encontrado."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "state_conflict: a entrega ou revisão mudou; nada foi feito."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "O corpo ou a definição não valem (`validation_failed`; `errors` traz o caminho de cada campo) ou falta `confirm: true` numa operação marcada (`confirmation_required`; nada acontece)."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Limite de uso da chave ou bloqueio por chave errada (`rate_limited`), ou pausa entre os testes pagos do rascunho (`test_paused`). Leva `Retry-After`.",
+            "headers": {
+              "Retry-After": {
+                "description": "Quantos segundos esperar antes de tentar de novo.",
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "summary": "Repetir o envio das respostas salvas",
+        "tags": [
+          "Pedidos"
+        ],
+        "x-external-effect": true,
         "x-required-role": "total"
       }
     },

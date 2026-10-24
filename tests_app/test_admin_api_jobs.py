@@ -1031,6 +1031,7 @@ def test_list_jobs_the_form_version_filter_lists_the_same_orders_as_the_page(
 # --- get_job ------------------------------------------------------------------------------------
 
 STATE_FIELDS = {
+    "persisted_deliveries",
     "release",
     "public_id",
     "status",
@@ -1314,6 +1315,10 @@ def test_get_job_the_lead_data_block_has_the_contact_the_scores_the_answers_and_
         "text_version",
         "marketing_email",
         "marketing_whatsapp",
+        "evidence_schema",
+        "method",
+        "action",
+        "source",
     }
     assert lead["consent"]["text_version"] == "demo-v1"
     assert lead["consent"]["privacy_accepted_at"].endswith("Z")

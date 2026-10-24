@@ -8,7 +8,7 @@ As instruções abaixo explicam como operar o editor. O conteúdo das perguntas,
 
 **Onde entrar:** “Formulários” → seu formulário → “Editar o rascunho”.
 
-1. No índice “Perguntas”, em “Página pública”, ajuste “Título”, “Introdução” e “Tempo para responder, em minutos” (de 1 a 60). Os avisos opcionais têm título, texto e link; são texto puro, sem formatação de código.
+1. No índice “Perguntas”, em “Página pública”, ajuste “Título”, “Introdução” e “Tempo para responder, em minutos” (de 1 a 60). A introdução é texto puro: as quebras de linha e linhas em branco aparecem na prévia e na página pública, sem interpretar HTML. O [logo de abertura](imagens-e-pdf.md#logo-na-abertura-do-formulário) é opcional e tem imagem e texto alternativo próprios. Os avisos opcionais têm título, texto e link; são texto puro, sem formatação de código.
 2. Em “Etapas e perguntas”, use “Adicionar etapa” para criar uma tela e “Adicionar pergunta” dentro dela.
 3. Abra a pergunta e preencha “Rótulo”, que é o texto que a participante lê. Escolha “Tipo”, “Ajuda”, “Obrigatória” e os limites apresentados para esse tipo.
 4. Confira “Nome da resposta”. Ele identifica a resposta nas integrações e nas instruções de geração. Evite mudá-lo após publicar sem revisar as dependências com a administradora técnica.
@@ -39,11 +39,12 @@ As instruções abaixo explicam como operar o editor. O conteúdo das perguntas,
 **Onde entrar:** índice “Dados e consentimentos”, no rascunho. O link para “Identidade da lead” leva às perguntas usadas na identificação.
 
 1. Relacione as perguntas usadas para identificar e-mail, nome e telefone conforme os campos apresentados. O e-mail é obrigatório na identidade.
-2. Revise “Autorização do processamento” e “Aviso sobre o uso dos dados”.
-3. Ofereça apenas os canais de contato necessários, com seus textos separados da autorização de processamento. A oferta de WhatsApp precisa de telefone na identidade.
-4. Salve e confira o texto na prévia.
+2. Em “Como a participante concorda”, escolha “Confirmar pela caixa” (desmarcada inicialmente) ou “Concordar ao enviar” (o envio final válido registra o consentimento, sem caixa). Revise “Autorização do processamento”, usada na caixa, e “Aviso sobre o uso dos dados”, com as finalidades claras antes da ação. Ao enviar pelo botão ou por Enter na etapa final, a participante concorda conforme esse aviso.
+3. Escolha a apresentação “Painel” ou “Compacta” e a posição “Primeira etapa” ou “Antes do envio”. Essas escolhas organizam o aviso e as opções; não mudam o método.
+4. Ofereça apenas os canais de contato necessários, com seus textos separados da autorização de processamento. A oferta de WhatsApp precisa de telefone na identidade.
+5. Salve e confira o aviso e as opções na prévia, inclusive no celular. A prévia não registra consentimento.
 
-**Resultado:** a participante vê o texto e as opções correspondentes. A publicação atualiza a versão do consentimento quando seu texto muda; cada envio conserva a versão respondida. Marcar consentimento para contato não dispara uma mensagem.
+**Resultado:** a participante vê o texto e as opções correspondentes. A publicação atualiza a versão do consentimento quando método, texto ou canais mudam; alterar somente aparência ou posição não muda essa revisão semântica. Cada envio conserva a versão respondida, o método, a origem da declaração e o horário em que o servidor aceitou. Abrir a página, recarregar ou tocar em “Continuar” não registra aceite. Novidades por canal continuam independentes, opcionais e sem seleção prévia nos dois métodos; um canal não oferecido nunca é autorizado. Marcar consentimento para contato não dispara uma mensagem.
 
 **Se houver dúvida sobre uso de dados:** valide o texto e os destinatários com a responsável antes de publicar. A marcação de contato não garante que um dado esteja fora das instruções enviadas à inteligência artificial: revise também o prompt.
 

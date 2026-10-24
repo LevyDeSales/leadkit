@@ -413,9 +413,9 @@ def diagnose_order(tools: Mapping[str, ToolSpec]) -> Composite | None:
         details=(
             "Lê o pedido (`get_job`) e diz, em português: em que pé está, por que falhou, a situação de "
             "a disponibilidade técnica do PDF atual (sem conceder acesso), cada entrega ao webhook "
-            "e cada sincronização com a planilha, a linha do tempo da "
+            "e cada sincronização com a planilha, o envio das respostas salvas independente do PDF, a linha do tempo da "
             "tentativa atual e o que fazer. **O conserto ela só sugere**, com os argumentos prontos "
-            "(`reprocess_job`, `resend_job_delivery`, `resend_job_sync`): não os chama, e cada um é uma "
+            "(`reprocess_job`, `resend_job_delivery`, `resend_job_sync`, `retry_job_persisted_delivery`): não os chama, e cada um é uma "
             "ação marcada que pede a confirmação da pessoa quando você a chamar. Não traz nome, e-mail "
             "nem resposta de lead."
         ),
@@ -438,6 +438,7 @@ async def _diagnose_order(steps: Steps, arguments: dict[str, Any]) -> ToolOutput
     everything = [*(job.get("deliveries") or []), *(job.get("syncs") or [])]
     deliveries = [d for d in job.get("deliveries") or [] if _is_of(d, attempt)]
     syncs = [s for s in job.get("syncs") or [] if _is_of(s, attempt)]
+    persisted = [d for d in job.get("persisted_deliveries") or [] if isinstance(d, dict)]
     older = [x for x in everything if isinstance(x, dict) and not _is_of(x, attempt)]
     older_failed = [x for x in older if x.get("status") == "failed"]
     pdfs = [p for p in job.get("pdfs") or [] if isinstance(p, dict)]
@@ -466,6 +467,13 @@ async def _diagnose_order(steps: Steps, arguments: dict[str, Any]) -> ToolOutput
             ],
             sync_block,
             [
+                "Respostas salvas (sincronização independente do PDF):",
+                *listed(
+                    [_persisted_delivery(d) for d in persisted]
+                    or ["nenhuma entrega configurada no aceite"]
+                ),
+            ],
+            [
                 "PDFs: "
                 + (
                     "; ".join(
@@ -478,7 +486,7 @@ async def _diagnose_order(steps: Steps, arguments: dict[str, Any]) -> ToolOutput
             ],
             _events(job, attempt),
             _notes(job) if arguments.get("include_lead_data") is True else [],
-            ["O que fazer:", *listed(_what_to_do(steps, job, deliveries, syncs))],
+            ["O que fazer:", *listed(_what_to_do(steps, job, deliveries, syncs, persisted))],
         )
     )
 
@@ -532,6 +540,16 @@ def _sync(sync: Mapping[str, Any]) -> str:
     )
 
 
+def _persisted_delivery(delivery: Mapping[str, Any]) -> str:
+    return (
+        f"`{plain(delivery.get('delivery_id'))}`: {plain(delivery.get('status'))}, "
+        f"{plain(delivery.get('attempts'))} tentativa(s); revisão original "
+        f"{plain(delivery.get('config_version'))}, atual "
+        f"{plain(delivery.get('current_config_version'))}, epoch "
+        f"{plain(delivery.get('dispatch_no'))}. Transporte confirmado não comprova leitura."
+    )
+
+
 def _events(job: Mapping[str, Any], attempt: Any) -> list[str]:
     for item in job.get("timeline") or []:
         if not _is_of(item, attempt):
@@ -579,7 +597,11 @@ def _notes(job: Mapping[str, Any]) -> list[str]:
 
 
 def _what_to_do(
-    steps: Steps, job: Mapping[str, Any], deliveries: Sequence[Any], syncs: Sequence[Any]
+    steps: Steps,
+    job: Mapping[str, Any],
+    deliveries: Sequence[Any],
+    syncs: Sequence[Any],
+    persisted: Sequence[Any] = (),
 ) -> list[str]:
     def tool(name: str, how: str) -> str:
         if steps.has(name):
@@ -645,6 +667,36 @@ def _what_to_do(
         elif sync.get("status") == "pending":
             quiet = False
             todo.append(f"A sincronização `{plain(sync.get('id'))}` está pendente: espere.")
+    for delivery in persisted:
+        if delivery.get("status") == "pending":
+            quiet = False
+            todo.append(
+                "O envio das respostas está pendente: aguarde o reconciliador, sem preencher novamente."
+            )
+        elif delivery.get("status") == "failed":
+            quiet = False
+            if delivery.get("error_code") == "retention_expired":
+                todo.append(
+                    "A retenção encerrou o envio das respostas; não repita nem recrie os dados."
+                )
+            elif (
+                delivery.get("current_config_version") != delivery.get("config_version")
+                or delivery.get("current_config_version") is None
+            ):
+                todo.append(
+                    "A revisão original do envio de respostas não está disponível; não redirecione esta intenção para outra configuração."
+                )
+            else:
+                todo.append(
+                    tool(
+                        "retry_job_persisted_delivery",
+                        f"Repetir o envio de respostas: `public_id: {public_id}`, "
+                        f"`delivery_id: {plain(delivery.get('delivery_id'))}`, "
+                        f"`expected_dispatch: {plain(delivery.get('dispatch_no'))}`, "
+                        f"`expected_config_version: {plain(delivery.get('config_version'))}`; "
+                        "confira a retenção e conserve o destino e a revisão originais",
+                    )
+                )
     if quiet and status == "completed" and not pdf_unavailable:
         todo.append(
             "Nada a fazer: as entregas e as sincronizações da tentativa atual estão em ordem."

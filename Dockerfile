@@ -46,7 +46,7 @@ RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
 
 COPY --chmod=755 deploy/entrypoint.sh /usr/local/bin/entrypoint
 
-# A versão do sistema (vAAAA.M.N, app/version.py) e a data do build em São Paulo, AAAA-MM-DD: o CI as
+# A versão do sistema (vYYYY.MM.DD.x, app/version.py) e a data do build em São Paulo, AAAA-MM-DD: o CI as
 # passa em cada push em main (`--build-arg`), e o rodapé do admin as mostra. Sem elas o rodapé diz
 # `dev`. Ficam depois das camadas pesadas: um valor novo não refaz as dependências nem o app.
 ARG APP_VERSION=""

@@ -72,8 +72,9 @@ button,input,textarea{font:inherit;color:inherit}
 /* ---- hero ---- */
 .hero{background:radial-gradient(120% 120% at 100% 0%,rgba(155,28,40,.42) 0%,rgba(155,28,40,0) 55%),var(--obsidian-950);color:var(--on-dark)}
 .hero__inner{padding-block:28px 32px}
+.hero__logo{display:block;max-width:min(100%,280px);max-height:160px;width:auto;height:auto;object-fit:contain;margin-bottom:20px;color:var(--on-dark)}
 .hero h1{font-size:1.75rem;color:#fff}
-.hero .lead{margin-top:12px;color:rgba(247,242,234,.86);max-width:36ch}
+.hero .lead{margin-top:12px;color:rgba(247,242,234,.86);max-width:36ch;white-space:pre-line;overflow-wrap:anywhere}
 .facts{list-style:none;margin:20px 0 0;display:grid;gap:10px;font-size:var(--t-sm)}
 .facts li{display:flex;gap:10px;align-items:flex-start}
 .facts .icon{color:var(--gold-300);margin-top:2px}
@@ -215,3 +216,8 @@ textarea.input{min-height:112px;resize:vertical}
   .layout-split>.layout-split__main>.container{max-width:36rem;margin-inline:0}
   .hero h1{font-size:2.5rem}
 }
+
+/* Apresentação do aviso independe do método de consentimento. */
+.consent--compact { padding: 0; border: 0; background: transparent; }
+.actions:has(.submit-notice) { flex-wrap: wrap; }
+.submit-notice { flex-basis: 100%; font-size: .9rem; line-height: 1.5; white-space: pre-line; }

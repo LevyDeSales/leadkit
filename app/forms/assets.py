@@ -36,6 +36,7 @@ nome, o sha256 e os tamanhos, nunca os bytes.
 
 from __future__ import annotations
 
+import io
 import logging
 import uuid
 from collections.abc import Mapping, Sequence
@@ -44,14 +45,15 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 import sqlalchemy as sa
+from PIL import Image, UnidentifiedImageError
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.adapters.assets import AssetStore
+from app.adapters.assets import AssetStore, AssetUnavailable
 from app.errors import RetryableError, TerminalError
 from app.forms.definition.images import AssetRef, name_problem
 from app.forms.definition.resources import UNKNOWN_IMAGE, asset_names
-from app.forms.image_optimizer import ImageRefused, OptimizedImage, optimize
+from app.forms.image_optimizer import FORMATS, ImageRefused, OptimizedImage, optimize
 from app.models import AuditLog, Form, FormAsset, FormVersion, FormVersionAsset, utcnow
 
 if TYPE_CHECKING:
@@ -133,6 +135,18 @@ class MissingImages(Exception):
 
     def message(self) -> str:
         return "; ".join(UNKNOWN_IMAGE.format(name=name) for name in self.names)
+
+    def path(self, document: Mapping[str, Any]) -> str:
+        """A referência a corrigir quando somente o logo saiu durante a publicação."""
+        logo = document.get("opening_logo")
+        if (
+            len(self.names) == 1
+            and isinstance(logo, Mapping)
+            and isinstance(logo.get("src"), str)
+            and logo["src"].strip() == f"asset:{self.names[0]}"
+        ):
+            return "opening_logo.src"
+        return "pdf"
 
 
 @dataclass(frozen=True)
@@ -497,12 +511,19 @@ def _discard_unused(deps: Deps, ref: AssetRef) -> None:
 
 
 def used_names(document: Mapping[str, Any]) -> list[str]:
-    """Os nomes de imagem (`asset:<nome>`) que o PDF, o CSS dele e a prévia da definição pedem."""
+    """Os nomes de imagem (`asset:<nome>`) da abertura, PDF, CSS e prévia da definição."""
     pdf = document.get("pdf")
     pdf = pdf if isinstance(pdf, Mapping) else {}
     texts = (pdf.get("html"), pdf.get("css"), document.get("preview"))
     html, css, preview = (text if isinstance(text, str) else "" for text in texts)
-    return asset_names(html, css, preview)
+    names = asset_names(html, css, preview)
+    logo = document.get("opening_logo")
+    if isinstance(logo, Mapping) and isinstance(logo.get("src"), str):
+        address = logo["src"].strip()
+        name = address[6:]
+        if address.startswith("asset:") and name_problem(name) is None and name not in names:
+            names.append(name)
+    return names
 
 
 def live_refs(session: Session, document: Mapping[str, Any]) -> dict[str, AssetRef]:
@@ -610,3 +631,60 @@ def servable(session: Session, ref: AssetRef) -> bool:
         FormVersionAsset.sha256 == ref.sha256, FormVersionAsset.content_type == ref.content_type
     )
     return session.scalar(in_a_version.limit(1)) is not None
+
+
+def copy_image(
+    deps: Deps, session: Session, *, form_id: uuid.UUID, name: str, ref: AssetRef, actor: str
+) -> None:
+    """Uma imagem própria da cópia, com o hash escolhido na origem. Reutiliza os bytes imutáveis
+    sem recodificar; mudanças posteriores no arquivo da origem não mudam esta imagem."""
+    source = session.scalar(
+        sa.select(FormAsset)
+        .where(FormAsset.sha256 == ref.sha256, FormAsset.content_type == ref.content_type)
+        .limit(1)
+        .with_for_update()
+    )
+    if source is not None:
+        byte_size, source_size = source.byte_size, source.source_size
+        width, height = source.width, source.height
+    else:
+        # O arquivo atual pode ter mudado; uma versão ainda conserva o conteúdo histórico.
+        # Sem metadados nem pin, a imagem saiu durante a cópia: não resolver outro escopo.
+        if not servable(session, ref):
+            raise AssetRefused(
+                "source", "a imagem do logo de abertura da origem não está disponível"
+            )
+        try:
+            content = AssetStore(deps.storage).read(ref)
+            with Image.open(io.BytesIO(content), formats=FORMATS) as image:
+                width, height = image.size
+        except (
+            AssetUnavailable,
+            RetryableError,
+            TerminalError,
+            UnidentifiedImageError,
+            OSError,
+            ValueError,
+        ):
+            raise AssetRefused(
+                "source", "a imagem do logo de abertura da origem não está disponível"
+            ) from None
+        byte_size = source_size = len(content)
+    now = utcnow()
+    session.add(
+        FormAsset(
+            form_id=form_id,
+            name=name,
+            content_type=ref.content_type,
+            sha256=ref.sha256,
+            storage_key=ref.key,
+            byte_size=byte_size,
+            source_size=source_size,
+            width=width,
+            height=height,
+            created_by=actor,
+            updated_by=actor,
+            created_at=now,
+            updated_at=now,
+        )
+    )

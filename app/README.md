@@ -244,3 +244,10 @@ Fontes nascem pausadas, com credenciais próprias e autoridade histórica explí
 Eventos externos e Jornada usa os mesmos serviços da API de admin/MCP; ingestão é uma API de serviço
 separada. Veja [contrato, autoridade e retenção](../docs/api/jornada.md). Eventos não executam
 liberação, geração, agenda ou mensagens; integração real exige prova própria do adaptador.
+# Envio de respostas persistidas
+
+O webhook interno opt-in `submissao.persistida.v2` reutiliza a outbox `capture_deliveries` em
+captura e PDF. O envelope2 e o emissor da instalação ficam fixados no banco no aceite completo;
+Hatchet recebe só IDs/contagens. A cópia das respostas na outbox é removida pela cascata da
+submissão e não entra em consultas administrativas de estado. Veja o [contrato](../docs/api/integracoes.md)
+e a [adoção do piso3](../deploy/swarm/README.md). A opção fica desligada por padrão.

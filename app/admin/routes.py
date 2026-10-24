@@ -14,7 +14,7 @@ import uuid
 from collections.abc import Callable, Coroutine, Sequence
 from datetime import datetime
 from typing import Annotated, Any, Literal
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import quote, urlencode, urlsplit
 
 from fastapi import APIRouter, Depends, File, Form, Query, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
@@ -964,6 +964,8 @@ def send_test_event(
     saem do worker, que pode não alcançar o que a API alcança (a tela avisa)."""
     try:
         probe = destinations.send_test(get_deps(), form_slug, actor=session.username, event=event)
+    except destinations.InvalidEvents as exc:
+        return _destination_page(request, status_code=422, test_error=exc.message)
     except destinations.UnreadableSecret:
         return _destination_page(request, status_code=409, test=views.UNREADABLE_PROBE)
     except destinations.InvalidPurpose as exc:
@@ -1401,10 +1403,19 @@ def _draft(slug: str) -> drafts.Draft:
     return draft
 
 
+def _editor_view(draft: drafts.Draft, **kwargs: Any) -> draft_pages.EditorPage:
+    with get_deps().sessions() as db:
+        choices = tuple(
+            (f"asset:{name}", f"{name} · {asset.scope}")
+            for name, asset in sorted(form_assets.visible(db, draft.slug).items())
+        )
+    return draft_pages.editor(draft, opening_logo_choices=choices, **kwargs)
+
+
 def _editor_page(
     request: Request, draft: drafts.Draft, *, status_code: int = 200, **kwargs: Any
 ) -> Response:
-    page = draft_pages.editor(draft, **kwargs)
+    page = _editor_view(draft, **kwargs)
     return _page(request, "admin/form_draft.html", {"page": page}, status_code=status_code)
 
 
@@ -1554,7 +1565,7 @@ def edit_draft(request: Request, slug: str, form: PostedForm) -> Response:
     draft = _draft(slug)
     edit, texts = _posted(form)
     focus = edit.apply(_text_of(form, "op"))
-    page = draft_pages.editor(
+    page = _editor_view(
         draft,
         texts=texts,
         edit=edit,
@@ -2794,3 +2805,33 @@ async def release_job_pdf(
     }
     session.flash = ("ok", messages[done.commit.notification_decision])
     return RedirectResponse(f"/admin/jobs/{public_id}", status_code=303)
+
+
+@protected.post("/jobs/{public_id}/persisted-deliveries/{delivery_id}/retry")
+def retry_job_persisted_delivery_page(
+    public_id: str,
+    delivery_id: str,
+    request: Request,
+    session: Annotated[AdminSession, Depends(require_session)],
+    expected_dispatch: Annotated[int, Form()],
+    expected_config_version: Annotated[int, Form()],
+    confirm: Annotated[str, Form()] = "",
+) -> Response:
+    from app.admin.actions import captures
+
+    if confirm != "on":
+        return Response("Confirme o envio externo antes de repetir.", status_code=422)
+    try:
+        captures.retry_for_job(
+            get_deps(),
+            public_id,
+            delivery_id,
+            expected_dispatch=expected_dispatch,
+            expected_config_version=expected_config_version,
+            actor=session.username,
+        )
+    except captures.Missing:
+        return Response("Pedido ou entrega não encontrado.", status_code=404)
+    except captures.Conflict:
+        return Response("Entrega ou revisão mudou; nada foi feito.", status_code=409)
+    return RedirectResponse(f"/admin/jobs/{quote(public_id, safe='')}", status_code=303)

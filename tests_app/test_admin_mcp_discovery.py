@@ -68,7 +68,7 @@ def test_a_leitura_key_starts_with_only_the_leitura_tools() -> None:
 
 
 def test_the_lead_data_option_adds_the_lead_pdf_for_a_total_key_only() -> None:
-    assert len(start(FakeApi(new_key(), "total"), lead_data=True).tools) == 85
+    assert len(start(FakeApi(new_key(), "total"), lead_data=True).tools) == 86
     assert len(start(FakeApi(new_key(), "leitura"), lead_data=True).tools) == 38
 
 

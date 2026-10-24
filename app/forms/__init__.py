@@ -120,10 +120,13 @@ class ConsentText:
     suba a versão. O processamento é obrigatório; cada canal de marketing é opcional e só aparece
     com texto (WhatsApp só faz sentido se o formulário pede telefone)."""
 
-    processing: str
+    processing: str | None
     notice: str
     marketing_email: str | None = None
     marketing_whatsapp: str | None = None
+    acquisition_method: Literal["checkbox", "submit"] = "checkbox"
+    presentation: Literal["panel", "compact"] = "panel"
+    position: Literal["first_step", "before_submit"] = "first_step"
 
 
 @dataclass(frozen=True)
@@ -160,6 +163,15 @@ class Notices:
 
 
 @dataclass(frozen=True)
+class OpeningLogo:
+    """Logo de abertura: referência declarada e endereço do conteúdo vinculado à versão."""
+
+    src: str
+    alt: str
+    url: str | None = None
+
+
+@dataclass(frozen=True)
 class Screen:
     """Páginas públicas do formulário: entrada e etapas (`/p/{slug}`), espera e resultado
     (`/d/{public_id}`), com os avisos extras da espera e da falha. A prévia do plano no resultado
@@ -170,6 +182,7 @@ class Screen:
     steps: tuple[Step, ...]
     consent: ConsentText
     notices: Notices = Notices()
+    opening_logo: OpeningLogo | None = None
 
 
 def answer_fields(model: type[BaseModel]) -> dict[str, FieldInfo]:
@@ -305,13 +318,17 @@ class FormSpec:
         return self.templates.render_prompt(answers)
 
     def with_assets(self, assets: Mapping[str, AssetRef]) -> FormSpec:
-        """O mesmo contrato com as imagens do formulário (`asset:<nome>`) que o PDF e a prévia
-        usam, cada nome com o conteúdo fixado. A versão publicada leva o que fixou na publicação
+        """O mesmo contrato com as imagens do formulário (`asset:<nome>`) da abertura, PDF e prévias, cada nome com o conteúdo fixado. A versão publicada leva o que fixou na publicação
         (`app.forms.assets.version_refs`); o rascunho, as imagens de agora."""
-        return (
-            replace(self, templates=replace(self.templates, assets=dict(assets)))
-            if self.templates
-            else self
+        screen = self.screen
+        if screen and screen.opening_logo:
+            logo = screen.opening_logo
+            ref = assets.get(logo.src[6:])
+            screen = replace(screen, opening_logo=replace(logo, url=ref.url if ref else None))
+        return replace(
+            self,
+            screen=screen,
+            templates=replace(self.templates, assets=dict(assets)) if self.templates else None,
         )
 
     def validate_plan(self, data: str, answers: BaseModel) -> BaseModel:

@@ -25,6 +25,20 @@ separadamente e não pressupõe que o default do YAML seja o nome do exemplo.
 
 ## Release
 
+Novas versões usam `vYYYY.MM.DD.x`: ano com quatro dígitos, mês e dia com dois, no calendário
+válido de `America/Sao_Paulo`. O contador diário começa em 1 e segue o maior daquele dia + 1
+(`9`, `10`, `11`); o primeiro release de outro dia começa em 1. Por exemplo,
+`v2026.10.22.1`, `v2026.10.22.2` e `v2027.01.03.1`. `APP_VERSION` e a tag da imagem levam o
+número sem `v`; a tag Git e o Release levam `v`. A versão dos formulários é independente.
+
+Planejamento e publisher consomem `python -m app.version`. Retry do mesmo SHA preserva a versão
+já tagueada, leve ou anotada, mesmo após meia-noite. Tags legadas `vAAAA.M.N` continuam válidas
+para retry, rodapé e guia da tag instalada; são histórico de release, mas não entram no contador
+diário. Tags fora desses contratos, inclusive datas impossíveis, não são releases. Saída remota
+malformada, refs inválidas ou conflitantes são erros, inclusive com opt-in de bootstrap. Falha de
+`git ls-remote` interrompe o workflow antes do cálculo. Tags, releases e imagens antigas permanecem
+inalteradas; o contrato novo se aplica às próximas releases de novos commits.
+
 O publisher fica desligado por padrão. Ele exige a opção de repositório
 `LEADKIT_PUBLISH_ENABLED=true`, push da branch `main` no repositório autorizado (sem fork) e todos
 os gates do mesmo commit verdes. A primeira versão sem tags exige também o opt-in explícito de

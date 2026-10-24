@@ -183,7 +183,21 @@ def _consent(spec: FormSpec) -> list[tuple[str, str]]:
     absent = "não oferecido"
     return [
         ("Versão do texto", spec.consent_text_version),
-        ("Autorização do processamento", consent.processing),
+        (
+            "Como a participante concorda",
+            "Confirmar pela caixa"
+            if consent.acquisition_method == "checkbox"
+            else "Concordar ao enviar",
+        ),
+        ("Apresentação do aviso", "Painel" if consent.presentation == "panel" else "Compacta"),
+        (
+            "Posição do aviso",
+            "Primeira etapa" if consent.position == "first_step" else "Antes do envio",
+        ),
+        (
+            "Texto da caixa de confirmação",
+            consent.processing or "Não aplicável ao concordar ao enviar",
+        ),
         ("Aviso sobre o uso dos dados", consent.notice),
         ("Novidades por e-mail", consent.marketing_email or absent),
         ("Novidades por WhatsApp", consent.marketing_whatsapp or absent),

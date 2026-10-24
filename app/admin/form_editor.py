@@ -293,6 +293,9 @@ class StepEdit:
 class ConsentEdit:
     processing: str = ""
     notice: str = ""
+    acquisition_method: str = "checkbox"
+    presentation: str = "panel"
+    position: str = "first_step"
     # O texto de cada canal de marketing e se o formulário o oferece.
     texts: dict[str, str] = field(default_factory=lambda: dict.fromkeys(CHANNELS, ""))
     offered: dict[str, bool] = field(default_factory=lambda: dict.fromkeys(CHANNELS, False))
@@ -300,7 +303,20 @@ class ConsentEdit:
     def document(self) -> dict[str, Any]:
         """O consentimento sem a versão, que a publicação sobe sozinha."""
         return {
-            "processing": _lines(self.processing).strip(),
+            **{
+                key: getattr(self, key)
+                for key, default in (
+                    ("acquisition_method", "checkbox"),
+                    ("presentation", "panel"),
+                    ("position", "first_step"),
+                )
+                if getattr(self, key) != default
+            },
+            **(
+                {"processing": _lines(self.processing).strip()}
+                if self.processing.strip() or self.acquisition_method == "checkbox"
+                else {}
+            ),
             "notice": _lines(self.notice).strip(),
             "marketing": {
                 channel: _lines(self.texts[channel]).strip()
@@ -483,6 +499,8 @@ class FormEdit:
     release_mode: str = "automatic"
     title: str = ""
     intro: str = ""
+    opening_logo_src: str = ""
+    opening_logo_alt: str = ""
     minutes: str = ""
     steps: list[StepEdit] = field(default_factory=list)
     identity: dict[str, QuestionEdit | None] = field(default_factory=dict)
@@ -519,12 +537,17 @@ class FormEdit:
             generation=_text(document.get("generation", "pdf")),
             title=_text(document.get("title")),
             intro=_text(document.get("intro")),
+            opening_logo_src=_text((document.get("opening_logo") or {}).get("src")),
+            opening_logo_alt=_text((document.get("opening_logo") or {}).get("alt")),
             minutes=_text(document.get("minutes")),
             steps=steps,
             identity={role: by_name.get(identity.get(role) or "") for role in IDENTITY_ROLES},
             consent=ConsentEdit(
                 processing=_text(consent.get("processing")),
                 notice=_text(consent.get("notice")),
+                acquisition_method=_text(consent.get("acquisition_method", "checkbox")),
+                presentation=_text(consent.get("presentation", "panel")),
+                position=_text(consent.get("position", "first_step")),
                 texts={c: _text(marketing.get(c)) or CHANNEL_DEFAULTS[c] for c in CHANNELS},
                 offered={channel: bool(marketing.get(channel)) for channel in CHANNELS},
             ),
@@ -589,11 +612,16 @@ class FormEdit:
             generation=first("generation") or "pdf",
             title=first("title"),
             intro=first("intro"),
+            opening_logo_src=first("opening_logo.src"),
+            opening_logo_alt=first("opening_logo.alt") if first("opening_logo.src").strip() else "",
             minutes=first("minutes"),
             steps=[steps[i] for i in sorted(steps)],
             consent=ConsentEdit(
                 processing=first("consent.processing"),
                 notice=first("consent.notice"),
+                acquisition_method=first("consent.acquisition_method") or "checkbox",
+                presentation=first("consent.presentation") or "panel",
+                position=first("consent.position") or "first_step",
                 texts={channel: first(f"consent.marketing.{channel}") for channel in CHANNELS},
                 offered={
                     channel: bool(form.getlist(f"consent.marketing.{channel}.offered"))
@@ -672,6 +700,11 @@ class FormEdit:
             "title": self.title.strip(),
             "intro": _lines(self.intro).strip(),
         }
+        if self.opening_logo_src.strip() or self.opening_logo_alt.strip():
+            found["opening_logo"] = {
+                "src": self.opening_logo_src.strip(),
+                "alt": self.opening_logo_alt.strip(),
+            }
         minutes = _number(self.minutes)
         if minutes is not None:
             found["minutes"] = minutes

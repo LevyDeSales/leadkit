@@ -182,9 +182,10 @@ def public_page(deps: Deps, slug: str, step: int) -> PublicPage:
     compila mais: um deploy com o compilador mais rígido)."""
     with deps.sessions() as session:
         draft = drafts.load(session, slug)
+        refs = form_assets.live_refs(session, draft.document) if draft else {}
     if draft is None:
         raise UnknownForm(slug)
-    spec = compile_definition(draft.document, version_number=draft.next_number)
+    spec = compile_definition(draft.document, version_number=draft.next_number).with_assets(refs)
     assert spec.screen is not None  # uma definição sempre tem a página pública
     steps = steps_view(spec, spec.screen)
     number = min(max(step, 1), len(steps))

@@ -107,7 +107,7 @@ from app.forms.definition.document import (
 )
 from app.forms.definition.images import AssetRef
 from app.forms.definition.normal import answered, part, same_meaning
-from app.forms.definition.resources import resource_problems
+from app.forms.definition.resources import opening_logo_problems, resource_problems
 from app.forms.definition.scoring import ScoreRun, ScoringFailure
 from app.forms.sandbox import TemplateProblem
 from app.forms.stored import (
@@ -138,6 +138,7 @@ SCREEN_FIELDS = (
     "generation",
     "title",
     "intro",
+    "opening_logo",
     "minutes",
     "steps",
     "identity",
@@ -762,9 +763,9 @@ def save_document(
         if isinstance(document.get("slug"), str) and document["slug"] != wanted:
             raise DefinitionError([Problem("slug", SLUG_OF_THE_DOCUMENT)])
         stored = as_stored(session, _with_consent_version(document, draft.document, rename))
-        library = (
-            {n: a.ref for n, a in form_assets.visible(session, slug).items()} if resources else {}
-        )
+        library = {n: a.ref for n, a in form_assets.visible(session, slug).items()}
+    if problems := opening_logo_problems(stored, library.keys()):
+        raise DefinitionError(problems)
     if resources and stored.get("generation", "pdf") == "pdf":
         check_templates(
             template_texts_of(stored), stored, number=draft.next_number, assets=library
@@ -1044,10 +1045,12 @@ SOURCE_BROKEN = (
 @dataclass(frozen=True)
 class _Origin:
     """A definição de onde a cópia parte e a versão dela: o número da versão publicada, ou None
-    para o rascunho de um formulário que ainda não foi publicado."""
+    para o rascunho de um formulário que ainda não foi publicado. `images` resolve os nomes
+    segundo essa mesma escolha: pins publicados ou conteúdo atual do rascunho."""
 
     document: dict[str, Any]
     version: int | None
+    images: Mapping[str, AssetRef]
 
 
 def _origin(session: Session, source: str, *, slug: str, title: str) -> _Origin | None:
@@ -1069,7 +1072,12 @@ def _origin(session: Session, source: str, *, slug: str, title: str) -> _Origin 
         }
     if isinstance(document.get("consent"), Mapping):
         document["consent"] = {**document["consent"], "version": f"{slug}-v1"}
-    return _Origin(document, version)
+    images = (
+        form_assets.version_refs(session, source, version)
+        if version is not None
+        else form_assets.live_refs(session, base)
+    )
+    return _Origin(document, version, images)
 
 
 def problems_by_field(problems: Sequence[Problem]) -> dict[str, str]:
@@ -1133,7 +1141,7 @@ def create(
                 _prepare_pdf(start)
         document = as_stored(session, start)
     try:
-        compile_definition(document, version_number=FIRST_VERSION)
+        spec = compile_definition(document, version_number=FIRST_VERSION)
     except DefinitionError as exc:  # o modelo inicial sempre compila; uma origem pode não compilar
         count = f"{len(exc.problems)} {'problema' if len(exc.problems) == 1 else 'problemas'}"
         raise DefinitionError([Problem("source", SOURCE_BROKEN.format(count=count))]) from None
@@ -1141,7 +1149,22 @@ def create(
         _insert_form(deps, document, actor=actor, action="form.create", details={})
     else:
         details = {"source": source, "source_version": origin.version}
-        _insert_form(deps, document, actor=actor, action="form.duplicate", details=details)
+        images = {}
+        if spec.screen and spec.screen.opening_logo:
+            name = spec.screen.opening_logo.src[6:]
+            if name not in origin.images:
+                raise DefinitionError(
+                    [
+                        Problem(
+                            "source", "a imagem do logo de abertura da origem não está disponível"
+                        )
+                    ]
+                )
+            images[name] = origin.images[name]
+            details["images"] = {name: origin.images[name].sha256}
+        _insert_form(
+            deps, document, actor=actor, action="form.duplicate", details=details, images=images
+        )
     return slug
 
 
@@ -1152,6 +1175,7 @@ def _insert_form(
     actor: str,
     action: str,
     details: Mapping[str, Any],
+    images: Mapping[str, AssetRef] | None = None,
 ) -> None:
     """Grava o formulário novo, sem versão, o rascunho dele e a auditoria, numa transação só."""
     digest = fingerprint(document)
@@ -1174,6 +1198,13 @@ def _insert_form(
         )
         if form_id is None:  # outro formulário com o mesmo slug passou na frente
             raise DefinitionError([Problem("slug", SLUG_IN_DATABASE)])
+        for name, ref in (images or {}).items():
+            try:
+                form_assets.copy_image(
+                    deps, session, form_id=form_id, name=name, ref=ref, actor=actor
+                )
+            except form_assets.AssetRefused as exc:
+                raise DefinitionError([Problem("source", exc.message)]) from None
         session.add(
             FormDraft(
                 form_id=form_id,
@@ -1208,6 +1239,7 @@ CONTACT_UNCONFIRMED = (
 )
 DOES_NOT_COMPILE = "Corrija o rascunho: ele não compila com o código deste deploy."
 PDF_FAILED = "Corrija o rascunho: o PDF de exemplo não foi gerado."
+OPENING_LOGO_MISSING = "Confira a imagem do logo de abertura antes de publicar."
 IMAGE_GONE = (
     "Uma imagem que o PDF ou a prévia usa saiu enquanto você publicava. Confira as imagens e "
     "tente de novo."
@@ -1467,7 +1499,7 @@ def publish(
         raise PublishRefused(found, reasons)
     problems = _pdf_problems(deps, slug, found)
     if problems:
-        raise PublishRefused(found, [PDF_FAILED], problems)
+        raise PublishRefused(found, [_publication_reason(problems)], problems)
     assert found.spec is not None  # sem problemas, a definição compilou
     digest = fingerprint(found.document)
     now = utc_now()
@@ -1503,8 +1535,10 @@ def publish(
             try:  # fixa o conteúdo de cada imagem que a versão usa
                 pinned = form_assets.pin_version(session, version_id, slug, found.document)
             except form_assets.MissingImages as missing:  # uma imagem saiu no meio do caminho
-                problems = [Problem("pdf", missing.message())]
-                raise PublishRefused(found, [IMAGE_GONE], problems) from None
+                path = missing.path(found.document)
+                problems = [Problem(path, missing.message())]
+                reason = OPENING_LOGO_MISSING if path == "opening_logo.src" else IMAGE_GONE
+                raise PublishRefused(found, [reason], problems) from None
             session.execute(
                 sa.update(Form).where(Form.id == draft.form_id).values(title=found.spec.title)
             )
@@ -1536,6 +1570,10 @@ def publish(
     return Published(slug, found.spec.title, found.number, found)
 
 
+def _publication_reason(problems: Sequence[Problem]) -> str:
+    return OPENING_LOGO_MISSING if problems[0].path == "opening_logo.src" else PDF_FAILED
+
+
 def _pdf_problems(deps: Deps, slug: str, found: Review) -> list[Problem]:
     """O que o PDF de exemplo da versão nova não passa: as imagens que ele usa e o adaptador do PDF
     (o WeasyPrint em produção), que confere o que a compilação não vê."""
@@ -1552,7 +1590,7 @@ def _simulation(deps: Deps, slug: str, found: Review, reasons: Sequence[str]) ->
     if found.spec is not None and not found.nothing:
         from_pdf = _pdf_problems(deps, slug, found)
         if from_pdf:
-            reasons, problems = [*reasons, PDF_FAILED], from_pdf
+            reasons, problems = [*reasons, _publication_reason(from_pdf)], from_pdf
     return Simulation(found, tuple(reasons), tuple(problems))
 
 

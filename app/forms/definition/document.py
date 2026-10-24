@@ -26,6 +26,8 @@ from pydantic import (
     StringConstraints,
     Tag,
     ValidationError,
+    model_serializer,
+    model_validator,
 )
 
 NAME_PATTERN = r"^[a-z][a-z0-9_]*$"
@@ -252,9 +254,28 @@ class MarketingDoc(_Strict):
 
 class ConsentDoc(_Strict):
     version: Version
-    processing: Text
+    processing: Text | None = None
     notice: Text
     marketing: MarketingDoc = MarketingDoc()
+    acquisition_method: Literal["checkbox", "submit"] = "checkbox"
+    presentation: Literal["panel", "compact"] = "panel"
+    position: Literal["first_step", "before_submit"] = "first_step"
+
+    @model_validator(mode="after")
+    def required_checkbox_text(self):
+        if self.acquisition_method == "checkbox" and self.processing is None:
+            raise ValidationError.from_exception_data(
+                "ConsentDoc", [{"type": "missing", "loc": ("processing",), "input": None}]
+            )
+        return self
+
+    @model_serializer(mode="wrap")
+    def explicit_options(self, handler):
+        found = handler(self)
+        for key in ("acquisition_method", "presentation", "position", "processing"):
+            if key not in self.model_fields_set:
+                found.pop(key, None)
+        return found
 
 
 class PatternDoc(_Strict):
@@ -547,6 +568,23 @@ class ExamplesDoc(_Strict):
     plan: dict[str, Any] | None = None
 
 
+def _opening_source(value: str) -> str:
+    from app.forms.definition.images import name_problem
+
+    if not value.startswith("asset:"):
+        raise ValueError("use uma imagem do formulário no formato asset:nome")
+    if problem := name_problem(value[6:]):
+        raise ValueError(problem)
+    return value
+
+
+class OpeningLogoDoc(_Strict):
+    """Imagem opcional acima do título, independente da marca e do PDF."""
+
+    src: Annotated[str, StringConstraints(strip_whitespace=True), AfterValidator(_opening_source)]
+    alt: Label
+
+
 class FormDocument(_Strict):
     """A definição de um formulário: as etapas e as perguntas, a identidade e o consentimento da lead,
     a pontuação, as instruções e o prompt do LLM, o modelo do plano, o HTML e o CSS do PDF, a prévia
@@ -558,6 +596,7 @@ class FormDocument(_Strict):
     slug: Slug
     title: Label
     intro: Text
+    opening_logo: OpeningLogoDoc | None = None
     minutes: Annotated[int, Field(ge=1, le=60)]
     steps: list[StepDoc] = Field(min_length=1)
     identity: IdentityDoc

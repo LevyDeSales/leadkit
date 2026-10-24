@@ -91,7 +91,7 @@ def test_the_server_lists_one_tool_per_operation_the_key_allows(world: World) ->
         "get_job_plan_projection",
         "render_job_participant_preview",
     }
-    assert len(listed.tools) == 82
+    assert len(listed.tools) == 83
     for tool in listed.tools:
         spec = world.tools[tool.name]
         assert tool.description == spec.description and tool.title == spec.summary
