@@ -18,6 +18,17 @@ Em “Com PDF”, na lista de pedidos (`/admin`), use “Buscar” por nome, e-m
 
 **Se não encontrar:** limpe filtros, confira a finalidade e o ambiente. Os registros podem ter saído pela retenção. Contagens e ausência de linhas não comprovam que ninguém respondeu no passado.
 
+## Acompanhar o envio das respostas às integrações
+
+Se o destino próprio usa “Enviar respostas ao concluir o formulário”, as respostas seguem após serem salvas, inclusive com PDF pendente, geração que falhou ou plano retido. Habilitar a opção não envia o histórico anterior.
+
+- Em “Com PDF”, abra o pedido e confira “Respostas salvas”: “Sincronização pendente”, “Sincronização concluída” ou “Sincronização falhou”, com destino e revisões. Em falha elegível, marque a confirmação de envio externo e use “Repetir envio de respostas”.
+- Em “Somente respostas”, abra a captura e confira “Entregas às integrações”. Os estados são `pending` (pendente), `succeeded` (transporte confirmado) e `failed` (falha). Em falha elegível, marque a confirmação e use “Repetir entrega”.
+
+Repetir faz novo envio externo do mesmo evento; não gera nem libera PDF. Sucesso confirma somente o transporte, sem comprovar leitura ou atendimento. Troca de URL, segredo ou revisão bloqueia pendências da nova opção na revisão original; elas não podem ser reenviadas pela revisão nova. Não peça novo preenchimento nem crie outro formulário para recuperá-las. Veja os [passos e limites de recuperação](integracoes.md#recuperar-uma-entrega-com-falha).
+
+Os eventos legados de PDF ficam em “Entregas”; o Baserow mantém seus perfis de captura e PDF, com seus próprios momentos de envio. Consulte [Integrações](integracoes.md) para distinguir essas entregas do envio de respostas após salvar.
+
 ## Conferir se o PDF atual existe e pode ser acessado
 
 **Onde entrar:** detalhe do pedido → “PDF da tentativa atual” e “Acesso da participante”.
