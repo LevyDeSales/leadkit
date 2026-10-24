@@ -15,7 +15,7 @@ from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
-from app.forms import FIRST_VERSION, Completion, FormSpec, Handoff
+from app.forms import FIRST_VERSION, Completion, FormSpec, Handoff, OpeningLogo
 from app.forms.definition import plan as plan_tree
 from app.forms.definition import questions
 from app.forms.definition.conditions import Conditions, condition_problems
@@ -154,6 +154,9 @@ def compile_definition(
                 consent=definition.consent,
                 identity=definition.identity,
             ),
+            opening_logo=OpeningLogo(**definition.opening_logo.model_dump())
+            if definition.opening_logo
+            else None,
             notices=notices_of(definition.notices),  # os avisos da espera e da falha
         ),
         templates=templates,

@@ -28,6 +28,8 @@
 
 **Resultado:** um formulário ainda sem publicação. O endereço pode mudar até a primeira publicação; depois fica fixo. Copiar usa a versão publicada da origem, ou seu rascunho quando ela ainda não foi publicada. A política de liberação é conservada. O vínculo de encaminhamento e suas credenciais não são copiados: revise o receptor próprio.
 
+O logo de abertura conserva a imagem e o texto alternativo da origem escolhida. A cópia recebe uma imagem própria, com o mesmo nome e conteúdo, mesmo se houver outra imagem homônima na biblioteca. Trocar ou remover a imagem da origem depois da cópia não troca seu logo; revise e publique a cópia separadamente. Se a criação indicar imagem histórica indisponível, peça à administradora técnica para recuperar o arquivo antes de tentar novamente.
+
 **Se houver erro:** corrija o campo indicado, inclusive endereço já utilizado. Não trate um rascunho criado como um formulário já disponível ao público.
 
 ## Salvar uma edição

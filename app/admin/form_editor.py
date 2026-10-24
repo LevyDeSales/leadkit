@@ -483,6 +483,8 @@ class FormEdit:
     release_mode: str = "automatic"
     title: str = ""
     intro: str = ""
+    opening_logo_src: str = ""
+    opening_logo_alt: str = ""
     minutes: str = ""
     steps: list[StepEdit] = field(default_factory=list)
     identity: dict[str, QuestionEdit | None] = field(default_factory=dict)
@@ -519,6 +521,8 @@ class FormEdit:
             generation=_text(document.get("generation", "pdf")),
             title=_text(document.get("title")),
             intro=_text(document.get("intro")),
+            opening_logo_src=_text((document.get("opening_logo") or {}).get("src")),
+            opening_logo_alt=_text((document.get("opening_logo") or {}).get("alt")),
             minutes=_text(document.get("minutes")),
             steps=steps,
             identity={role: by_name.get(identity.get(role) or "") for role in IDENTITY_ROLES},
@@ -589,6 +593,8 @@ class FormEdit:
             generation=first("generation") or "pdf",
             title=first("title"),
             intro=first("intro"),
+            opening_logo_src=first("opening_logo.src"),
+            opening_logo_alt=first("opening_logo.alt") if first("opening_logo.src").strip() else "",
             minutes=first("minutes"),
             steps=[steps[i] for i in sorted(steps)],
             consent=ConsentEdit(
@@ -672,6 +678,11 @@ class FormEdit:
             "title": self.title.strip(),
             "intro": _lines(self.intro).strip(),
         }
+        if self.opening_logo_src.strip() or self.opening_logo_alt.strip():
+            found["opening_logo"] = {
+                "src": self.opening_logo_src.strip(),
+                "alt": self.opening_logo_alt.strip(),
+            }
         minutes = _number(self.minutes)
         if minutes is not None:
             found["minutes"] = minutes
