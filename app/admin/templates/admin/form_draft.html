@@ -67,7 +67,24 @@
           {%- else %}
           <p class="muted">Endereço público: <span class="mono">/p/{{ page.nav.slug }}</span>, fixo desde a primeira publicação.</p>
           {%- endif %}
-          {{ f.field("intro", "Introdução", s.edit.intro, hint="O texto de entrada da página, ao lado do título.", area=True, rows=3) }}
+          {{ f.field("intro", "Introdução", s.edit.intro, hint="Texto puro abaixo do título; as quebras de linha são preservadas.", area=True, rows=3) }}
+          {% set logo_name = "opening_logo.src" %}
+          {% set logo_id = s.field_id(logo_name) %}
+          <div class="field">
+            <label for="{{ logo_id }}">Imagem do logo de abertura <span class="opt">(opcional)</span></label>
+            <p class="muted field__hint" id="{{ logo_id }}-dica">Escolha uma imagem para aparecer acima do título, também sem PDF. “Sem logo” retira a imagem. <a href="/admin/assets">Enviar ou gerenciar imagens</a>.</p>
+            <select class="select" id="{{ logo_id }}" name="{{ logo_name }}" aria-describedby="{{ f.described(logo_name, True) }}"{% if s.errors.get(logo_name) %} aria-invalid="true"{% endif %}{% if s.focus == logo_id %} autofocus{% endif %}>
+              <option value=""{% if not s.edit.opening_logo_src %} selected{% endif %}>Sem logo</option>
+              {% if s.edit.opening_logo_src and s.edit.opening_logo_src not in page.opening_logo_choices|map(attribute=0)|list %}
+              <option value="{{ s.edit.opening_logo_src }}" selected>Imagem indisponível; escolha outra</option>
+              {% endif %}
+              {% for value, label in page.opening_logo_choices %}
+              <option value="{{ value }}"{% if value == s.edit.opening_logo_src %} selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+            {{ f.error_for(logo_name) }}
+          </div>
+          {{ f.field("opening_logo.alt", "Texto alternativo do logo", s.edit.opening_logo_alt, hint="Obrigatório quando houver logo. Descreva a identidade apresentada na imagem.", opt=True) }}
           {{ f.field("minutes", "Tempo para responder, em minutos", s.edit.minutes, hint="De 1 a 60.") }}
 
         </div>

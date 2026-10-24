@@ -5,6 +5,9 @@
 {%- import "public/_macros.html" as ui -%}
 <section class="hero on-dark" aria-labelledby="titulo">
   <div class="container hero__inner">
+    {% if screen.opening_logo and screen.opening_logo.url %}
+    <img class="hero__logo" src="{{ screen.opening_logo.url }}" alt="{{ screen.opening_logo.alt }}">
+    {% endif %}
     <h1 id="titulo">{{ spec.title }}</h1>
     <p class="lead">{{ screen.intro }}</p>
     <ul class="facts">

@@ -1841,6 +1841,16 @@
               }
             ]
           },
+          "opening_logo": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OpeningLogoDoc"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "pdf": {
             "title": "Pdf",
             "type": "null"
@@ -8289,6 +8299,28 @@
         "title": "NotificationData",
         "type": "object"
       },
+      "OpeningLogoDoc": {
+        "additionalProperties": false,
+        "description": "Imagem opcional acima do título, independente da marca e do PDF.",
+        "properties": {
+          "alt": {
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Alt",
+            "type": "string"
+          },
+          "src": {
+            "title": "Src",
+            "type": "string"
+          }
+        },
+        "required": [
+          "src",
+          "alt"
+        ],
+        "title": "OpeningLogoDoc",
+        "type": "object"
+      },
       "Optimization": {
         "description": "O que a otimização fez ao arquivo enviado: como ele era e como ficou.",
         "properties": {
@@ -8662,6 +8694,16 @@
             "anyOf": [
               {
                 "$ref": "#/components/schemas/NoticesDoc"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "opening_logo": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OpeningLogoDoc"
               },
               {
                 "type": "null"

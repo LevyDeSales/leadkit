@@ -31,6 +31,7 @@ from app.forms.definition.document import (
     Label,
     Name,
     NoticesDoc,
+    OpeningLogoDoc,
     PdfDoc,
     PhasesDoc,
     PlanDoc,
@@ -45,6 +46,7 @@ from app.forms.definition.document import (
 PARTS: dict[str, TypeAdapter[Any]] = {
     "title": TypeAdapter(Label),
     "intro": TypeAdapter(Text),
+    "opening_logo": TypeAdapter(OpeningLogoDoc),
     "minutes": TypeAdapter(int),
     "steps": TypeAdapter(list[StepDoc]),
     "identity": TypeAdapter(IdentityDoc),
@@ -59,7 +61,7 @@ PARTS: dict[str, TypeAdapter[Any]] = {
     "release": TypeAdapter(ReleaseDoc),
 }
 # As partes opcionais: ausentes, nulas ou vazias, dizem o mesmo (nada).
-OPTIONAL_PARTS = ("scoring", "phases", "notices", "data", "completion")
+OPTIONAL_PARTS = ("scoring", "phases", "notices", "data", "completion", "opening_logo")
 
 
 def part(key: str, value: Any) -> Any:

@@ -8,7 +8,7 @@ As instruções abaixo explicam como operar o editor. O conteúdo das perguntas,
 
 **Onde entrar:** “Formulários” → seu formulário → “Editar o rascunho”.
 
-1. No índice “Perguntas”, em “Página pública”, ajuste “Título”, “Introdução” e “Tempo para responder, em minutos” (de 1 a 60). Os avisos opcionais têm título, texto e link; são texto puro, sem formatação de código.
+1. No índice “Perguntas”, em “Página pública”, ajuste “Título”, “Introdução” e “Tempo para responder, em minutos” (de 1 a 60). A introdução é texto puro: as quebras de linha e linhas em branco aparecem na prévia e na página pública, sem interpretar HTML. O [logo de abertura](imagens-e-pdf.md#logo-na-abertura-do-formulário) é opcional e tem imagem e texto alternativo próprios. Os avisos opcionais têm título, texto e link; são texto puro, sem formatação de código.
 2. Em “Etapas e perguntas”, use “Adicionar etapa” para criar uma tela e “Adicionar pergunta” dentro dela.
 3. Abra a pergunta e preencha “Rótulo”, que é o texto que a participante lê. Escolha “Tipo”, “Ajuda”, “Obrigatória” e os limites apresentados para esse tipo.
 4. Confira “Nome da resposta”. Ele identifica a resposta nas integrações e nas instruções de geração. Evite mudá-lo após publicar sem revisar as dependências com a administradora técnica.

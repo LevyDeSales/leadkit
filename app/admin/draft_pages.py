@@ -204,6 +204,7 @@ def example_scores(draft: Draft) -> ScoredView | None:
 STRUCTURED = (
     "title",
     "intro",
+    "opening_logo",
     "minutes",
     "slug",
     "steps",
@@ -251,6 +252,9 @@ PLACE_NAMES = {
     "release.mode": "Liberação do plano",
     "title": "Título",
     "intro": "Introdução",
+    "opening_logo": "Logo de abertura",
+    "opening_logo.src": "Logo de abertura · imagem",
+    "opening_logo.alt": "Logo de abertura · texto alternativo",
     "minutes": "Tempo para responder",
     "slug": "Endereço",
     "steps": "Etapas",
@@ -595,6 +599,7 @@ class EditorPage:
     generation_fields: bool  # conserva a configuração enquanto a retirada não foi salva
     saved_choices: tuple[tuple[str, str], ...]
     scoring: ScoredView | None  # a pontuação do rascunho guardado com as respostas de exemplo
+    opening_logo_choices: tuple[tuple[str, str], ...] = ()
 
 
 def editor(
@@ -608,6 +613,7 @@ def editor(
     token: str | None = None,
     slug: str | None = None,
     unsaved: bool = False,
+    opening_logo_choices: tuple[tuple[str, str], ...] = (),
 ) -> EditorPage:
     """O editor do rascunho guardado ou, com `texts` e `edit`, o que a operadora mandou. `token`
     é a impressão digital que a página mostrou, mantida numa operação do editor: quem salva depois
@@ -616,6 +622,7 @@ def editor(
     slug_field = not draft.published
     places = [place_of(problem, edit, slug_field=slug_field) for problem in problems]
     return EditorPage(
+        opening_logo_choices=opening_logo_choices,
         nav=draft_nav(draft),
         summary=draft_summary(draft),
         texts=texts or texts_of(draft.document),

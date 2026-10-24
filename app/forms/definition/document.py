@@ -568,6 +568,23 @@ class ExamplesDoc(_Strict):
     plan: dict[str, Any] | None = None
 
 
+def _opening_source(value: str) -> str:
+    from app.forms.definition.images import name_problem
+
+    if not value.startswith("asset:"):
+        raise ValueError("use uma imagem do formulário no formato asset:nome")
+    if problem := name_problem(value[6:]):
+        raise ValueError(problem)
+    return value
+
+
+class OpeningLogoDoc(_Strict):
+    """Imagem opcional acima do título, independente da marca e do PDF."""
+
+    src: Annotated[str, StringConstraints(strip_whitespace=True), AfterValidator(_opening_source)]
+    alt: Label
+
+
 class FormDocument(_Strict):
     """A definição de um formulário: as etapas e as perguntas, a identidade e o consentimento da lead,
     a pontuação, as instruções e o prompt do LLM, o modelo do plano, o HTML e o CSS do PDF, a prévia
@@ -579,6 +596,7 @@ class FormDocument(_Strict):
     slug: Slug
     title: Label
     intro: Text
+    opening_logo: OpeningLogoDoc | None = None
     minutes: Annotated[int, Field(ge=1, le=60)]
     steps: list[StepDoc] = Field(min_length=1)
     identity: IdentityDoc

@@ -41,7 +41,18 @@ from app.forms.sandbox import SandboxTemplate, TemplateProblem
 # perguntas, pelo que o prompt lê delas (`llm_parts`). O endereço (`slug`) só muda antes da
 # primeira publicação, e o prompt não o recebe.
 NOT_FOR_LLM = frozenset(
-    {"slug", "title", "intro", "minutes", "steps", "identity", "consent", "pdf", "preview"}
+    {
+        "slug",
+        "title",
+        "intro",
+        "opening_logo",
+        "minutes",
+        "steps",
+        "identity",
+        "consent",
+        "pdf",
+        "preview",
+    }
     | {"examples", "scoring", "notices", "completion", "generation", "release"}
 )
 # O nome de cada parte que vai ao LLM, para a tela dizer o que mudou.
@@ -374,7 +385,11 @@ def _at(*path: str) -> Callable[[Mapping[str, Any]], Any]:
 
 
 def _page(document: Mapping[str, Any]) -> Any:
-    return {key: document[key] for key in ("title", "intro", "minutes") if key in document}
+    return {
+        key: document[key]
+        for key in ("title", "intro", "opening_logo", "minutes")
+        if key in document
+    }
 
 
 def _spoken(holder: Any, targets: Mapping[str, Any]) -> Any:
@@ -413,7 +428,7 @@ def _steps(document: Mapping[str, Any]) -> Any:
 
 # As seções da comparação, na ordem da leitura do formulário; o resto vai em "Outras partes".
 SECTIONS: tuple[tuple[str, str, Callable[[Mapping[str, Any]], Any]], ...] = (
-    ("pagina", "Página pública: título, introdução e tempo", _page),
+    ("pagina", "Página pública: título, introdução, logo e tempo", _page),
     ("avisos", "Avisos das páginas de espera e de falha", _at("notices")),
     ("conclusao", "Conclusão após salvar as respostas", _at("completion")),
     ("liberacao", "Liberação do plano", _at("release")),
@@ -434,7 +449,17 @@ SECTIONS: tuple[tuple[str, str, Callable[[Mapping[str, Any]], Any]], ...] = (
     ("plano-de-exemplo", "Plano de exemplo", _at("examples", "plan")),
 )
 COVERED = frozenset(
-    {"title", "intro", "minutes", "steps", "identity", "consent", "scoring", "instructions"}
+    {
+        "title",
+        "intro",
+        "opening_logo",
+        "minutes",
+        "steps",
+        "identity",
+        "consent",
+        "scoring",
+        "instructions",
+    }
     | {
         "prompt",
         "plan",
