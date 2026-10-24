@@ -19,7 +19,8 @@ em versões checkbox. O novo `consent` discrimina a declaração:
 
 O método esperado vem da versão resolvida no servidor. O ramo submit recusa `privacy`,
 `checked` e extras; caixa exige `privacy:true`. Método incompatível e canal não oferecido
-retornam 422, sem gravação. Aviso obsoleto retorna 409 `consent_text_outdated`: reler o aviso
+em uma submissão nova retornam 422, sem gravação. Aviso obsoleto em um envio novo retorna
+409 `consent_text_outdated`: reler o aviso
 e enviar novamente conforme o método; não solicitar uma caixa inexistente. A página HTML
 usa a mesma validação e deriva a declaração do POST final válido, com e sem JavaScript.
 GET, prévia, recarga, navegação intermediária e validação recusada não registram aceite.
@@ -32,7 +33,9 @@ A origem HTTP descreve uma declaração recebida, sem certificar leitura, pessoa
 Não se coletam IP, user-agent ou gravação de sessão para essa evidência.
 
 Replay discriminado compara respostas canônicas, método, ação, texto e marketing;
-divergência retorna 409 `idempotency_conflict`. Horário e origem são os do primeiro aceite,
+divergência retorna 409 `idempotency_conflict`, antes das verificações de método, texto e
+canal aplicadas a envios novos. Um payload estruturalmente inválido continua retornando 422
+antes dessa comparação. Horário e origem são os do primeiro aceite,
 inclusive em retry por outro transporte. Publicação concorrente e replay usam a versão
 histórica fixada na submissão. Shapes e replay de registros históricos legados continuam sem método/origem
 inventados; retry não atualiza suas escolhas de marketing.

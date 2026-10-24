@@ -81,7 +81,7 @@ def _row(session, forms, row, with_lead):
             "identity_unavailable": identity is None,
             "answers": submission.answers,
             "answer_rows": answer_rows(spec, submission.answers),
-            "consent": consent_facts(submission.consent)
+            "consent": consent_facts(submission.consent, mode="json")
             if "evidence_schema" in submission.consent
             else submission.consent,
             "tracking": submission.tracking,

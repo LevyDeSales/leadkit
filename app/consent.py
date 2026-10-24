@@ -59,7 +59,7 @@ class Evidence(BaseModel):
         return self
 
 
-def facts(raw: dict[str, Any]) -> dict[str, Any]:
+def facts(raw: dict[str, Any], *, mode: Literal["python", "json"] = "python") -> dict[str, Any]:
     """Projeta evidência nova estrita e os shapes legados conhecidos, sem criar método histórico."""
     found = {
         "privacy": False,
@@ -80,7 +80,7 @@ def facts(raw: dict[str, Any]) -> dict[str, Any]:
             evidence = Evidence.model_validate_json(json.dumps(raw))
         except (ValidationError, ValueError, TypeError):
             return found
-        return {**evidence.model_dump(), "privacy": True}
+        return {**evidence.model_dump(mode=mode), "privacy": True}
     accepted = raw.get("privacy_at")
     try:
         instant = datetime.fromisoformat(accepted) if isinstance(accepted, str) else None
@@ -88,7 +88,7 @@ def facts(raw: dict[str, Any]) -> dict[str, Any]:
         instant = None
     return {
         **found,
-        "privacy_at": instant,
+        "privacy_at": instant.isoformat() if instant is not None and mode == "json" else instant,
         "privacy": instant is not None or raw.get("processing") is True,
         "marketing_email": raw.get("marketing_email") is True,
         "marketing_whatsapp": raw.get("marketing_whatsapp") is True,

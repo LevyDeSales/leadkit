@@ -209,13 +209,16 @@ def accept_submission(
     if existing is not None and forms is not None:
         spec = forms.get(spec.slug, existing.form_version_number)
     answers = spec.answers_model.model_validate(body.answers)
+    answers_json = stored_answers(spec, answers)
+    if existing is not None and existing.consent.get("evidence_schema") == 2:
+        # Uma chave já confirmada compara a intenção original antes das recusas de um envio novo.
+        return _replay(session, existing, answers_json, signer, spec, body, forms)
     if body.consent.text_version != spec.consent_text_version:
         raise ConsentTextMismatch(spec.consent_text_version)
     check_method(
         spec.screen.consent.acquisition_method if spec.screen else "checkbox", body.consent
     )
     _check_marketing_channels(spec, body.consent)
-    answers_json = stored_answers(spec, answers)
     now = now or utcnow()
 
     if existing is not None:
@@ -355,6 +358,8 @@ def _replay(
     body: SubmissionIn,
     forms: FormRegistry | None,
 ) -> Accepted | CaptureAccepted:
+    if not same_declaration(submission.consent, body.consent):
+        raise IdempotencyConflict(submission.idempotency_key)
     if forms is not None and spec.version_number != submission.form_version_number:
         # Uma publicação pode cruzar dois envios concorrentes da mesma chave. A perdedora
         # compara respostas e conclusão pela versão que a vencedora confirmou.
@@ -366,7 +371,7 @@ def _replay(
         check_method(
             spec.screen.consent.acquisition_method if spec.screen else "checkbox", body.consent
         )
-    if submission.answers != answers_json or not same_declaration(submission.consent, body.consent):
+    if submission.answers != answers_json:
         raise IdempotencyConflict(submission.idempotency_key)
     if spec.generation == "none":
         receipt = session.scalar(

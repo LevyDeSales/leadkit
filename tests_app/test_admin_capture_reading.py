@@ -2,7 +2,9 @@
 
 import json
 from copy import deepcopy
+from datetime import datetime
 
+import pytest
 from admin_api_support import api_client
 from fastapi.testclient import TestClient
 from test_capture import capture_document
@@ -13,7 +15,7 @@ from app.forms.stored import import_definition
 from app.models import Form, FormVersion
 
 
-def stored_capture(deps, document=None):
+def stored_capture(deps, document=None, *, consent=None):
     document = document or reading_document()
     import_definition(deps, json.dumps(document), actor="operadora")
     with TestClient(create_app()) as client:
@@ -21,7 +23,7 @@ def stored_capture(deps, document=None):
             "/v1/forms/capture-test/submissions",
             json={
                 "answers": document["examples"]["answers"],
-                "consent": {"privacy": True, "text_version": "capture-test-v1"},
+                "consent": consent or {"privacy": True, "text_version": "capture-test-v1"},
             },
         )
     assert response.status_code == 202
@@ -302,3 +304,60 @@ def test_capture_reading_does_not_preserve_html_safe_string_subclasses():
     assert type(row["value_text"]) is str
     assert row["name"] == "<b>unknown</b>"
     assert row["value_text"] == "<img src=x>"
+
+
+@pytest.mark.parametrize("method", ["checkbox", "submit"])
+def test_capture_consent_is_json_safe_in_html_and_preserves_validated_facts(deps, method):
+    from test_admin import login
+
+    document = reading_document()
+    document["consent"]["acquisition_method"] = method
+    declaration = {
+        "method": method,
+        "action": "confirm" if method == "checkbox" else "submit",
+        "text_version": "capture-test-v1",
+    }
+    if method == "checkbox":
+        declaration["privacy"] = True
+    submission_id = stored_capture(deps, document, consent=declaration)
+    api = api_client(deps)
+    path = f"/admin/api/v1/captures/{submission_id}?include_lead_data=true"
+    response = api.get(path)
+    assert response.status_code == 200
+    consent = response.json()["lead_data"]["consent"]
+    assert consent["privacy"] is True and consent["method"] == method
+    assert consent["source"] == "public_api_declaration"
+    assert datetime.fromisoformat(consent["privacy_at"]).utcoffset().total_seconds() == 0
+    assert login(api).status_code == 303
+    page = api.get(f"/admin/captures/{submission_id}")
+    assert page.status_code == 200
+    assert "JSON técnico do envio" in page.text
+    assert consent["privacy_at"] in page.text
+    assert (
+        "Confirmação pela caixa" if method == "checkbox" else "Concordância ao enviar"
+    ) in page.text
+
+
+@pytest.mark.parametrize(
+    "invalid", [{"action": "unknown"}, {"privacy_at": "invalid"}, {"marketing_email": "yes"}]
+)
+def test_invalid_capture_consent_never_becomes_an_authorization_during_serialization(deps, invalid):
+    import uuid
+
+    from test_admin import login
+
+    from app.models import Submission
+
+    submission_id = stored_capture(deps)
+    with deps.sessions.begin() as session:
+        row = session.get_one(Submission, uuid.UUID(submission_id))
+        row.consent = {**row.consent, **invalid}
+    api = api_client(deps)
+    consent = api.get(f"/admin/api/v1/captures/{submission_id}?include_lead_data=true").json()[
+        "lead_data"
+    ]["consent"]
+    assert consent["privacy"] is False
+    assert consent["privacy_at"] is None and consent["method"] is None
+    assert consent["marketing_email"] is False
+    assert login(api).status_code == 303
+    assert api.get(f"/admin/captures/{submission_id}").status_code == 200
