@@ -320,7 +320,11 @@ def _consent_texts(consent: Any) -> Any:
     if not isinstance(consent, Mapping):
         return consent
     try:
-        return ConsentDoc.model_validate(consent).model_dump(exclude={"version"})
+        found = ConsentDoc.model_validate(consent).model_dump(
+            exclude={"version", "presentation", "position"}
+        )
+        found.setdefault("acquisition_method", "checkbox")
+        return found
     except ValidationError:
         return {key: value for key, value in consent.items() if key != "version"}
 

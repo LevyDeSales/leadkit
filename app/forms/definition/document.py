@@ -26,6 +26,8 @@ from pydantic import (
     StringConstraints,
     Tag,
     ValidationError,
+    model_serializer,
+    model_validator,
 )
 
 NAME_PATTERN = r"^[a-z][a-z0-9_]*$"
@@ -252,9 +254,28 @@ class MarketingDoc(_Strict):
 
 class ConsentDoc(_Strict):
     version: Version
-    processing: Text
+    processing: Text | None = None
     notice: Text
     marketing: MarketingDoc = MarketingDoc()
+    acquisition_method: Literal["checkbox", "submit"] = "checkbox"
+    presentation: Literal["panel", "compact"] = "panel"
+    position: Literal["first_step", "before_submit"] = "first_step"
+
+    @model_validator(mode="after")
+    def required_checkbox_text(self):
+        if self.acquisition_method == "checkbox" and self.processing is None:
+            raise ValidationError.from_exception_data(
+                "ConsentDoc", [{"type": "missing", "loc": ("processing",), "input": None}]
+            )
+        return self
+
+    @model_serializer(mode="wrap")
+    def explicit_options(self, handler):
+        found = handler(self)
+        for key in ("acquisition_method", "presentation", "position", "processing"):
+            if key not in self.model_fields_set:
+                found.pop(key, None)
+        return found
 
 
 class PatternDoc(_Strict):

@@ -6,6 +6,7 @@ from dataclasses import asdict
 import sqlalchemy as sa
 
 from app.admin.capture_reading import answer_rows
+from app.consent import facts as consent_facts
 from app.errors import TerminalError
 from app.models import CaptureReceipt, Submission
 from app.submission_identity import identity_from_answers, submission_form
@@ -80,7 +81,9 @@ def _row(session, forms, row, with_lead):
             "identity_unavailable": identity is None,
             "answers": submission.answers,
             "answer_rows": answer_rows(spec, submission.answers),
-            "consent": submission.consent,
+            "consent": consent_facts(submission.consent)
+            if "evidence_schema" in submission.consent
+            else submission.consent,
             "tracking": submission.tracking,
             "scores": submission.scores,
             "priority": submission.priority,

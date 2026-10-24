@@ -83,7 +83,22 @@
         <h2 id="consentimento-titulo">Consentimento</h2>
         <p class="muted">O que a lead lê e autoriza antes de enviar. A versão do texto sobe sozinha na publicação quando o texto muda, e cada envio guarda a versão que a lead leu.</p>
         <div class="form-stack">
-          {{ f.field("consent.processing", "Autorização do processamento", s.edit.consent.processing, hint="Obrigatória para processar suas respostas.", area=True, rows=2) }}
+          {% for key, label, options in [
+            ('acquisition_method', 'Como a participante concorda', [('checkbox', 'Confirmar pela caixa'), ('submit', 'Concordar ao enviar')]),
+            ('presentation', 'Apresentação do aviso', [('panel', 'Painel'), ('compact', 'Compacta')]),
+            ('position', 'Posição do aviso e opções', [('first_step', 'Primeira etapa'), ('before_submit', 'Antes do envio')])
+          ] %}
+          {% set name = 'consent.' ~ key %}
+          <div class="field">
+            <label for="{{ s.field_id(name) }}">{{ label }}</label>
+            <select class="input" id="{{ s.field_id(name) }}" name="{{ name }}"{% if s.errors.get(name) %} aria-invalid="true" aria-describedby="{{ s.field_id(name) }}-erro"{% endif %}{% if s.focus == s.field_id(name) %} autofocus{% endif %}>
+              {% for value, title in options %}<option value="{{ value }}"{% if s.edit.consent[key] == value %} selected{% endif %}>{{ title }}</option>{% endfor %}
+            </select>
+            {{ f.error_for(name) }}
+          </div>
+          {% endfor %}
+          <p class="hint">Concordar ao enviar registra consentimento no envio final válido, sem caixa. O aviso deve explicar as finalidades; novidades continuam opcionais. Aparência e posição não alteram o método.</p>
+          {{ f.field("consent.processing", "Autorização do processamento", s.edit.consent.processing, hint="Texto da caixa no método Confirmar pela caixa.", area=True, rows=2) }}
           {{ f.field("consent.notice", "Aviso sobre o uso dos dados", s.edit.consent.notice, area=True, rows=3) }}
           {%- for channel, offer, label in s.channels %}
           {%- set name = "consent.marketing." ~ channel %}

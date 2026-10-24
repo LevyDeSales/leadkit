@@ -29,6 +29,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from app.consent import facts as consent_facts
 from app.forms import FormSpec, Option, Question
 from app.integrations.baserow import BaserowField, BaserowOption
 
@@ -557,9 +558,9 @@ def raw_value(
         f"{prefix}.consent_json": _json(data.consent),
         f"{prefix}.tracking_json": _json(data.tracking),
         f"{prefix}.scores_json": _json(data.scores),
-        "consent.privacy": bool(data.consent.get("privacy_at") or data.consent.get("processing")),
-        "consent.marketing_email": bool(data.consent.get("marketing_email")),
-        "consent.marketing_whatsapp": bool(data.consent.get("marketing_whatsapp")),
+        "consent.privacy": consent_facts(data.consent)["privacy"],
+        "consent.marketing_email": consent_facts(data.consent)["marketing_email"],
+        "consent.marketing_whatsapp": consent_facts(data.consent)["marketing_whatsapp"],
     }
     if isinstance(data, CaptureRowData):
         simple[CAPTURE_KEY_SOURCE] = data.submission_id

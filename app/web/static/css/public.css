@@ -215,3 +215,8 @@ textarea.input{min-height:112px;resize:vertical}
   .layout-split>.layout-split__main>.container{max-width:36rem;margin-inline:0}
   .hero h1{font-size:2.5rem}
 }
+
+/* Apresentação do aviso independe do método de consentimento. */
+.consent--compact { padding: 0; border: 0; background: transparent; }
+.actions:has(.submit-notice) { flex-wrap: wrap; }
+.submit-notice { flex-basis: 100%; font-size: .9rem; line-height: 1.5; white-space: pre-line; }

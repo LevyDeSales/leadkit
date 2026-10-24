@@ -28,6 +28,7 @@ from starlette.datastructures import FormData
 
 from app.admin.actions.jobs import NoPdf, PdfRemoved, pdf_file
 from app.admin.auth import instant
+from app.consent import CheckboxConsentIn, SubmitConsentIn
 from app.deployment_contract import DeploymentContractError
 from app.deps import Deps, get_deps
 from app.destinations import SecretCipher
@@ -39,7 +40,6 @@ from app.handoffs import completion_view
 from app.intake import (
     Accepted,
     CaptureAccepted,
-    ConsentIn,
     ConsentTextMismatch,
     IdempotencyConflict,
     QueueFull,
@@ -81,8 +81,8 @@ COOKIE_GRACE = timedelta(days=30)
 
 SEND_FAILED = "Não conseguimos enviar o formulário. Confira as respostas e tente de novo."
 CONSENT_UPDATED = (
-    "Atualizamos o texto sobre o uso dos seus dados. Leia de novo e marque a autorização para "
-    "continuar."
+    "Atualizamos o texto sobre o uso dos seus dados. Leia o aviso novamente, confira sua "
+    "concordância e envie de novo."
 )
 ALREADY_SENT = (
     "Você já enviou este formulário com outras respostas. Para salvar estas respostas como "
@@ -275,8 +275,16 @@ def _prepare_form_submission(
         return _form_page(request, spec, screen, post, errors=errors, status_code=422)
     outdated = replace(post, privacy=False)  # concordou com outro texto: pede de novo
     try:
-        consent = ConsentIn(
-            privacy=True,
+        declaration = (
+            {"method": "submit", "action": "submit"}
+            if screen.consent.acquisition_method == "submit"
+            else {"method": "checkbox", "action": "confirm", "privacy": post.privacy}
+        )
+        consent_model = (
+            SubmitConsentIn if screen.consent.acquisition_method == "submit" else CheckboxConsentIn
+        )
+        consent = consent_model(
+            **declaration,
             text_version=post.consent_version,
             marketing_email=post.marketing_email,
             marketing_whatsapp=post.marketing_whatsapp,
@@ -297,6 +305,7 @@ def _prepare_form_submission(
             limits=deps.submission_limits,
             forms=deps.forms,
             cipher=SecretCipher.from_settings(deps.settings),
+            source="public_html",
         )
     except ValidationError as exc:
         # As respostas já passaram por `form_errors`: sobra o canal de marketing que a página não

@@ -39,11 +39,12 @@ As instruções abaixo explicam como operar o editor. O conteúdo das perguntas,
 **Onde entrar:** índice “Dados e consentimentos”, no rascunho. O link para “Identidade da lead” leva às perguntas usadas na identificação.
 
 1. Relacione as perguntas usadas para identificar e-mail, nome e telefone conforme os campos apresentados. O e-mail é obrigatório na identidade.
-2. Revise “Autorização do processamento” e “Aviso sobre o uso dos dados”.
-3. Ofereça apenas os canais de contato necessários, com seus textos separados da autorização de processamento. A oferta de WhatsApp precisa de telefone na identidade.
-4. Salve e confira o texto na prévia.
+2. Em “Como a participante concorda”, escolha “Confirmar pela caixa” (desmarcada inicialmente) ou “Concordar ao enviar” (o envio final válido registra o consentimento, sem caixa). Revise “Autorização do processamento”, usada na caixa, e “Aviso sobre o uso dos dados”, com as finalidades claras antes da ação. Ao enviar pelo botão ou por Enter na etapa final, a participante concorda conforme esse aviso.
+3. Escolha a apresentação “Painel” ou “Compacta” e a posição “Primeira etapa” ou “Antes do envio”. Essas escolhas organizam o aviso e as opções; não mudam o método.
+4. Ofereça apenas os canais de contato necessários, com seus textos separados da autorização de processamento. A oferta de WhatsApp precisa de telefone na identidade.
+5. Salve e confira o aviso e as opções na prévia, inclusive no celular. A prévia não registra consentimento.
 
-**Resultado:** a participante vê o texto e as opções correspondentes. A publicação atualiza a versão do consentimento quando seu texto muda; cada envio conserva a versão respondida. Marcar consentimento para contato não dispara uma mensagem.
+**Resultado:** a participante vê o texto e as opções correspondentes. A publicação atualiza a versão do consentimento quando método, texto ou canais mudam; alterar somente aparência ou posição não muda essa revisão semântica. Cada envio conserva a versão respondida, o método, a origem da declaração e o horário em que o servidor aceitou. Abrir a página, recarregar ou tocar em “Continuar” não registra aceite. Novidades por canal continuam independentes, opcionais e sem seleção prévia nos dois métodos; um canal não oferecido nunca é autorizado. Marcar consentimento para contato não dispara uma mensagem.
 
 **Se houver dúvida sobre uso de dados:** valide o texto e os destinatários com a responsável antes de publicar. A marcação de contato não garante que um dado esteja fora das instruções enviadas à inteligência artificial: revise também o prompt.
 

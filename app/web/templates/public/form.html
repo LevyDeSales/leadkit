@@ -12,7 +12,7 @@
   <div class="layout-split__main">
     <div class="container form-wrap">
       {%- if banner %}
-      <div class="alert alert--warn stack-gap" role="alert">
+      <div class="alert alert--warn stack-gap" role="alert" id="aviso-envio" tabindex="-1" autofocus>
         {{ ui.icon("info", "icon--lg") }}<div>{{ banner }}</div>
       </div>
       {%- endif %}

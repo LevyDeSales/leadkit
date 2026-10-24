@@ -293,6 +293,9 @@ class StepEdit:
 class ConsentEdit:
     processing: str = ""
     notice: str = ""
+    acquisition_method: str = "checkbox"
+    presentation: str = "panel"
+    position: str = "first_step"
     # O texto de cada canal de marketing e se o formulário o oferece.
     texts: dict[str, str] = field(default_factory=lambda: dict.fromkeys(CHANNELS, ""))
     offered: dict[str, bool] = field(default_factory=lambda: dict.fromkeys(CHANNELS, False))
@@ -300,7 +303,20 @@ class ConsentEdit:
     def document(self) -> dict[str, Any]:
         """O consentimento sem a versão, que a publicação sobe sozinha."""
         return {
-            "processing": _lines(self.processing).strip(),
+            **{
+                key: getattr(self, key)
+                for key, default in (
+                    ("acquisition_method", "checkbox"),
+                    ("presentation", "panel"),
+                    ("position", "first_step"),
+                )
+                if getattr(self, key) != default
+            },
+            **(
+                {"processing": _lines(self.processing).strip()}
+                if self.processing.strip() or self.acquisition_method == "checkbox"
+                else {}
+            ),
             "notice": _lines(self.notice).strip(),
             "marketing": {
                 channel: _lines(self.texts[channel]).strip()
@@ -525,6 +541,9 @@ class FormEdit:
             consent=ConsentEdit(
                 processing=_text(consent.get("processing")),
                 notice=_text(consent.get("notice")),
+                acquisition_method=_text(consent.get("acquisition_method", "checkbox")),
+                presentation=_text(consent.get("presentation", "panel")),
+                position=_text(consent.get("position", "first_step")),
                 texts={c: _text(marketing.get(c)) or CHANNEL_DEFAULTS[c] for c in CHANNELS},
                 offered={channel: bool(marketing.get(channel)) for channel in CHANNELS},
             ),
@@ -594,6 +613,9 @@ class FormEdit:
             consent=ConsentEdit(
                 processing=first("consent.processing"),
                 notice=first("consent.notice"),
+                acquisition_method=first("consent.acquisition_method") or "checkbox",
+                presentation=first("consent.presentation") or "panel",
+                position=first("consent.position") or "first_step",
                 texts={channel: first(f"consent.marketing.{channel}") for channel in CHANNELS},
                 offered={
                     channel: bool(form.getlist(f"consent.marketing.{channel}.offered"))

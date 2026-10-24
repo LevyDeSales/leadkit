@@ -828,3 +828,20 @@ def test_the_editor_operations_need_the_session_and_the_csrf_token(client: TestC
     with_header = {**ORIGIN, **HTMX, "X-CSRF-Token": csrf_token(client)}
     allowed = client.post(EDIT, data={**fields, "op": "add-step"}, headers=with_header)
     assert allowed.status_code == 200  # o HTMX manda o token no cabeçalho
+
+
+def test_consent_method_and_layout_roundtrip_in_editor_without_changing_text_version(
+    client: TestClient, deps: Deps
+) -> None:
+    fields = editor(client)
+    assert fields["consent.acquisition_method"] == "checkbox"
+    fields["consent.acquisition_method"] = "submit"
+    fields["consent.presentation"] = "compact"
+    fields["consent.position"] = "before_submit"
+    assert save(client, lambda current: current.update(fields)).status_code == 303
+    consent = stored(deps)["consent"]
+    assert consent["acquisition_method"] == "submit"
+    assert consent["presentation"] == "compact"
+    assert consent["position"] == "before_submit"
+    assert editor(client)["consent.acquisition_method"] == "submit"
+    assert consent["version"] == json.loads(DEFINITION)["consent"]["version"]

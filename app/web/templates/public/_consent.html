@@ -1,16 +1,20 @@
 {#- Consentimento separado e nunca pré-marcado pelo servidor: processamento (obrigatório) e
     marketing por canal (opcional). Os textos e a versão vêm do formulário (ConsentText). -#}
 {%- set text = screen.consent %}
-<div class="consent" role="group" aria-labelledby="consent-titulo" aria-describedby="consent-texto">
+<div class="consent consent--{{ text.presentation }}" role="group" aria-labelledby="consent-titulo" aria-describedby="consent-texto"{% if text.acquisition_method == "submit" %} id="consent-processamento" tabindex="-1"{% if consent_error %} aria-invalid="true"{% endif %}{% endif %}>
   <h3 id="consent-titulo">Seus dados</h3>
   <p id="consent-texto">{{ text.notice }}</p>
 
+  {%- if text.acquisition_method == "checkbox" %}
   <label class="choice choice--check">
     <input type="checkbox" id="consent-processamento" name="_privacy" value="1" required
       {%- if consent.privacy %} checked{% endif %}
       {%- if consent_error %} aria-invalid="true" aria-describedby="consent-erro"{% endif %}>
     <span class="choice__body"><span class="choice__mark">{{ ui.icon("check") }}</span><span>{{ text.processing }}</span></span>
   </label>
+  {%- else %}
+  <p><strong>Ao enviar, você concorda com o uso dos seus dados descrito neste aviso.</strong></p>
+  {%- endif %}
   {%- if consent_error %}
   {{ ui.error_text("consent-erro", consent_error) }}
   {%- endif %}
