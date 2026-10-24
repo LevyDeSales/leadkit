@@ -29,6 +29,48 @@ def test_dispatch_delivers_persisted_snapshot_independent_of_pdf(v2_ready, gener
     assert transport.calls == [("submissao.persistida", str(row.id), payload)]
 
 
+@pytest.mark.parametrize("generation", ["none", "pdf"])
+def test_rollout_after_acceptance_blocks_dispatch_and_resumes_same_event(v2_ready, generation):
+    from uuid import uuid4
+
+    from test_deployment_contract import evidence
+
+    from app.deployment_contract import attest_rollout, begin_rollout
+    from app.errors import RetryableError
+
+    document, _ = configure_v2(v2_ready, generation)
+    accept_v2(v2_ready, document)
+    with v2_ready.sessions() as session:
+        row = session.scalar(sa.select(CaptureDelivery))
+        delivery_id, dispatch_no = row.id, row.dispatch_no
+        payload = deepcopy(row.payload)
+        assert payload["event_id"] == str(delivery_id)
+    epoch = uuid4()
+    with v2_ready.sessions.begin() as session:
+        begin_rollout(session, epoch=epoch)
+    transport = record_webhook(v2_ready)
+
+    with pytest.raises(RetryableError):
+        capture_deliveries.dispatch(v2_ready, delivery_id, dispatch_no)
+    assert transport.calls == []
+    with v2_ready.sessions() as session:
+        current = session.get_one(CaptureDelivery, delivery_id)
+        assert current.status == "pending" and current.delivered_at is None
+        assert current.event == "submissao.persistida" and current.payload == payload
+        assert current.dispatch_no == dispatch_no
+
+    with v2_ready.sessions.begin() as session:
+        attest_rollout(session, epoch=epoch, evidence=evidence(contract=3))
+    assert capture_deliveries.dispatch(v2_ready, delivery_id, dispatch_no) == "succeeded"
+    assert capture_deliveries.dispatch(v2_ready, delivery_id, dispatch_no) == "already_succeeded"
+    assert transport.calls == [("submissao.persistida", str(delivery_id), payload)]
+    with v2_ready.sessions() as session:
+        assert session.scalar(sa.select(sa.func.count()).select_from(Submission)) == 1
+        assert session.scalar(sa.select(sa.func.count()).select_from(CaptureDelivery)) == 1
+        current = session.get_one(CaptureDelivery, delivery_id)
+        assert current.status == "succeeded" and current.payload == payload
+
+
 def test_retry_cannot_reassign_snapshot_revision(v2_ready):
     document, destination_id = configure_v2(v2_ready)
     accepted = accept_v2(v2_ready, document)
