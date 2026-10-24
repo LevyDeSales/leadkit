@@ -494,6 +494,10 @@ def send_destination_test_event(
     target = resolve(deps, scope)
     try:
         probe = destinations.send_test(deps, target.form_slug, actor=key.actor, event=body.event)
+    except destinations.InvalidEvents as exc:
+        raise ApiError(
+            "validation_failed", exc.message, errors=[ErrorItem(field="event", message=exc.message)]
+        ) from None
     except destinations.UnreadableSecret:
         raise ApiError("state_conflict", UNREADABLE_SECRET) from None
     except destinations.InvalidPurpose as exc:

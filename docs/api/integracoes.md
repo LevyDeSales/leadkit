@@ -87,4 +87,6 @@ nas consultas de estado, logs ou Hatchet. Pausa, mudança de revisão, remoção
 redirecionam a intenção nem recriam dados. Remover o destino apaga seu histórico local de entregas
 por cascata, com contagens apresentadas antes da confirmação; respostas permanecem até sua retenção.
 O teste do destino pode enviar envelope sintético da seleção atual, marcado `test:true`, sem criar
-submissão real. Adoção exige piso3 e [roteiro de compatibilidade](../../deploy/swarm/README.md).
+submissão real. Antes da primeira publicação, usa a geração do rascunho canônico válido; rascunho
+inválido pede revisão com erro controlado, sem exigir publicação para testar a conexão. Adoção
+exige piso3 e [roteiro de compatibilidade](../../deploy/swarm/README.md).

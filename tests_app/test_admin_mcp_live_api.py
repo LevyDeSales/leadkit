@@ -58,7 +58,11 @@ def test_the_contract_the_live_api_serves_generates_the_same_tools_as_the_file(l
 
     assert live.role == "total"
     assert live.tools == {tool.name: tool for tool in expected}
-    assert len(live.tools) == 82
+    assert len(live.tools) == 83
+    retry = live.tools["retry_job_persisted_delivery"]
+    assert retry.role == "total" and retry.external_effect
+    assert retry.annotations["openWorldHint"] is True
+    assert "confirm" in retry.input_schema["properties"]
 
 
 def test_a_leitura_key_of_the_live_api_starts_with_the_read_tools(

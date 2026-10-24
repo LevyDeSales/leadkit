@@ -493,6 +493,28 @@ def sample_event(event_id: str, form_slug: str | None) -> dict[str, Any]:
     }
 
 
+def _test_generation(session: Session, deps: Deps, form_slug: str) -> str:
+    """Permite testar antes da primeira publicação sem alterar o rascunho ou publicar."""
+    from app.forms import UnknownForm
+    from app.forms.definition import DefinitionError, compile_definition
+    from app.forms.drafts import load
+
+    try:
+        return deps.forms.current(form_slug).generation
+    except UnknownForm:
+        draft = load(session, form_slug)
+        if draft is not None:
+            try:
+                return compile_definition(
+                    draft.document, version_number=draft.next_number
+                ).generation
+            except DefinitionError:
+                pass
+        raise InvalidEvents(
+            "Revise o rascunho do formulário antes de testar o envio de respostas; não é necessário publicar."
+        ) from None
+
+
 def send_test(
     deps: Deps, form_slug: str | None, *, actor: str, event: str = TEST_EVENT
 ) -> Probe | None:
@@ -547,7 +569,7 @@ def send_test(
                 delivery_id=uuid.UUID(event_id),
                 issuer=session.get_one(WebhookIssuer, 1).namespace,
                 submission=synthetic,
-                generation=deps.forms.current(form_slug).generation,
+                generation=_test_generation(session, deps, form_slug),
                 destination_id=stored.id,
                 destination_revision=stored.version,
                 correlation=None,

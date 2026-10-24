@@ -108,3 +108,49 @@ def test_enable_does_not_backfill_replay(v2_ready):
     assert replay.replay and replay.submission.id == original.submission.id
     with v2_ready.sessions() as session:
         assert session.scalar(sa.select(sa.func.count()).select_from(CaptureDelivery)) == 0
+
+
+def test_pdf_http_launches_response_intention_only_after_commit(v2_ready, monkeypatch):
+    from concurrent.futures import Future
+    from threading import Event
+
+    from fastapi.testclient import TestClient
+
+    from app.admin import launching
+    from app.api.main import create_app
+
+    document, _ = configure_v2(v2_ready, "pdf")
+    observed = []
+    reached = Event()
+
+    def launch(submission_id):
+        with v2_ready.sessions() as session:
+            observed.extend(
+                session.scalars(
+                    sa.select(CaptureDelivery.id).where(
+                        CaptureDelivery.submission_id == submission_id
+                    )
+                ).all()
+            )
+        reached.set()
+        done = Future()
+        done.set_result(None)
+        return done
+
+    monkeypatch.setattr(launching, "launch_capture_later", launch)
+
+    async def generate(*args):
+        return "synthetic-run"
+
+    spec = v2_ready.forms.current(document["slug"])
+    with TestClient(create_app(trigger=generate)) as client:
+        response = client.post(
+            f"/v1/forms/{document['slug']}/submissions",
+            json={
+                "answers": document["examples"]["answers"],
+                "consent": {"privacy": True, "text_version": spec.consent_text_version},
+            },
+            headers={"Idempotency-Key": "post-commit-pdf"},
+        )
+        assert response.status_code == 202
+        assert reached.wait(2) and len(observed) == 1

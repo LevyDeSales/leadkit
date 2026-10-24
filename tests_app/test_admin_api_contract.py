@@ -131,6 +131,7 @@ _CAPTURE_ITEM = (
     "deliveries.destination_id",
     "deliveries.kind",
     "deliveries.event",
+    "deliveries.schema_version",
     "deliveries.config_version",
     "deliveries.current_config_version",
     "deliveries.status",
@@ -193,6 +194,28 @@ LEAD_STATE: dict[str, frozenset[str]] = {
     ),
     "get_job": frozenset(
         {
+            "persisted_deliveries",
+            *(
+                f"persisted_deliveries.{field}"
+                for field in (
+                    "delivery_id",
+                    "submission_id",
+                    "destination_id",
+                    "kind",
+                    "event",
+                    "schema_version",
+                    "config_version",
+                    "current_config_version",
+                    "status",
+                    "attempts",
+                    "dispatch_no",
+                    "error_code",
+                    "response_status",
+                    "row_id",
+                    "outcome",
+                    "delivered_at",
+                )
+            ),
             "release",
             "release.policy",
             "release.form_version_number",

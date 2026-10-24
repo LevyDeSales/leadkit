@@ -964,6 +964,8 @@ def send_test_event(
     saem do worker, que pode não alcançar o que a API alcança (a tela avisa)."""
     try:
         probe = destinations.send_test(get_deps(), form_slug, actor=session.username, event=event)
+    except destinations.InvalidEvents as exc:
+        return _destination_page(request, status_code=422, test_error=exc.message)
     except destinations.UnreadableSecret:
         return _destination_page(request, status_code=409, test=views.UNREADABLE_PROBE)
     except destinations.InvalidPurpose as exc:

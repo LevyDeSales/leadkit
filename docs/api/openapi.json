@@ -23012,7 +23012,7 @@
                 }
               }
             },
-            "description": "A entrega ou revisão mudou; nada foi feito."
+            "description": "state_conflict: a entrega ou revisão mudou; nada foi feito."
           },
           "422": {
             "content": {

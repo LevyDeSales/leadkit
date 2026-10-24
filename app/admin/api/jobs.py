@@ -786,7 +786,7 @@ async def release_job_pdf(
     response_model=CaptureDeliveryState,
     errors={
         404: "Pedido ou entrega não encontrado.",
-        409: "A entrega ou revisão mudou; nada foi feito.",
+        409: "state_conflict: a entrega ou revisão mudou; nada foi feito.",
     },
 )
 def retry_job_persisted_delivery(

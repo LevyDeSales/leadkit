@@ -40,3 +40,19 @@ def test_v2_refuses_default_participant_and_duplicate_version(v2_ready, scope, p
             purpose=purpose,
             events=events,
         )
+
+
+def test_v2_configuration_waits_for_verified_runtime(v2_ready):
+    from uuid import uuid4
+
+    import sqlalchemy as sa
+
+    from app.deployment_contract import begin_rollout
+    from app.models import WebhookDestination
+
+    with v2_ready.sessions.begin() as session:
+        begin_rollout(session, epoch=uuid4())
+    with pytest.raises(destinations.InvalidEvents, match="atualização"):
+        configure_v2(v2_ready, "pdf")
+    with v2_ready.sessions() as session:
+        assert session.scalar(sa.select(sa.func.count()).select_from(WebhookDestination)) == 0

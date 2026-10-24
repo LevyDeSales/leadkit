@@ -24,7 +24,7 @@ def rollout_engine():
     finally:
         with engine.begin() as connection:
             connection.exec_driver_sql(
-                "UPDATE deployment_contract SET minimum_contract = 2, phase = 'blocked', epoch = NULL, evidence = '{}'::jsonb, attested_at = NULL"
+                "UPDATE deployment_contract SET minimum_contract = 3, phase = 'blocked', epoch = NULL, evidence = '{}'::jsonb, attested_at = NULL"
             )
         engine.dispose()
 
