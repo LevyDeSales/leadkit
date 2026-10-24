@@ -519,3 +519,71 @@ def test_legacy_payload_records_new_evidence_but_historical_replay_never_gains_m
     ).json()["lead_data"]["consent"]
     assert consent["marketing_email"] is False
     assert not {"method", "action", "source", "evidence_schema"} & consent.keys()
+
+
+def test_logo_and_consent_survive_copy_editor_normalization_and_publication(deps, api_client):
+    from fastapi.testclient import TestClient
+    from test_form_opening_copy import load, source_with_logo
+    from test_public import tags
+
+    from app.admin.actions.previews import public_page
+    from app.admin.form_editor import FormEdit
+    from app.api.main import create_app
+    from app.forms import drafts
+    from app.forms.definition.normal import same_meaning
+
+    source, image = source_with_logo(deps, generation="none")
+    draft = load(deps, source)
+    document = {
+        **draft.document,
+        "consent": {
+            **draft.document["consent"],
+            "acquisition_method": "submit",
+            "presentation": "compact",
+            "position": "before_submit",
+        },
+    }
+    draft = drafts.replace_document(deps, source, document, actor="testes", expected=draft.token)
+    screen = FormEdit.of_document(document).screen()
+    reconstructed = {
+        **document,
+        **screen,
+        "consent": {**screen["consent"], "version": document["consent"]["version"]},
+    }
+    assert same_meaning(document, reconstructed)
+    assert reconstructed["opening_logo"] == document["opening_logo"]
+    drafts.publish(
+        deps, source, actor="testes", expected=draft.token, note="Logo e consentimento sintéticos"
+    )
+    client = api_client("total")
+    copied = client.post(
+        "/admin/api/v1/forms",
+        json={"title": "Cópia composta", "slug": "consent-logo-copy", "source": source},
+    )
+    assert copied.status_code == 201, copied.text
+    path = "/admin/api/v1/forms/consent-logo-copy/draft"
+    body = client.get(path).json()
+    assert body["document"]["opening_logo"] == document["opening_logo"]
+    assert body["document"]["consent"]["acquisition_method"] == "submit"
+    assert (
+        client.put(
+            path, json={"expected_version": body["version"], "document": body["document"]}
+        ).status_code
+        == 200
+    )
+    copied_draft = load(deps, "consent-logo-copy")
+    preview = public_page(deps, "consent-logo-copy", 1)
+    assert preview.screen.opening_logo.url == image.ref.url
+    assert preview.screen.consent.acquisition_method == "submit"
+    drafts.publish(
+        deps,
+        "consent-logo-copy",
+        actor="testes",
+        expected=copied_draft.token,
+        note="Publicação composta sintética",
+    )
+    public = TestClient(create_app())
+    html = public.get("/p/consent-logo-copy").text
+    assert f'src="{image.ref.url}"' in html
+    assert not tags(html, "input", name="_privacy")
+    assert "Ao enviar" in html and "consent--compact" in html
