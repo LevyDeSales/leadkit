@@ -380,7 +380,7 @@ def _review_lines(review: Mapping[str, Any], *, with_missing: bool = False) -> l
     if review.get("consent_version"):
         lines.append(
             f"A versão do consentimento sobe para {plain(review['consent_version'])} (quem está com a "
-            "página aberta concorda de novo)."
+            "página aberta revisa o aviso e concorda pela caixa ou ao enviar, conforme o método da nova versão)."
         )
     dropped = [d for d in review.get("dropped_values") or [] if isinstance(d, dict)]
     if dropped:

@@ -263,6 +263,9 @@ PLACE_NAMES = {
     "identity.name": "Identidade da lead · nome",
     "identity.phone": "Identidade da lead · telefone",
     "consent.processing": "Consentimento · autorização do processamento",
+    "consent.acquisition_method": "Consentimento · como a participante concorda",
+    "consent.presentation": "Consentimento · apresentação do aviso",
+    "consent.position": "Consentimento · posição do aviso",
     "consent.notice": "Consentimento · aviso sobre o uso dos dados",
     "consent.marketing": "Consentimento · canais de novidades",
     "consent.marketing.email": "Consentimento · novidades por e-mail",
@@ -1228,7 +1231,7 @@ FIRST_TEST_MISSING = (
     "rascunho com o LLM."
 )
 CONSENT_RAISED = (
-    "O texto do consentimento mudou: a versão dele sobe para {version}. Quem estiver com a página "
+    "O método, texto ou canais do consentimento mudaram: a versão dele sobe para {version}. Quem estiver com a página "
     "aberta vai concordar de novo antes de enviar."
 )
 

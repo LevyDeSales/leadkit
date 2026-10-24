@@ -27,6 +27,7 @@ from sqlalchemy.orm import Session
 
 from app.adapters.storage import ArtifactStorage
 from app.admin.localtime import local_midnight
+from app.consent import facts as consent_facts
 from app.errors import TerminalError
 from app.forms import FormRegistry, LeadIdentity
 from app.forms.definition.document import SLUG_PATTERN
@@ -633,6 +634,11 @@ class Consent:
     text_version: str | None
     marketing_email: bool
     marketing_whatsapp: bool
+    evidence_schema: int | None = None
+    method: str | None = None
+    action: str | None = None
+    source: str | None = None
+    privacy: bool = False
 
 
 @dataclass(frozen=True)
@@ -845,13 +851,7 @@ def _lead_data(session: Session, job: Job, notes: list[Note], forms: FormRegistr
 
 
 def _consent(raw: dict[str, Any]) -> Consent:
-    accepted = raw.get("privacy_at")
-    return Consent(
-        privacy_at=datetime.fromisoformat(accepted) if isinstance(accepted, str) else None,
-        text_version=raw.get("text_version"),
-        marketing_email=bool(raw.get("marketing_email")),
-        marketing_whatsapp=bool(raw.get("marketing_whatsapp")),
-    )
+    return Consent(**consent_facts(raw))
 
 
 def _notes(

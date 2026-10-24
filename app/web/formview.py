@@ -51,6 +51,7 @@ class FormPost:
     idempotency_key: str
     tracking: dict[str, str]
     honeypot: bool
+    privacy_supplied: bool = False
 
 
 def _texts(form: FormData, name: str) -> list[str]:
@@ -77,7 +78,8 @@ def read_post(screen: Screen, form: FormData, conditions: Conditions | None = No
     return FormPost(
         answers=answers,
         values=values,
-        privacy=bool(_texts(form, PRIVACY)),
+        privacy=_texts(form, PRIVACY) == ["1"],
+        privacy_supplied=PRIVACY in form,
         marketing_email=bool(_texts(form, "_mkt_email")),
         marketing_whatsapp=bool(_texts(form, "_mkt_whatsapp")),
         consent_version=next(iter(_texts(form, "_consent_version")), ""),
@@ -168,8 +170,12 @@ def form_errors(spec: FormSpec, screen: Screen, post: FormPost) -> dict[str, str
         for error in exc.errors(include_input=False, include_url=False):
             name = str(error["loc"][0]) if error["loc"] else ""
             errors.setdefault(name, _message(error, kinds.get(name, "text")))
-    if not post.privacy:
+    if screen.consent.acquisition_method == "checkbox" and not post.privacy:
         errors[PRIVACY] = PRIVACY_ERROR
+    elif screen.consent.acquisition_method == "submit" and post.privacy_supplied:
+        errors[PRIVACY] = (
+            "Este formulário registra sua concordância ao enviar, sem caixa de confirmação."
+        )
     return errors
 
 

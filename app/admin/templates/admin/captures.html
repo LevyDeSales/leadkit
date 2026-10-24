@@ -23,8 +23,8 @@
 </dd>{% else %}<dt>Respostas</dt><dd>Nenhuma resposta registrada.</dd>{% endfor %}</dl>
 <h3>Consentimentos registrados</h3>
 <p>Registro do envio; não presume o texto de consentimento de outra versão.</p>
-{% set consent_labels = {'privacy': 'Processamento dos dados', 'text_version': 'Versão do consentimento', 'marketing_email': 'Marketing por e-mail', 'marketing_whatsapp': 'Marketing por WhatsApp'} %}
-<dl class="kv">{% for key, value in detail.lead_data.consent.items() %}<dt>{{ consent_labels.get(key, key) }}</dt><dd>{% if value is sameas true %}Sim{% elif value is sameas false %}Não{% elif value is none %}Não informado{% else %}{{ value }}{% endif %}</dd>{% else %}<dt>Consentimentos</dt><dd>Sem registro disponível.</dd>{% endfor %}</dl>
+{% set consent_labels = {'privacy': 'Consentiu o tratamento dos dados', 'privacy_at': 'Aceito no servidor (UTC)', 'method': 'Método registrado', 'action': 'Ação declarada', 'source': 'Origem da declaração', 'evidence_schema': 'Esquema da evidência', 'text_version': 'Versão do consentimento', 'marketing_email': 'Marketing por e-mail', 'marketing_whatsapp': 'Marketing por WhatsApp'} %}
+<dl class="kv">{% for key, value in detail.lead_data.consent.items() %}<dt>{{ consent_labels.get(key, key) }}</dt><dd>{% if value is sameas true %}Sim{% elif value is sameas false %}Não{% elif value is none %}Não informado{% elif key == 'method' %}{{ {'checkbox': 'Confirmação pela caixa', 'submit': 'Concordância ao enviar'}.get(value, 'Método não registrado') }}{% elif key == 'source' %}{{ {'public_html': 'Página pública (declaração HTTP)', 'public_api_declaration': 'Declaração pela API pública'}.get(value, 'Origem não registrada') }}{% else %}{{ value }}{% endif %}</dd>{% else %}<dt>Consentimentos</dt><dd>Sem registro disponível.</dd>{% endfor %}</dl>
 <h3>Pontuação registrada</h3>
 <dl class="kv">{% for key, value in detail.lead_data.scores.items() %}<dt>{{ key }}</dt><dd>{{ value }}</dd>{% else %}<dt>Pontuação</dt><dd>Sem pontuação registrada.</dd>{% endfor %}
 <dt>Prioridade</dt><dd>{{ detail.lead_data.priority if detail.lead_data.priority is not none else 'Não registrada' }}</dd>

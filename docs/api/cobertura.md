@@ -607,3 +607,14 @@ A prévia HTML usa somente o código do pedido e fixa a audiência participante 
 É dado pessoal integral: o MCP só anuncia a ferramenta para chave total com
 `GERADOR_MCP_LEAD_DATA=1`, grava o HTML em arquivo privado e retorna metadados, hash e caminho.
 A leitura não libera, não gera, não envia e não assina um link de PDF; o download da prévia fica desativado.
+
+### Consentimento por versão
+
+O delta da [issue #53](https://github.com/LevyDeSales/leadkit/issues/53) usa as operações
+existentes de definição, rascunho, publicação e leitura protegida. O [contrato de consentimento](consentimento.md)
+descreve método por versão, evidência e replay, sem ferramenta administrativa paralela.
+`save_form_draft`/`patch_form_draft`, cópia e importação preservam as três opções; revisão/publicação
+mantém confirmação e versão esperada. `get_job` acrescenta detalhes somente em `lead_data`;
+MCP continua derivado do OpenAPI e do opt-in existente. Provas focais:
+`tests_app/test_consent_methods.py`, `tests_app/test_admin_form_editor.py` e contratos
+existentes `test_admin_api_drafts.py`, `test_admin_mcp_server.py` e `test_admin_api_openapi.py`.

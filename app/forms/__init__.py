@@ -120,10 +120,13 @@ class ConsentText:
     suba a versão. O processamento é obrigatório; cada canal de marketing é opcional e só aparece
     com texto (WhatsApp só faz sentido se o formulário pede telefone)."""
 
-    processing: str
+    processing: str | None
     notice: str
     marketing_email: str | None = None
     marketing_whatsapp: str | None = None
+    acquisition_method: Literal["checkbox", "submit"] = "checkbox"
+    presentation: Literal["panel", "compact"] = "panel"
+    position: Literal["first_step", "before_submit"] = "first_step"
 
 
 @dataclass(frozen=True)

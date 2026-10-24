@@ -36,6 +36,7 @@
   const bar = form.querySelector("[data-progress]");
   const minutes = Number(form.dataset.minutes) || 0;
   const submit = form.querySelector("[data-submit]");
+  const submitNotice = form.querySelector("[data-submit-notice]");
   const submitHome = submit.parentElement; // a última etapa; ela pode ser pulada (veja `paint`)
   const submitLabel = submit.textContent;
   const live = form.querySelector("[data-conditions-status]");
@@ -172,6 +173,7 @@
     if (back) back.hidden = position === 0;
     // O botão de enviar mora na última etapa. Se ela foi pulada, vai para a última que aparece.
     const place = last ? step.querySelector(".actions") : submitHome;
+    if (submitNotice && submitNotice.parentElement !== place) place.append(submitNotice);
     if (submit.parentElement !== place) place.append(submit);
   }
 

@@ -631,8 +631,16 @@ def _consents(consent: job_queries.Consent) -> list[ConsentView]:
     version = consent.text_version if consent.text_version is not None else "?"
     accepted_at = moment(consent.privacy_at)
     granted = f"{accepted_at.text if accepted_at else 'data não registrada'} · texto {version}"
+    method = {"checkbox": "Confirmação pela caixa", "submit": "Concordância ao enviar"}.get(
+        consent.method, "Método não registrado"
+    )
+    source = {
+        "public_html": "página pública",
+        "public_api_declaration": "declaração pela API pública",
+    }.get(consent.source, "origem não registrada")
+    granted += f" · {method} · {source}"
     return [
-        ConsentView(True, "Tratamento das respostas para gerar o plano", granted),
+        ConsentView(consent.privacy, "Tratamento das respostas para gerar o plano", granted),
         *(
             ConsentView(flag, label, f"Autorizado · texto {version}" if flag else "Não autorizado")
             for flag, label in (

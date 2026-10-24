@@ -12,7 +12,7 @@ import logging
 import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any, Literal
+from typing import Any
 
 import sqlalchemy as sa
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -21,6 +21,14 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.consent import (
+    ConsentDeclaration,
+    ConsentIn,  # noqa: F401 - contrato de importação legado
+    ConsentSource,
+    check_method,
+    record,
+    same_declaration,
+)
 from app.forms import FormRegistry, FormSpec, ScoreResult
 from app.models import CaptureReceipt, Job, Lead, Submission, utcnow
 from app.tokens import CaptureSigner, TokenSigner, new_public_id
@@ -49,20 +57,11 @@ TRACKING_KEYS = frozenset(
 )
 
 
-class ConsentIn(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    privacy: Literal[True]
-    text_version: str = Field(min_length=1, max_length=64)
-    marketing_email: bool = False
-    marketing_whatsapp: bool = False
-
-
 class SubmissionIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     answers: dict[str, Any]
-    consent: ConsentIn
+    consent: ConsentDeclaration
     tracking: dict[str, str] = Field(default_factory=dict)
 
 
@@ -141,7 +140,7 @@ def clean_tracking(raw: dict[str, str]) -> dict[str, str]:
     return {k: str(v)[:300] for k, v in raw.items() if k in TRACKING_KEYS and v}
 
 
-def _check_marketing_channels(spec: FormSpec, consent: ConsentIn) -> None:
+def _check_marketing_channels(spec: FormSpec, consent: ConsentDeclaration) -> None:
     """Levanta `ValidationError` (campo `consent.marketing_<canal>`) se o envio autoriza marketing
     por um canal que o formulário não pede. Um formulário sem tela (o antigo, em código) não declara
     canais: nada a conferir."""
@@ -193,6 +192,7 @@ def accept_submission(
     now: datetime | None = None,
     forms: FormRegistry | None = None,
     cipher=None,
+    source: ConsentSource = "public_api_declaration",
 ) -> Accepted | CaptureAccepted:
     """Levanta `pydantic.ValidationError` (respostas inválidas, ou autorização de marketing por um
     canal que o formulário não pede), `ConsentTextMismatch`, `IdempotencyConflict`,
@@ -209,10 +209,16 @@ def accept_submission(
     if existing is not None and forms is not None:
         spec = forms.get(spec.slug, existing.form_version_number)
     answers = spec.answers_model.model_validate(body.answers)
+    answers_json = stored_answers(spec, answers)
+    if existing is not None and existing.consent.get("evidence_schema") == 2:
+        # Uma chave já confirmada compara a intenção original antes das recusas de um envio novo.
+        return _replay(session, existing, answers_json, signer, spec, body, forms)
     if body.consent.text_version != spec.consent_text_version:
         raise ConsentTextMismatch(spec.consent_text_version)
+    check_method(
+        spec.screen.consent.acquisition_method if spec.screen else "checkbox", body.consent
+    )
     _check_marketing_channels(spec, body.consent)
-    answers_json = stored_answers(spec, answers)
     now = now or utcnow()
 
     if existing is not None:
@@ -239,12 +245,7 @@ def accept_submission(
                 form_version_number=spec.version_number,
                 idempotency_key=idempotency_key,
                 answers=answers_json,
-                consent={
-                    "privacy_at": now.isoformat(),
-                    "text_version": body.consent.text_version,
-                    "marketing_email": body.consent.marketing_email,
-                    "marketing_whatsapp": body.consent.marketing_whatsapp,
-                },
+                consent=record(body.consent, now, source),
                 tracking=tracking,
                 scores=result.scores,
                 priority=result.priority,
@@ -357,6 +358,8 @@ def _replay(
     body: SubmissionIn,
     forms: FormRegistry | None,
 ) -> Accepted | CaptureAccepted:
+    if not same_declaration(submission.consent, body.consent):
+        raise IdempotencyConflict(submission.idempotency_key)
     if forms is not None and spec.version_number != submission.form_version_number:
         # Uma publicação pode cruzar dois envios concorrentes da mesma chave. A perdedora
         # compara respostas e conclusão pela versão que a vencedora confirmou.
@@ -365,6 +368,9 @@ def _replay(
         if body.consent.text_version != spec.consent_text_version:
             raise ConsentTextMismatch(spec.consent_text_version)
         _check_marketing_channels(spec, body.consent)
+        check_method(
+            spec.screen.consent.acquisition_method if spec.screen else "checkbox", body.consent
+        )
     if submission.answers != answers_json:
         raise IdempotencyConflict(submission.idempotency_key)
     if spec.generation == "none":

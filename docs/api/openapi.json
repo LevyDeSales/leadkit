@@ -2321,6 +2321,15 @@
       "ConsentDoc": {
         "additionalProperties": false,
         "properties": {
+          "acquisition_method": {
+            "default": "checkbox",
+            "enum": [
+              "checkbox",
+              "submit"
+            ],
+            "title": "Acquisition Method",
+            "type": "string"
+          },
           "marketing": {
             "$ref": "#/components/schemas/MarketingDoc",
             "default": {}
@@ -2331,11 +2340,36 @@
             "title": "Notice",
             "type": "string"
           },
-          "processing": {
-            "maxLength": 2000,
-            "minLength": 1,
-            "title": "Processing",
+          "position": {
+            "default": "first_step",
+            "enum": [
+              "first_step",
+              "before_submit"
+            ],
+            "title": "Position",
             "type": "string"
+          },
+          "presentation": {
+            "default": "panel",
+            "enum": [
+              "panel",
+              "compact"
+            ],
+            "title": "Presentation",
+            "type": "string"
+          },
+          "processing": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Processing"
           },
           "version": {
             "maxLength": 64,
@@ -2346,7 +2380,6 @@
         },
         "required": [
           "version",
-          "processing",
           "notice"
         ],
         "title": "ConsentDoc",
@@ -6494,6 +6527,35 @@
       "JobConsent": {
         "description": "Os consentimentos que a lead deu.",
         "properties": {
+          "action": {
+            "anyOf": [
+              {
+                "enum": [
+                  "confirm",
+                  "submit"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Ação declarada aceita pelo servidor.",
+            "title": "Action"
+          },
+          "evidence_schema": {
+            "anyOf": [
+              {
+                "const": 2,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Esquema da evidência; ausente no histórico legado.",
+            "title": "Evidence Schema"
+          },
           "marketing_email": {
             "description": "Autorizou novidades por e-mail.",
             "title": "Marketing Email",
@@ -6503,6 +6565,22 @@
             "description": "Autorizou novidades por WhatsApp.",
             "title": "Marketing Whatsapp",
             "type": "boolean"
+          },
+          "method": {
+            "anyOf": [
+              {
+                "enum": [
+                  "checkbox",
+                  "submit"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Método registrado, sem inferir caixa em históricos.",
+            "title": "Method"
           },
           "privacy_accepted_at": {
             "anyOf": [
@@ -6514,8 +6592,24 @@
                 "type": "null"
               }
             ],
-            "description": "Quando aceitou o tratamento das respostas para gerar o plano.",
+            "description": "Quando o servidor aceitou o consentimento pela caixa ou pela ação de enviar; não comprova horário de clique humano.",
             "title": "Privacy Accepted At"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "enum": [
+                  "public_html",
+                  "public_api_declaration"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Adaptador que recebeu a declaração; não certifica gesto humano.",
+            "title": "Source"
           },
           "text_version": {
             "anyOf": [
