@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.integration_readiness import configuration_lock
 from app.models import DeploymentContract
 
-BINARY_CONTRACT = 2
+BINARY_CONTRACT = 3
 PARTICIPANT_CONTRACT = 1
 
 
@@ -45,7 +45,7 @@ def assert_runtime_contract(session: Session) -> None:
 
 def assert_contract(session: Session, *, required: int) -> None:
     """Exige requisito habilitado; mantém a trava até o fim da transação chamadora."""
-    if type(required) is not int or required not in {1, 2}:
+    if type(required) is not int or required not in {1, 2, 3}:
         raise DeploymentContractError
     try:
         configuration_lock(session, shared=True)
@@ -147,9 +147,9 @@ def _validate_evidence(evidence, *, required: int = 1):
         spec_version: Annotated[int, Field(ge=1)]
         observed_spec_version: Annotated[int, Field(ge=1)]
         image: digest
-        contract: Annotated[int, Field(ge=1, le=2)]
+        contract: Annotated[int, Field(ge=1, le=3)]
         previous_image: digest
-        previous_contract: Annotated[int, Field(ge=1, le=2)]
+        previous_contract: Annotated[int, Field(ge=1, le=3)]
         replicas: Annotated[int, Field(ge=1)]
         tasks: list[Task]
         retired: list[Task]

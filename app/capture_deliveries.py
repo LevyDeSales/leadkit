@@ -3,24 +3,30 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from uuid import uuid4
 
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import insert
 
 from app.models import CaptureDelivery, Integration, Submission, WebhookDestination
+from app.persisted_webhook import V2_SELECTION, build_payload
 
 EVENT = "submissao.persistida"
 
 
-def enqueue(session, submission: Submission) -> None:
+def enqueue(session, submission: Submission, *, spec) -> None:
     """Fixa destinos existentes no aceite, incluindo configurações incompatíveis rastreáveis."""
     from app.integration_readiness import configuration_lock
 
     configuration_lock(session, shared=True)
-    integrations = session.scalars(
-        sa.select(Integration).where(
-            Integration.form_slug == submission.form_slug, Integration.active.is_(True)
+    integrations = (
+        session.scalars(
+            sa.select(Integration).where(
+                Integration.form_slug == submission.form_slug, Integration.active.is_(True)
+            )
         )
+        if spec.generation == "none"
+        else ()
     )
     for integration in integrations:
         session.execute(
@@ -44,7 +50,30 @@ def enqueue(session, submission: Submission) -> None:
         .order_by(WebhookDestination.form_slug.is_(None))
         .limit(1)
     )
-    if destination:
+    v2 = destination is not None and V2_SELECTION in destination.events
+    if destination and (spec.generation == "none" or v2):
+        values = {}
+        if v2:
+            from app.models import HandoffReference, WebhookIssuer
+
+            delivery_id = uuid4()
+            values = {
+                "id": delivery_id,
+                "schema_version": 2,
+                "payload": build_payload(
+                    delivery_id=delivery_id,
+                    issuer=session.get_one(WebhookIssuer, 1).namespace,
+                    submission=submission,
+                    generation=spec.generation,
+                    destination_id=destination.id,
+                    destination_revision=destination.version,
+                    correlation=session.scalar(
+                        sa.select(HandoffReference).where(
+                            HandoffReference.submission_id == submission.id
+                        )
+                    ),
+                ),
+            }
         session.execute(
             insert(CaptureDelivery)
             .values(
@@ -52,6 +81,7 @@ def enqueue(session, submission: Submission) -> None:
                 webhook_destination_id=destination.id,
                 event=EVENT,
                 config_version=destination.version,
+                **values,
             )
             .on_conflict_do_nothing()
         )
@@ -130,7 +160,8 @@ def configuration(session, delivery, spec):
         return row, "configuration_changed"
     if row.purpose != "internal":
         return row, "configuration_incompatible"
-    if EVENT not in row.events:
+    selection = V2_SELECTION if delivery.schema_version == 2 else EVENT
+    if selection not in row.events:
         return row, "configuration_incompatible"
     return row, None
 
@@ -167,30 +198,39 @@ def dispatch(deps, delivery_id, dispatch_no):
             if problem:
                 delivery.status, delivery.last_error = "failed", problem
                 return "failed"
-            identity = identity_from_answers(submission, spec)
+            if delivery.schema_version == 2:
+                from app.deployment_contract import assert_contract
+
+                assert_contract(session, required=3)
+            identity = (
+                identity_from_answers(submission, spec) if delivery.schema_version == 1 else None
+            )
             if delivery.webhook_destination_id:
                 if deps.cipher is None:
                     raise TerminalError(
                         FailureCode.DELIVERY_UNCONFIGURED, "configuração indisponível"
                     )
-                payload = {
-                    "event": EVENT,
-                    "event_id": str(delivery.id),
-                    "occurred_at": submission.created_at.isoformat(),
-                    "form": {
-                        "slug": submission.form_slug,
-                        "version": submission.form_version,
-                        "version_number": submission.form_version_number,
-                    },
-                    "submission": {"id": str(submission.id)},
-                    "lead": asdict(identity),
-                    "answers": submission.answers,
-                    "consent": submission.consent,
-                    "tracking": submission.tracking,
-                    "scores": submission.scores,
-                    "priority": submission.priority,
-                    "persona": submission.persona,
-                }
+                if delivery.schema_version == 2:
+                    payload = delivery.payload
+                else:
+                    payload = {
+                        "event": EVENT,
+                        "event_id": str(delivery.id),
+                        "occurred_at": submission.created_at.isoformat(),
+                        "form": {
+                            "slug": submission.form_slug,
+                            "version": submission.form_version,
+                            "version_number": submission.form_version_number,
+                        },
+                        "submission": {"id": str(submission.id)},
+                        "lead": asdict(identity),
+                        "answers": submission.answers,
+                        "consent": submission.consent,
+                        "tracking": submission.tracking,
+                        "scores": submission.scores,
+                        "priority": submission.priority,
+                        "persona": submission.persona,
+                    }
                 delivery.response_status = deps.webhook.send(
                     row.url, deps.cipher.open(row.secret_sealed), EVENT, str(delivery.id), payload
                 )
@@ -346,7 +386,26 @@ def listing(session, *, submission_id=None, integration_id=None, limit=100):
     """Estado seguro por captura/integração, sem tocar respostas nem segredo do destino."""
     query = (
         sa.select(
-            CaptureDelivery,
+            *[
+                getattr(CaptureDelivery, name)
+                for name in (
+                    "id",
+                    "submission_id",
+                    "integration_id",
+                    "webhook_destination_id",
+                    "event",
+                    "schema_version",
+                    "config_version",
+                    "status",
+                    "attempts",
+                    "dispatch_no",
+                    "last_error",
+                    "response_status",
+                    "row_id",
+                    "outcome",
+                    "delivered_at",
+                )
+            ],
             sa.func.coalesce(Integration.version, WebhookDestination.version).label(
                 "current_config_version"
             ),
@@ -361,8 +420,8 @@ def listing(session, *, submission_id=None, integration_id=None, limit=100):
     if integration_id is not None:
         query = query.where(CaptureDelivery.integration_id == integration_id)
     return [
-        state(row, current)
-        for row, current in session.execute(
+        state(row, row.current_config_version)
+        for row in session.execute(
             query.order_by(CaptureDelivery.created_at, CaptureDelivery.id).limit(limit)
         )
     ]
@@ -375,6 +434,7 @@ def state(row, current_config_version):
         "destination_id": str(row.integration_id or row.webhook_destination_id),
         "kind": "baserow" if row.integration_id else "webhook",
         "event": row.event,
+        "schema_version": row.schema_version,
         "config_version": row.config_version,
         "current_config_version": current_config_version,
         "status": row.status,

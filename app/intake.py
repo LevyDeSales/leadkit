@@ -256,7 +256,6 @@ def accept_submission(
             if spec.generation == "none":
                 from app.capture_deliveries import enqueue
 
-                enqueue(session, submission)
                 receipt = CaptureReceipt(
                     submission_id=submission.id,
                     public_id=new_public_id(),
@@ -274,6 +273,7 @@ def accept_submission(
                     cipher=cipher,
                     now=now,
                 )
+                enqueue(session, submission, spec=spec)
                 return CaptureAccepted(
                     submission,
                     receipt,
@@ -293,6 +293,9 @@ def accept_submission(
             prepare_handoff(
                 session, submission, spec, receipt_expires_at=job.expires_at, cipher=cipher, now=now
             )
+            from app.capture_deliveries import enqueue
+
+            enqueue(session, submission, spec=spec)
     except IntegrityError:
         # Duas requisições iguais ao mesmo tempo: a perdedora devolve o resultado da vencedora.
         existing = _find_submission(session, spec.slug, idempotency_key)

@@ -57,13 +57,14 @@
       {% if page.stored %}<p>Finalidade atual: {{ "interna" if page.stored.purpose == "internal" else "participante" }} · {{ {"legacy": "origem legada", "explicit": "escolha explícita", "default": "padrão seguro"}.get(page.stored.purpose_origin) }}.</p>{% endif %}
     </div>
     <p>Finalidade do destino efetivo: {{ "interna — plano integral e dados comerciais" if effective_purpose == "internal" else "participante — plano público" if effective_purpose else "nenhum destino" }}.</p>
-    <p>Eventos do destino efetivo: {{ effective_events | join(", ") or "nenhum destino" }}.</p>
+    <p>Eventos do destino efetivo: {% for event in effective_events %}{{ {"plano.concluido":"Plano concluído", "plano.liberado":"Liberação individual", "submissao.persistida":"Captura sem PDF", "submissao.persistida.v2":"Respostas após salvar"}.get(event, event) }}{% if not loop.last %}, {% endif %}{% else %}nenhum destino{% endfor %}.</p>
     <input type="hidden" name="events_present" value="1">
     <fieldset id="eventos" aria-describedby="eventos-ajuda{% if errors.get('events') %} eventos-erro{% endif %}"{% if errors.get('events') %} aria-invalid="true"{% endif %}><legend>Eventos aceitos pelo receptor</legend>
     <p id="eventos-ajuda">Declare a finalidade autorizada. Capturas enviam respostas sem plano ou PDF. Confira também o destino padrão herdado ao remover uma configuração própria.</p>
     <label><input type="checkbox" name="events" value="plano.concluido"{% if 'plano.concluido' in selected_events %} checked{% endif %}>Planos concluídos (PDF)</label>
     <label><input type="checkbox" name="events" value="plano.liberado"{% if 'plano.liberado' in selected_events %} checked{% endif %}>Liberação individual do plano</label>
     <label><input type="checkbox" name="events" value="submissao.persistida"{% if 'submissao.persistida' in selected_events %} checked{% endif %}>Capturas persistidas (sem PDF)</label>
+    {% if page.form_slug %}<label><input type="checkbox" name="events" value="submissao.persistida.v2"{% if 'submissao.persistida.v2' in selected_events %} checked{% endif %}>Enviar respostas ao concluir o formulário</label><p>Com ou sem PDF, envia as respostas depois de salvar. Escolha finalidade interna e retire a seleção legada de captura. Não envia respostas anteriores.</p>{% endif %}
     {% if errors.get("events") %}<p class="error" id="eventos-erro" role="alert">{{ errors["events"] }}</p>{% endif %}</fieldset>
     {% if needs_confirmation %}
     <label class="choice choice--check"><input type="checkbox" name="confirm_http" value="on" required><span class="choice__body"><span class="choice__mark">{{ m.icon('check') }}</span><span>Confirmo que o receptor só aceita http e que os dados das leads vão sem criptografia até ele.</span></span></label>
@@ -106,7 +107,7 @@
   <h2 id="teste-titulo">Evento de teste</h2>
   <p>Escolha um teste de conexão (<span class="mono">webhook.teste</span>) ou o envio sintético de respostas (<span class="mono">submissao.persistida</span>). Os eventos são assinados, usam dados fictícios e mostram a resposta do receptor, sem criar uma submissão real.</p>
   {#- Sem JavaScript é um POST comum que devolve a página inteira; com HTMX, troca só o resultado. -#}
-  <form method="post" action="{{ page.base }}/test" hx-post="{{ page.base }}/test" hx-target="#resultado-teste" hx-select="#resultado-teste" hx-swap="outerHTML"><label for="test-event">Finalidade do teste sintético</label><select name="event" id="test-event"><option value="webhook.teste">Conexão</option>{% if page.stored and 'submissao.persistida' in page.stored.events %}<option value="submissao.persistida">Captura persistida (sem submissão real)</option>{% endif %}</select>
+  <form method="post" action="{{ page.base }}/test" hx-post="{{ page.base }}/test" hx-target="#resultado-teste" hx-select="#resultado-teste" hx-swap="outerHTML"><label for="test-event">Finalidade do teste sintético</label><select name="event" id="test-event"><option value="webhook.teste">Conexão</option>{% if page.stored and 'submissao.persistida.v2' in page.stored.events %}<option value="submissao.persistida.v2">Respostas após salvar</option>{% endif %}{% if page.stored and 'submissao.persistida' in page.stored.events %}<option value="submissao.persistida">Captura persistida (sem submissão real)</option>{% endif %}</select>
     <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
     <button class="btn btn--secondary" type="submit">{{ m.icon('send') }}Mandar o evento de teste</button>
   </form>

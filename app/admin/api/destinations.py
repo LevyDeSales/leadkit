@@ -449,7 +449,7 @@ UNREADABLE_SECRET = (
 )
 TEST_TEXT = (
     "Mandar o evento de teste faz uma chamada de verdade ao receptor do destino: ele recebe um "
-    "`webhook.teste`, assinado com o segredo, no endereço que está configurado."
+    "evento sintético do contrato escolhido, assinado com o segredo, no endereço configurado."
 )
 
 

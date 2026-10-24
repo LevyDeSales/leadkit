@@ -626,6 +626,7 @@ class JobState:
     deliveries: tuple[DeliveryState, ...]  # do mais antigo ao mais novo
     syncs: tuple[SyncState, ...]  # o mais novo primeiro
     timeline: tuple[AttemptState, ...]  # da tentativa 1 à atual
+    persisted_deliveries: tuple[dict[str, Any], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -782,6 +783,8 @@ def read_job(
         )
         for d in delivery_rows
     ]
+    from app.capture_deliveries import listing as persisted_deliveries
+
     state = JobState(
         id=job.id,
         public_id=job.public_id,
@@ -804,6 +807,7 @@ def read_job(
             for a in sorted(artifacts.values(), key=lambda a: a.version, reverse=True)
         ),
         deliveries=tuple(deliveries),
+        persisted_deliveries=tuple(persisted_deliveries(session, submission_id=job.submission_id)),
         syncs=tuple(
             SyncState(
                 id=row.id,

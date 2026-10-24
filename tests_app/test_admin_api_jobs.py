@@ -1031,6 +1031,7 @@ def test_list_jobs_the_form_version_filter_lists_the_same_orders_as_the_page(
 # --- get_job ------------------------------------------------------------------------------------
 
 STATE_FIELDS = {
+    "persisted_deliveries",
     "release",
     "public_id",
     "status",

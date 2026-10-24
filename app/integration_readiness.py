@@ -3,6 +3,7 @@
 import sqlalchemy as sa
 
 from app.models import Integration, WebhookDestination
+from app.persisted_webhook import V2_SELECTION
 
 
 def configuration_lock(session, *, shared=False):
@@ -68,6 +69,13 @@ def problems_for(spec, *, destination, integrations):
         and destination.purpose == "participant"
     )
     accepted = {"plano.concluido", "plano.liberado"} if manual_participant else {event}
+    if (
+        destination
+        and V2_SELECTION in destination.events
+        and destination.purpose == "internal"
+        and destination.form_slug == spec.slug
+    ):
+        accepted.add(V2_SELECTION)
     if destination and not accepted.intersection(destination.events):
         result.append(
             Problem(
