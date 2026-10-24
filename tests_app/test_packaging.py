@@ -119,6 +119,8 @@ def check_installed_package() -> None:
         "migrations/versions/0016_plan_audiences.py",
         "migrations/versions/0017_continuation_release.py",
         "migrations/versions/0018_journey_events.py",
+        "migrations/versions/0019_persisted_webhook_v2.py",
+        "persisted_webhook.py",
         "capture_deliveries.py",
         "migrations/versions/0013_artifact_availability.py",
         "forms/starter/definition.json",
@@ -132,7 +134,7 @@ def check_installed_package() -> None:
     assert not (root / "migrations/legacy_forms").exists()
     assert (
         ScriptDirectory.from_config(Config(str(root / "alembic.ini"))).get_current_head()
-        == "0018_journey_events"
+        == "0019_persisted_webhook_v2"
     )
     assert len(list((root / "assets/fonts").glob("*.ttf"))) == 8
     assert list((root / "web/templates").rglob("*.html"))

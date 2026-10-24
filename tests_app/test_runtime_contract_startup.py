@@ -14,7 +14,7 @@ from app.worker import ready_deps
 def test_future_floor_stops_runtime_before_configuration_writes(deps, monkeypatch, runtime):
     with deps.sessions.begin() as session:
         previous_floor = session.get_one(DeploymentContract, 1).minimum_contract
-        session.get_one(DeploymentContract, 1).minimum_contract = 3
+        session.get_one(DeploymentContract, 1).minimum_contract = 4
     prepared = []
     monkeypatch.setattr(destinations, "prepare", lambda deps: prepared.append(True))
     try:

@@ -526,6 +526,7 @@ def create_app(
         job_id, attempt, public_id = accepted.job.id, accepted.job.attempt, accepted.job.public_id
         if not accepted.replay:
             launch_after_commit(request.app, job_id, attempt)
+            launch_capture_after_commit(request.app, accepted.job.submission_id)
         links = pipeline.lead_links(deps, accepted.job)
         with deps.sessions() as session:
             artifact = session.scalar(

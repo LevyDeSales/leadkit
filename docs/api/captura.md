@@ -1,5 +1,23 @@
 # Formulários de captura
 
+## Enviar respostas ao concluir o formulário
+
+No destino próprio do formulário, escolha finalidade **Interna** e **Enviar respostas ao concluir
+o formulário**. Com ou sem PDF, as respostas são enviadas depois de salvar, inclusive se o PDF
+estiver pendente, falhar ou aguardar liberação. Essa escolha exige atualização compatível concluída;
+não funciona no destino padrão e não envia respostas anteriores. A seleção legada de captura e
+a nova seleção são alternativas: escolha somente uma para o mesmo destino.
+
+A consulta de captura conserva `deliveries`; no pedido PDF, `get_job.persisted_deliveries` mostra
+a sincronização das respostas. O painel, a API e o MCP consultam o mesmo estado seguro: pendente,
+confirmado ou falho, com tentativas, revisão original/atual e código de erro. Respostas salvas
+continuam salvas quando o transporte falha. Sucesso confirma o transporte, sem comprovar leitura.
+O retry exige confirmação, epoch e revisão observados e conserva o mesmo evento, conteúdo, destino
+e revisão originais. Uma configuração alterada exige nova decisão para os próximos envios; não
+redireciona intenções anteriores. Não use reprocessamento do PDF para repetir respostas.
+
+O contrato técnico e a prova de recebimento estão em [Integrações](integracoes.md).
+
 Ao criar um formulário, escolha **Somente salvar respostas**. A finalidade fica em `generation`
 na versão publicada: `none` captura; `pdf` ou ausência conserva a geração de plano e PDF.
 O [exemplo sintético](../../examples/capture.json) pode ser importado pelas mesmas superfícies.

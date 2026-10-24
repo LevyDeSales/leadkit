@@ -38,7 +38,7 @@ def test_additive_upgrade_preserves_authority_and_floor_without_seeded_sources(f
                 "select minimum_contract, phase, epoch, evidence, attested_at from deployment_contract"
             )
         ).one()
-    command.upgrade(config(), "head")
+    command.upgrade(config(), "0018_journey_events")
     with Session(fresh) as session:
         from app import integration_credentials
 

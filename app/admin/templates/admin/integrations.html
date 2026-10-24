@@ -54,7 +54,7 @@
 <p>Tabela {{ row.receiver.table_id }}</p>
 {% endif %}
 <p>Finalidade {{ 'interna' if row.receiver.purpose == 'internal' else 'participante' }} · {{ {'legacy':'origem legada','explicit':'escolha explícita','default':'padrão seguro'}[row.receiver.purpose_origin] }}</p>
-<p>Eventos: {% for event in row.receiver.events %}{{ {'plano.concluido': 'Plano concluído', 'submissao.persistida': 'Respostas salvas', 'plano.liberado': 'Liberação do plano'}[event] }}{% if not loop.last %} · {% endif %}{% endfor %}</p>
+<p>Eventos: {% for event in row.receiver.events %}{{ {'plano.concluido': 'Plano concluído', 'submissao.persistida': 'Respostas salvas', 'submissao.persistida.v2': 'Respostas após salvar', 'plano.liberado': 'Liberação do plano'}[event] }}{% if not loop.last %} · {% endif %}{% endfor %}</p>
 <p>Revisão {{ row.receiver.version }} do receptor {{ 'padrão' if row.receiver.scope_kind == 'default' else row.receiver.form_slug }}</p>
 {% if row.mapping %}
 <p>PDF: {{ 'mapeamento salvo' if row.mapping.pdf_present else 'sem mapeamento' }} · Captura: {{ 'mapeamento salvo' if row.mapping.capture_present else 'sem mapeamento' }}</p>
@@ -78,12 +78,12 @@
 <p>Histórico de entregas · todas as revisões:</p>
 {% for stream in ['pdf','capture'] %}
 {% set counts = row.history[stream] %}
-<p>{{ 'PDF' if stream == 'pdf' else 'Captura' }}: {{ counts.pending }} pendentes · {{ counts.succeeded }} confirmados · {{ counts.failed }} com falha</p>
+<p>{{ 'PDF' if stream == 'pdf' else 'Respostas' }}: {{ counts.pending }} pendentes · {{ counts.succeeded }} confirmados · {{ counts.failed }} com falha</p>
 {% endfor %}</td>
 <td data-label="Última confirmação de envio">
 {% if row.history.last_success %}
 {% set success = row.history.last_success %}<time datetime="{{ success.at.isoformat() }}">{{ success.at.astimezone(hub_timezone).strftime('%d/%m/%Y %H:%M') }} (São Paulo)</time>
-<p>{{ 'PDF' if success.stream == 'pdf' else 'Captura' }} · {{ {'current':'Revisão atual','previous':'Revisão anterior','unknown':'Revisão não registrada'}[success.configuration_match] }}</p>
+<p>{{ 'PDF' if success.stream == 'pdf' else 'Respostas' }} · {{ {'current':'Revisão atual','previous':'Revisão anterior','unknown':'Revisão não registrada'}[success.configuration_match] }}</p>
 {% if success.configuration_match != 'current' %}<p>Não confirma a configuração atual.</p>{% endif %}
 {% else %}Sem confirmação registrada
 {% endif %}

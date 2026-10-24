@@ -3,6 +3,22 @@
 {% set section = "jobs" %}
 {% block title %}{{ job.name or "Pedido" }} · {{ job.public_id }}{% endblock %}
 {% block content %}
+{% if job.persisted_deliveries %}
+<section class="box" aria-labelledby="respostas-salvas"><h2 id="respostas-salvas">Respostas salvas</h2>
+<p>A sincronização das respostas é independente da geração e da liberação do PDF. Confirmação de transporte não comprova leitura.</p>
+<ul>{% for delivery in job.persisted_deliveries %}<li>{{ {'pending':'Sincronização pendente','succeeded':'Sincronização concluída','failed':'Sincronização falhou'}[delivery.status] }} · {{ delivery.attempts }} tentativa(s)
+<p>Destino {{ delivery.destination_id }} · revisão original {{ delivery.config_version }} · revisão atual {{ delivery.current_config_version or 'indisponível' }}</p>
+{% if delivery.error_code %}<p>{{ delivery.error_code }}</p>{% endif %}
+{% if delivery.status == 'failed' and delivery.current_config_version and (delivery.schema_version == 1 or delivery.current_config_version == delivery.config_version) %}
+<form method="post" action="/admin/jobs/{{ job.public_id }}/persisted-deliveries/{{ delivery.delivery_id }}/retry">
+<input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+<input type="hidden" name="expected_dispatch" value="{{ delivery.dispatch_no }}">
+<input type="hidden" name="expected_config_version" value="{{ delivery.config_version if delivery.schema_version == 2 else delivery.current_config_version }}">
+<label><input type="checkbox" name="confirm" required>Confirmo repetir o envio externo ao mesmo destino e revisão autorizada.</label>
+<button class="btn" type="submit">Repetir envio de respostas</button></form>{% endif %}
+</li>{% endfor %}</ul></section>
+{% endif %}
+
 <nav class="crumbs" aria-label="Você está em"><a href="/admin">Pedidos</a><span aria-hidden="true">/</span><span>{{ job.name or "Sem nome" }}</span></nav>
 
 <header class="detail-head">

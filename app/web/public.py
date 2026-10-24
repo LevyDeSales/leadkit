@@ -258,6 +258,7 @@ async def submit_form(slug: str, request: Request) -> Response:
     if not accepted.replay:
         # Falha no disparo não perde o pedido: o reconciliador dispara depois.
         launch_after_commit(request.app, job.id, job.attempt)
+        launch_capture_after_commit(request.app, job.submission_id)
     suffix = "/conclusao" if accepted.form.completion.mode != "result" else ""
     response = RedirectResponse(f"/d/{job.public_id}{suffix}", status_code=303)
     _grant_access(response, request, job, accepted.token)

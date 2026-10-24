@@ -8,6 +8,7 @@ from app.admin.api.common import ConfirmedInput
 
 
 class CaptureDeliveryState(BaseModel):
+    schema_version: Literal[1, 2] = 1
     delivery_id: str
     submission_id: str
     destination_id: str

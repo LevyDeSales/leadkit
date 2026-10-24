@@ -21,7 +21,7 @@ def enabled(deps):
     epoch = uuid4()
     with deps.sessions.begin() as session:
         begin_rollout(session, epoch=epoch)
-        attest_rollout(session, epoch=epoch, evidence=evidence())
+        attest_rollout(session, epoch=epoch, evidence=evidence(contract=3))
     try:
         yield
     finally:

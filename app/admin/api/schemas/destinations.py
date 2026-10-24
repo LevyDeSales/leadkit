@@ -55,7 +55,11 @@ class Destination(BaseModel):
 
     """Um destino do webhook guardado, como a API o mostra. **Nunca traz o segredo.**"""
 
-    events: list[Literal["plano.concluido", "submissao.persistida", "plano.liberado"]] = Field(
+    events: list[
+        Literal[
+            "plano.concluido", "submissao.persistida", "submissao.persistida.v2", "plano.liberado"
+        ]
+    ] = Field(
         default_factory=lambda: ["plano.concluido"],
         description="Eventos que a operadora declarou aceitos pelo receptor.",
     )
@@ -265,12 +269,20 @@ class SaveDestinationRequest(ConfirmedInput, VersionedInput):
     mantém o segredo. Como o endereço decide para onde vão os dados das leads, a operação exige
     `confirm: true` em toda chamada."""
 
-    events: list[Literal["plano.concluido", "submissao.persistida", "plano.liberado"]] | None = (
-        Field(
-            default=None,
-            min_length=1,
-            description="Na criação, omitido mantém PDF legado; na atualização, omitido conserva os eventos atuais. Captura exige autorização explícita para submissao.persistida.",
-        )
+    events: (
+        list[
+            Literal[
+                "plano.concluido",
+                "submissao.persistida",
+                "submissao.persistida.v2",
+                "plano.liberado",
+            ]
+        ]
+        | None
+    ) = Field(
+        default=None,
+        min_length=1,
+        description="Na criação, omitido mantém PDF legado; na atualização, omitido conserva os eventos atuais. Captura exige autorização explícita para submissao.persistida.",
     )
     url: str = Field(
         max_length=destinations.MAX_URL_LENGTH,
@@ -324,7 +336,8 @@ class RotatedDestination(Destination):
     secret: str = Field(
         description="O segredo novo do destino. **Só existe nesta resposta**: ponha-o no receptor "
         "agora, porque o antigo já não vale. Novos envios usam este segredo; entregas PDF fixadas "
-        "exigem repetir explicitamente com a revisão atual.",
+        "exigem repetir explicitamente com a revisão atual. Intenções de respostas após salvar conservam "
+        "a revisão original e não podem ser repetidas com o segredo ou a revisão novos.",
         examples=["<segredo-mostrado-uma-vez>"],
         repr=False,
     )
@@ -378,9 +391,9 @@ class RemovedDestination(BaseModel):
 class SendDestinationTestEventRequest(ConfirmedInput):
     """O envio do evento de teste. Sai para o receptor de verdade, por isso exige `confirm: true`."""
 
-    event: Literal["webhook.teste", "submissao.persistida"] = Field(
+    event: Literal["webhook.teste", "submissao.persistida", "submissao.persistida.v2"] = Field(
         default="webhook.teste",
-        description="Teste sintético do contrato de captura exige que o destino aceite o evento. Não cria submissão.",
+        description="Teste sintético do contrato selecionado exige que o destino o aceite; respostas após salvar usam o envelope2. Não cria submissão.",
     )
 
 
