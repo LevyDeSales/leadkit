@@ -11,20 +11,27 @@ Pelo stdio passa o protocolo, então **nada escreve em stdout** além do SDK: o 
 
 from __future__ import annotations
 
+import json
 import logging
+import re
 from collections.abc import Iterable
+from importlib.metadata import PackageNotFoundError, version
 from typing import Any
+from uuid import uuid4
 
 import anyio
 from mcp import types
 from mcp.server.lowlevel import Server
 from mcp.server.stdio import stdio_server
+from mcp.shared.exceptions import McpError
+from mcp.shared.version import SUPPORTED_PROTOCOL_VERSIONS
 
 from app.admin_mcp.catalog import ToolSpec
 from app.admin_mcp.client import ApiClient
 from app.admin_mcp.compose import Composite, without_clashes
 from app.admin_mcp.composites import for_tools
 from app.admin_mcp.config import Config
+from app.admin_mcp.confirmation import ConfirmationOutcome
 from app.admin_mcp.discovery import discover
 from app.admin_mcp.redaction import Redactor
 from app.admin_mcp.runner import ToolRunner
@@ -72,17 +79,107 @@ class SessionPrompter:
         found = params.capabilities.elicitation if params is not None else None
         return found is not None and (found.form is not None or found.url is None)
 
-    async def ask(self, message: str) -> bool | None:
+    async def ask(self, message: str) -> ConfirmationOutcome:
+        if self._session.client_params is None:
+            return self._record(ConfirmationOutcome.UNAVAILABLE, failure="not_initialized")
         if not self.can_ask():
-            return None
+            return self._record(ConfirmationOutcome.UNSUPPORTED)
         try:
             result = await self._session.elicit_form(
                 message=message, requestedSchema=CONFIRM_FORM, related_request_id=self._request_id
             )
-        except Exception as problem:  # noqa: BLE001 - o cliente recusou, caiu ou estourou o tempo
-            logger.warning("Não consegui perguntar à pessoa (%s)", type(problem).__name__)
-            return None
-        return result.action == "accept" and (result.content or {}).get("confirmar") is True
+        except TimeoutError:
+            return self._record(ConfirmationOutcome.TIMED_OUT, failure="timeout")
+        except McpError as problem:
+            # O SDK 1.30 representa seu timeout de leitura como McpError 408.
+            if problem.error.code == 408:
+                return self._record(ConfirmationOutcome.TIMED_OUT, failure="timeout")
+            return self._record(ConfirmationOutcome.UNAVAILABLE, failure="protocol_error")
+        except Exception:  # noqa: BLE001 - falhas técnicas nunca autorizam fallback
+            return self._record(ConfirmationOutcome.UNAVAILABLE, failure="client_error")
+        action = getattr(result, "action", None)
+        content = getattr(result, "content", None)
+        if action == "decline":
+            outcome = ConfirmationOutcome.DECLINED
+        elif action == "cancel":
+            outcome = ConfirmationOutcome.CANCELLED
+        elif action != "accept" or not isinstance(content, dict):
+            outcome = ConfirmationOutcome.INVALID
+        elif content.get("confirmar") is True:
+            outcome = ConfirmationOutcome.APPROVED
+        elif content.get("confirmar") is False:
+            outcome = ConfirmationOutcome.UNCHECKED
+        else:
+            outcome = ConfirmationOutcome.INVALID
+        return self._record(outcome, action=action, content=content)
+
+    def _record(
+        self,
+        outcome: ConfirmationOutcome,
+        *,
+        failure: str = "none",
+        action: Any = None,
+        content: Any = None,
+    ) -> ConfirmationOutcome:
+        """Allowlist estrutural: nenhum texto do cliente, pedido, resposta ou exceção é logado."""
+        params = self._session.client_params
+        offered = getattr(params, "protocolVersion", None)
+        client = getattr(params, "clientInfo", None)
+        capability = getattr(getattr(params, "capabilities", None), "elicitation", None)
+        present = isinstance(content, dict) and "confirmar" in content
+        record = {
+            "attempt": uuid4().hex,
+            "outcome": outcome.value,
+            "action": action if action in ("accept", "decline", "cancel") else "unknown",
+            "content_type": _structure_type(content),
+            "confirmation_present": present,
+            "confirmation_type": _structure_type(content["confirmar"]) if present else "absent",
+            "failure": failure,
+            "form_capability": self.can_ask(),
+            "url_capability": capability is not None and capability.url is not None,
+            "initialized": params is not None,
+            "protocol_requested": offered if offered in SUPPORTED_PROTOCOL_VERSIONS else "unknown",
+            # O SDK não expõe o InitializeResult enviado pela sessão. Não deduzir negociação
+            # da versão oferecida, nem confundir metadados do pacote com build do processo.
+            "protocol_negotiated": "unknown",
+            "client_reported_version": _version_value(getattr(client, "version", None)),
+            "sdk_package_version": _package_version("mcp"),
+            "server_package_version": _package_version("leadkit"),
+        }
+        logger.info("mcp_confirmation %s", json.dumps(record, sort_keys=True))
+        return outcome
+
+
+def _structure_type(value: Any) -> str:
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, int | float):
+        return "number"
+    if isinstance(value, dict):
+        return "object"
+    if isinstance(value, list):
+        return "array"
+    return "other"
+
+
+def _version_value(value: Any) -> str:
+    # Só a parte numérica estrita de uma versão observada; texto livre não entra no log.
+    return (
+        value
+        if isinstance(value, str) and re.fullmatch(r"[0-9]{1,4}(?:\.[0-9]{1,4}){1,3}", value)
+        else "unknown"
+    )
+
+
+def _package_version(package: str) -> str:
+    try:
+        return _version_value(version(package))
+    except PackageNotFoundError:
+        return "unknown"
 
 
 def to_tool(spec: ToolSpec) -> types.Tool:

@@ -14,21 +14,27 @@ from app.admin_mcp import catalog
 from app.admin_mcp.client import ApiClient
 from app.admin_mcp.compose import Composite
 from app.admin_mcp.composites import for_tools
+from app.admin_mcp.confirmation import ConfirmationOutcome
 from app.admin_mcp.results import ToolOutput
 from app.admin_mcp.runner import NeverAsks, PendingConfirmations, ToolRunner
 
 
 class Asker:
-    """O `Prompter` de mentira: responde na ordem o que o teste combinou (`True`, `False` ou `None`,
-    que é o cliente que não sabe perguntar) e guarda as perguntas."""
+    """Traduz os atalhos de cenário em desfechos explícitos: True aprova, False recusa e None
+    declara ausência de formulário. Guarda as perguntas, sem simular falhas como ausência."""
 
     def __init__(self, *answers: bool | None) -> None:
         self.answers = list(answers)
         self.messages: list[str] = []
 
-    async def ask(self, message: str) -> bool | None:
+    async def ask(self, message: str) -> ConfirmationOutcome:
         self.messages.append(message)
-        return self.answers.pop(0) if self.answers else None
+        answer = self.answers.pop(0) if self.answers else None
+        return {
+            True: ConfirmationOutcome.APPROVED,
+            False: ConfirmationOutcome.DECLINED,
+            None: ConfirmationOutcome.UNSUPPORTED,
+        }[answer]
 
 
 class Clock:

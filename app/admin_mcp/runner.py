@@ -62,7 +62,8 @@ from app.admin_mcp.client import (
     read_uploads,
 )
 from app.admin_mcp.config import Config
-from app.admin_mcp.results import ToolOutput, confirmation_detail, render
+from app.admin_mcp.confirmation import ConfirmationOutcome, blocked_message
+from app.admin_mcp.results import ToolOutput, confirmation_detail, known_refusal, render
 
 logger = logging.getLogger("gerador_mcp")
 
@@ -73,17 +74,16 @@ SHOWN_DETAILS = 600  # caracteres da descrição da operação no texto da prime
 
 
 class Prompter(Protocol):
-    """Quem pergunta à pessoa. `ask` devolve `True` (sim), `False` (não) ou `None` (o cliente não sabe
-    perguntar, ou a pergunta falhou: o servidor cai no caminho da chamada seguinte)."""
+    """Quem pergunta pelo cliente; só `APPROVED` autoriza e só `UNSUPPORTED` permite duas etapas."""
 
-    async def ask(self, message: str) -> bool | None: ...
+    async def ask(self, message: str) -> ConfirmationOutcome: ...
 
 
 class NeverAsks:
     """O `Prompter` de quem não pode perguntar: sempre o caminho da chamada seguinte."""
 
-    async def ask(self, message: str) -> bool | None:
-        return None
+    async def ask(self, message: str) -> ConfirmationOutcome:
+        return ConfirmationOutcome.UNSUPPORTED
 
 
 class PendingConfirmations:
@@ -91,7 +91,8 @@ class PendingConfirmations:
 
     A chave é a impressão digital da chamada (a ferramenta e os argumentos, sem as confirmações), e o
     valor, quais confirmações (`confirm`, `confirm_contact`) a pessoa já viu. Expira (a pessoa não
-    voltou) e tem teto (um modelo em laço não enche a memória).
+    voltou) e tem teto (um modelo em laço não enche a memória). A reserva local impede que duas
+    tarefas usem a mesma pendência enquanto uma tentativa ainda espera confirmação ou resposta.
     """
 
     def __init__(
@@ -105,6 +106,21 @@ class PendingConfirmations:
         self._limit = limit
         self._clock = clock
         self._items: OrderedDict[str, tuple[float, set[str]]] = OrderedDict()
+        self._in_flight: set[str] = set()
+
+    def reserve(self, fingerprint: str) -> bool:
+        """Reserva a chamada sem await, na mesma sessão/processo e laço assíncrono do SDK.
+
+        A reserva dura até o fim da tentativa, inclusive perguntas adicionais; não expira com a
+        pendência enquanto o envio está em andamento. Não coordena processos nem efeitos remotos.
+        """
+        if fingerprint in self._in_flight:
+            return False
+        self._in_flight.add(fingerprint)
+        return True
+
+    def release(self, fingerprint: str) -> None:
+        self._in_flight.discard(fingerprint)
 
     def remember(self, fingerprint: str, flags: Iterable[str]) -> None:
         self._purge()
@@ -120,6 +136,24 @@ class PendingConfirmations:
 
     def forget(self, fingerprint: str) -> None:
         self._items.pop(fingerprint, None)
+
+    def decide(
+        self,
+        fingerprint: str,
+        outcome: ConfirmationOutcome,
+        flags: Iterable[str],
+        *,
+        explicit: bool,
+    ) -> ConfirmationOutcome:
+        """Decide uma tentativa; falhas apagam todas as flags, não só a pergunta atual."""
+        flags = tuple(flags)
+        if outcome is not ConfirmationOutcome.UNSUPPORTED:
+            self.forget(fingerprint)
+            return outcome
+        if explicit and all(self.allows(fingerprint, flag) for flag in flags):
+            return ConfirmationOutcome.APPROVED
+        self.remember(fingerprint, flags)
+        return ConfirmationOutcome.UNSUPPORTED
 
     def _purge(self) -> None:
         now = self._clock()
@@ -209,28 +243,35 @@ class ToolRunner:
         given = {name: arguments.pop(name) for name in list(arguments) if name in gates}
         key = fingerprint(spec.name, arguments, uploads, bound)
         send: dict[str, bool] = {}
-
-        if spec.needs_confirmation(arguments):
-            answer = await prompter.ask(question(spec, arguments, uploads))
-            if answer is False:
-                return CANCELLED
-            # Sem como perguntar, o `confirm: true` do modelo só vale se o servidor já mostrou esta
-            # mesma chamada à pessoa (na primeira chamada, abaixo).
-            seen = given.get(CONFIRM) is True and self.pending.allows(key, CONFIRM)
-            if answer is not True and not seen:
-                self.pending.remember(key, [CONFIRM])
-                return ToolOutput(first_step(spec, arguments, uploads, via), awaiting=True)
-            send[CONFIRM] = True
-        for name in spec.companions:
-            if given.get(name) is True and self.pending.allows(key, name):
-                send[name] = True
+        # Leituras e simulações dispensadas de confirmação seguem concorrentes; uma operação sem
+        # marca também pode pedir uma confirmação adicional no 422.
+        guarded = spec.needs_confirmation(arguments) or (bool(spec.companions) and not spec.marked)
+        if guarded and not self.pending.reserve(key):
+            return blocked(ConfirmationOutcome.IN_PROGRESS)
         try:
-            return await self._execute(spec, arguments, send, key, prompter, uploads, via)
-        except ApiUnavailable:
-            # Não se sabe se a escrita aconteceu: a confirmação desta chamada não vale mais, e uma
-            # nova tentativa pergunta à pessoa de novo (depois de ela conferir o estado).
+            if spec.needs_confirmation(arguments):
+                answer = await prompter.ask(question(spec, arguments, uploads))
+                decision = self.pending.decide(
+                    key, answer, [CONFIRM], explicit=given.get(CONFIRM) is True
+                )
+                if decision is ConfirmationOutcome.UNSUPPORTED:
+                    return ToolOutput(first_step(spec, arguments, uploads, via), awaiting=True)
+                if decision is not ConfirmationOutcome.APPROVED:
+                    return blocked(decision)
+                send[CONFIRM] = True
+                if answer is ConfirmationOutcome.UNSUPPORTED:
+                    for name in spec.companions:
+                        if given.get(name) is True and self.pending.allows(key, name):
+                            send[name] = True
+            return await self._execute(spec, arguments, send, key, prompter, uploads, via, given)
+        except BaseException:
+            # Erro técnico ou cancelamento não restaura autoridade. A escrita pode ter ocorrido:
+            # uma nova tentativa precisa conferir o estado e obter confirmação novamente.
             self.pending.forget(key)
             raise
+        finally:
+            if guarded:
+                self.pending.release(key)
 
     async def _execute(
         self,
@@ -241,30 +282,40 @@ class ToolRunner:
         prompter: Prompter,
         uploads: Mapping[str, Upload],
         via: str | None,
+        given: Mapping[str, Any],
     ) -> ToolOutput:
         response = await self.client.send(prepare(spec, arguments, send, uploads=uploads))
         detail = confirmation_detail(response)
         missing = [name for name in spec.companions if name not in send]
         if detail is not None and missing:
             answer = await prompter.ask(companion_question(spec, detail))
-            if answer is False:
-                return CANCELLED
-            if answer is True:
+            decision = self.pending.decide(
+                key, answer, missing, explicit=all(given.get(name) is True for name in missing)
+            )
+            if decision is ConfirmationOutcome.APPROVED:
                 send.update({name: True for name in missing})
                 response = await self.client.send(prepare(spec, arguments, send, uploads=uploads))
-            else:
+            elif decision is ConfirmationOutcome.UNSUPPORTED:
                 known = missing + ([CONFIRM] if spec.needs_confirmation(arguments) else [])
                 self.pending.remember(key, known)
                 step = companion_step(spec, detail, missing, arguments, via)
                 return ToolOutput(step, awaiting=True)
-        if response.ok:
-            self.pending.forget(key)
-        return render(
-            spec, response, redact=self.client.redact, download_dir=self.config.download_dir
+            else:
+                return blocked(decision)
+        output = render(
+            spec,
+            response,
+            redact=self.client.redact,
+            download_dir=self.config.download_dir,
+            simulated=bool(spec.confirm_unless and arguments.get(spec.confirm_unless) is True),
         )
+        if response.ok or not known_refusal(response.status, output.data):
+            self.pending.forget(key)
+        return output
 
 
-CANCELLED = ToolOutput("A pessoa não confirmou: nada foi executado.", is_error=True)
+def blocked(outcome: ConfirmationOutcome) -> ToolOutput:
+    return ToolOutput(blocked_message(outcome), is_error=True, confirmation=outcome)
 
 
 def _check_names(spec: ToolSpec, arguments: Mapping[str, Any]) -> None:

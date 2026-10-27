@@ -40,7 +40,6 @@ from app.admin_mcp.compose import (
     waiting,
 )
 from app.admin_mcp.results import ToolOutput
-from app.admin_mcp.runner import CANCELLED
 
 MAX_HOST = (
     253  # o maior nome de servidor que existe (DNS): acima disso o endereço não é de servidor
@@ -479,7 +478,7 @@ async def _store_mapping(
         if gate.answer == "no":
             stopped = refused(
                 "trocar o mapeamento",
-                ToolOutput(CANCELLED.text, is_error=True),
+                ToolOutput(gate.text, is_error=True, confirmation=gate.outcome),
                 progress,
                 nothing="O mapeamento não foi trocado.",
             )

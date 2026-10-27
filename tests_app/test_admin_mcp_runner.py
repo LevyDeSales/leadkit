@@ -38,6 +38,7 @@ from admin_mcp_world import Asker, World
 from app.admin_mcp import results
 from app.admin_mcp.client import ApiClient, ApiUnavailable, InputError, prepare
 from app.admin_mcp.config import Config
+from app.admin_mcp.confirmation import ConfirmationOutcome
 from app.admin_mcp.redaction import MASK, RedactingFilter, Redactor
 from app.admin_mcp.results import ToolOutput
 from app.admin_mcp.runner import NeverAsks, ToolRunner
@@ -591,7 +592,7 @@ def test_a_confirmation_is_for_that_file_not_for_that_name(world: World) -> None
 
 def test_the_bytes_sent_are_the_bytes_the_person_confirmed(world: World) -> None:
     class Swap(Asker):
-        async def ask(self, message: str) -> bool | None:
+        async def ask(self, message: str) -> ConfirmationOutcome:
             _write(picture, PNG + b"trocado depois da pergunta")
             return await super().ask(message)
 
@@ -806,9 +807,8 @@ def test_an_unmarked_operation_never_asks(world: World) -> None:
     assert asker.messages == []
 
 
-def test_when_the_question_fails_the_server_falls_back_to_the_next_call(world: World) -> None:
-    """O cliente declarou a *elicitation* mas a pergunta caiu (`None`): vale o caminho da
-    chamada seguinte, e nada é executado."""
+def test_declared_lack_of_elicitation_support_uses_the_next_call(world: World) -> None:
+    """O double declara ausência de formulário (`None`): vale a chamada seguinte, sem envio agora."""
     output = world.call("activate_form", {"slug": "demo"}, Asker(None))
 
     assert output.text.startswith("CONFIRMAÇÃO NECESSÁRIA") and world.api.calls() == []

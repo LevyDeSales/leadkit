@@ -50,10 +50,13 @@ from test_admin import deliver_to_the_webhook, new_lead_job
 from test_admin_forms import CONTACT_PROMPT, DEFINITION, SLUG
 
 from app.admin_mcp import catalog
+from app.admin_mcp.client import ApiClient
 from app.admin_mcp.compose import Steps, untouched, without_clashes
 from app.admin_mcp.composites import BUILDERS, for_tools
 from app.admin_mcp.config import API_PREFIX
+from app.admin_mcp.confirmation import ConfirmationOutcome
 from app.admin_mcp.results import ToolOutput
+from app.admin_mcp.runner import NeverAsks, ToolRunner
 from app.deps import Deps
 from app.destinations import SecretCipher
 from app.forms import drafts, stored
@@ -310,6 +313,7 @@ ALLOWED_IMPORTS = {
     "app.admin_mcp.catalog",
     "app.admin_mcp.client",
     "app.admin_mcp.compose",
+    "app.admin_mcp.confirmation",  # desfechos neutros, sem SDK ou I/O
     "app.admin_mcp.composites_baserow",
     "app.admin_mcp.composites_forms",
     "app.admin_mcp.composites_orders",
@@ -349,7 +353,12 @@ def test_no_composite_writes_a_confirmation_literal() -> None:
                 for key, value in zip(node.keys, node.values, strict=True):
                     named = isinstance(key, ast.Constant) and str(key.value).startswith("confirm")
                     assert not (named and not isinstance(value, ast.Name)), (path.name, node.lineno)
-            if isinstance(node, ast.keyword) and node.arg and node.arg.startswith("confirm"):
+            if (
+                isinstance(node, ast.keyword)
+                and node.arg
+                and node.arg.startswith("confirm")
+                and node.arg != "confirmation"  # metadado de ToolOutput, não autorização HTTP
+            ):
                 raise AssertionError(f"{path.name}: argumento {node.arg}= escrito à mão")
             if isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant):
                 assert not str(node.slice.value).startswith("confirm") or not isinstance(
@@ -802,7 +811,11 @@ def test_a_no_leaves_the_draft_unpublished_and_says_so(deps: Deps, live: Live) -
         "publish_form_with_review", {"slug": SLUG, "note": NOTE, "publish": True}, Asker(False)
     )
 
-    assert output.is_error and "A pessoa não confirmou: nada foi executado." in output.text
+    assert (
+        output.is_error
+        and "O cliente não confirmou: informou recusa (`decline`). A operação solicitada não foi executada."
+        in output.text
+    )
     assert "Nada foi publicado." in output.text
     assert audited(deps, "form.publish") == [] and not any(confirmed(r) for r in live.sent())
 
@@ -912,7 +925,7 @@ def test_a_draft_that_changes_between_the_simulation_and_the_yes_is_a_409_and_no
     edit_draft(deps)
 
     class Racing(Asker):
-        async def ask(self, message: str) -> bool | None:
+        async def ask(self, message: str) -> ConfirmationOutcome:
             edit_draft(
                 deps, [{"op": "replace", "path": "/intro", "value": "Mudou enquanto a pessoa lia."}]
             )
@@ -1024,7 +1037,7 @@ def test_a_no_to_the_contact_confirmation_publishes_nothing(deps: Deps, contact:
         Asker(True, False),
     )
 
-    assert output.is_error and "A pessoa não confirmou" in output.text
+    assert output.is_error and "O cliente não confirmou" in output.text
     assert audited(deps, "form.publish") == []
 
 
@@ -1190,7 +1203,7 @@ def test_a_no_to_the_connection_changes_nothing(deps: Deps, live: Live) -> None:
 
     assert (
         output.is_error
-        and "A pessoa não confirmou" in output.text
+        and "O cliente não confirmou" in output.text
         and "Nada foi gravado." in output.text
     )
     assert stored_integration(deps) is None
@@ -1488,7 +1501,7 @@ def test_a_no_to_the_mapping_of_an_active_integration_leaves_it_as_it_was(
         "connect_baserow_integration", {**NO_TOKEN, "sources": NEW_MAPPING}, Asker(False)
     )
 
-    assert output.is_error and "A pessoa não confirmou" in output.text
+    assert output.is_error and "O cliente não confirmou" in output.text
     assert "O mapeamento não foi trocado." in output.text
     assert operations_since(activated, seen) == ["get_form_integration"]
     assert len(stored_map(deps)) == 6 and stored_integration(deps).active is True
@@ -2163,7 +2176,7 @@ def test_a_5xx_on_a_write_is_never_reported_as_nothing_published_or_nothing_save
         (ToolOutput("x", True, status=429), True),
         (ToolOutput("x", True, status=499), True),
         (ToolOutput("x", True, status=502, data={"code": "upstream_failed"}), True),
-        (ToolOutput("A pessoa não confirmou: nada foi executado.", True), True),
+        (ToolOutput("Recusa do cliente", True, confirmation=ConfirmationOutcome.DECLINED), True),
         (ToolOutput("x", True, status=500), False),
         (ToolOutput("x", True, status=500, data={"code": "upstream_failed"}), False),
         (ToolOutput("x", True, status=502, data={"code": "bad_gateway"}), False),
@@ -2607,6 +2620,56 @@ def test_over_the_protocol_a_client_that_cannot_ask_gets_the_description_and_not
     )
     assert [bool(json.loads(r.content).get("dry_run")) for r in world.api.calls("POST")] == [True]
     world.close()
+
+
+def test_concurrent_publication_does_not_claim_nothing_was_published(tmp_path: Path) -> None:
+    """A composta conserva a incerteza enquanto a primeira publicação ainda espera resposta."""
+
+    async def scenario() -> None:
+        world = World(tmp_path)
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        publications: list[httpx.Request] = []
+
+        async def reply(request: httpx.Request) -> httpx.Response:
+            if request.method == "GET":
+                return answer(200, review_body())
+            if json.loads(request.content).get("dry_run"):
+                return answer(200, simulation_body())
+            publications.append(request)
+            entered.set()
+            await release.wait()
+            return answer(200, {"published_version": {"number": 2}})
+
+        client = ApiClient(world.config, transport=httpx.MockTransport(reply))
+        runner = ToolRunner(client, world.config)
+        composite = world.composites["publish_form_with_review"]
+        arguments = {"slug": SLUG, "note": NOTE, "publish": True}
+        tasks = []
+
+        async def invoke(given: dict[str, Any]) -> ToolOutput:
+            return await composite.invoke(runner, world.tools, given, NeverAsks())
+
+        try:
+            assert (await invoke(arguments)).awaiting
+            confirmed = {**arguments, "confirm": True}
+            tasks.append(asyncio.create_task(invoke(confirmed)))
+            await asyncio.wait_for(entered.wait(), 2)
+            tasks.append(asyncio.create_task(invoke(confirmed)))
+            concurrent = await asyncio.wait_for(asyncio.shield(tasks[1]), 2)
+            assert concurrent.is_error and not concurrent.awaiting
+            assert "em andamento" in concurrent.text
+            assert "Nada foi publicado" not in concurrent.text
+            assert "não foi executada" not in concurrent.text
+            assert "confira o estado" in concurrent.text
+            assert not tasks[0].done() and len(publications) == 1
+        finally:
+            release.set()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            await client.aclose()
+            await world.client.aclose()
+
+    asyncio.run(scenario())
 
 
 def test_baserow_composite_forwards_explicit_purpose_and_shows_it_before_confirmation(
