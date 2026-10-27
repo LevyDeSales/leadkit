@@ -8,12 +8,97 @@ from pathlib import Path
 
 import httpx
 import pytest
-from admin_mcp_support import body_of, error
+from admin_mcp_support import answer, body_of, error
 from admin_mcp_world import World
 
 from app.admin_mcp.client import ApiClient
 from app.admin_mcp.confirmation import ConfirmationOutcome
 from app.admin_mcp.runner import NeverAsks, ToolRunner
+
+
+@pytest.mark.parametrize("ending", ["cancelled", "unexpected", "base_exception"])
+def test_interrupted_composite_gate_requires_a_new_presentation_before_replay(
+    tmp_path: Path, ending: str
+) -> None:
+    async def scenario() -> None:
+        world = World(tmp_path)
+        entered = asyncio.Event()
+        release = asyncio.Event()
+
+        class GateInterrupted(BaseException):
+            pass
+
+        class PausedQuestion:
+            async def ask(self, message: str) -> ConfirmationOutcome:
+                entered.set()
+                await release.wait()
+                if ending == "unexpected":
+                    raise RuntimeError("Falha sintética na pergunta")
+                raise GateInterrupted()
+
+        state = {
+            "published": True,
+            "connected": True,
+            "connection": {
+                "version": "2",
+                "base_url": "https://baserow.example.test",
+                "table_id": 7,
+                "purpose": "internal",
+                "active": True,
+            },
+            "mapping": [{"field_id": 104, "source": "job.public_id"}],
+        }
+        world.api.when("GET", "/forms/{slug}/integrations/baserow", answer(200, state))
+        world.api.when(
+            "PUT",
+            "/forms/{slug}/integrations/baserow/mapping",
+            answer(200, {"version": "3", "active": True}),
+        )
+        composite = world.composites["connect_baserow_integration"]
+        arguments = {
+            "slug": "demo",
+            "base_url": "https://baserow.example.test",
+            "table_id": 7,
+            "purpose": "internal",
+            "sources": {"101": "lead.name"},
+            "confirm": True,
+        }
+        task = None
+        try:
+            first = await composite.invoke(world.runner, world.tools, arguments, NeverAsks())
+            assert first.awaiting and not world.api.calls("PUT")
+            task = asyncio.create_task(
+                composite.invoke(world.runner, world.tools, arguments, PausedQuestion())
+            )
+            await asyncio.wait_for(entered.wait(), 2)
+            if ending == "cancelled":
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+            else:
+                release.set()
+                if ending == "base_exception":
+                    with pytest.raises(GateInterrupted):
+                        await task
+                else:
+                    failed = await task
+                    assert failed.is_error and not failed.awaiting
+            assert not world.api.calls("PUT")
+            replay = await composite.invoke(world.runner, world.tools, arguments, NeverAsks())
+            assert replay.awaiting, "a gate interrompida reutilizou a apresentação antiga"
+            assert not world.api.calls("PUT")
+            # A apresentação renovada continua permitindo a segunda etapa explicitamente confirmada.
+            confirmed = await composite.invoke(world.runner, world.tools, arguments, NeverAsks())
+            assert not confirmed.awaiting and not confirmed.is_error
+            assert len(world.api.calls("PUT")) == 1
+        finally:
+            release.set()
+            if task is not None:
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+            await world.client.aclose()
+
+    asyncio.run(scenario())
 
 
 class SuspendedApi:
@@ -318,6 +403,112 @@ def test_cancellation_during_a_question_clears_all_authority_and_releases_the_ca
 
 @pytest.mark.parametrize(
     ("status", "code"),
+    [
+        (500, "internal_error"),
+        (500, None),
+        (502, "bad_gateway"),
+        (503, "unavailable"),
+    ],
+)
+def test_uncertain_http_result_requires_reading_state_and_a_new_presentation(
+    suspended: tuple[World, SuspendedApi], status: int, code: str | None
+) -> None:
+    async def scenario() -> None:
+        world, api = suspended
+        spec = world.tools["remove_asset"]
+        arguments = {"asset_id": "synthetic", "expected_version": "2", "confirm": True}
+        api.response = (
+            error(status, code, "Resultado sintético incerto.")
+            if code
+            else httpx.Response(status, text="<html>Erro sintético do proxy</html>")
+        )
+        api.response.headers["Retry-After"] = "12"
+        api.release.set()
+        assert (await world.runner.call(spec, arguments, NeverAsks())).awaiting
+        failed = await world.runner.call(spec, arguments, NeverAsks())
+        assert failed.is_error and failed.status == status
+        assert len(api.calls) == 1  # a resposta HTTP já chegou antes de qualquer nova chamada
+        api.response = httpx.Response(200, json={"removed": True})
+        replay = await world.runner.call(spec, arguments, NeverAsks())
+        assert replay.awaiting, "o resultado incerto conservou a confirmação anterior"
+        assert len(api.calls) == 1
+        if code:
+            assert f"A API respondeu ({status} {code})" in failed.text
+            assert "Após conferir o estado, aguarde 12 s" in failed.text
+        else:
+            assert "sem o corpo de erro esperado" in failed.text
+            assert "Erro sintético do proxy" not in failed.text
+        assert "A API recusou" not in failed.text
+        assert "confira o estado com a ferramenta de leitura antes de repetir" in failed.text
+        # Somente uma nova chamada, após reapresentação, pode enviar a operação novamente.
+        confirmed = await world.runner.call(spec, arguments, NeverAsks())
+        assert confirmed.status == 200 and len(api.calls) == 2
+
+    asyncio.run(scenario())
+
+
+def test_uncertain_companion_response_clears_primary_and_additional_confirmation(
+    suspended: tuple[World, SuspendedApi],
+) -> None:
+    async def scenario() -> None:
+        world, api = suspended
+        spec = world.tools["publish_form_draft"]
+        arguments = {
+            "slug": "demo",
+            "expected_version": "3",
+            "confirm": True,
+            "confirm_contact": True,
+        }
+        needs_contact = error(422, "confirmation_required", "Confirme contato sintético.")
+        api.response = needs_contact
+        api.release.set()
+        assert (await world.runner.call(spec, arguments, NeverAsks())).awaiting
+        contact = await world.runner.call(spec, arguments, NeverAsks())
+        assert contact.awaiting and "confirm_contact" in contact.text and len(api.calls) == 1
+        api.response = error(500, "internal_error", "Resultado sintético incerto.")
+        failed = await world.runner.call(spec, arguments, NeverAsks())
+        assert failed.status == 500 and failed.is_error and len(api.calls) == 2
+        assert body_of(api.calls[-1])["confirm_contact"] is True
+        replay = await world.runner.call(spec, arguments, NeverAsks())
+        assert replay.awaiting and len(api.calls) == 2
+        api.response = needs_contact
+        contact_again = await world.runner.call(spec, arguments, NeverAsks())
+        assert contact_again.awaiting and len(api.calls) == 3
+        assert "confirm_contact" not in body_of(api.calls[-1])
+        api.response = httpx.Response(200, json={"published": True})
+        confirmed = await world.runner.call(spec, arguments, NeverAsks())
+        assert confirmed.status == 200 and len(api.calls) == 4
+        assert body_of(api.calls[-1])["confirm_contact"] is True
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    ("name", "arguments"),
+    [
+        ("list_forms", {}),
+        ("publish_form_draft", {"slug": "demo", "expected_version": "3", "dry_run": True}),
+    ],
+)
+def test_http_failure_does_not_add_confirmation_or_write_uncertainty_to_reads_and_simulations(
+    suspended: tuple[World, SuspendedApi], name: str, arguments: dict[str, object]
+) -> None:
+    async def scenario() -> None:
+        world, api = suspended
+        api.response = error(500, "internal_error", "Falha sintética.")
+        api.release.set()
+        for _ in range(2):
+            failed = await world.runner.call(world.tools[name], arguments, NeverAsks())
+            assert failed.is_error and failed.status == 500 and not failed.awaiting
+            assert "Não sei se a operação chegou a gravar" not in failed.text
+            assert "nova confirmação" not in failed.text
+        assert len(api.calls) == 2
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    ("status", "code"),
     [(409, "version_conflict"), (422, "validation_failed"), (502, "upstream_failed")],
 )
 def test_known_api_refusals_release_the_reservation_and_keep_explicit_retry_semantics(
@@ -333,6 +524,11 @@ def test_known_api_refusals_release_the_reservation_and_keep_explicit_retry_sema
         refused = await world.runner.call(spec, arguments, NeverAsks())
         assert refused.is_error and refused.status == status and code in refused.text
         assert len(api.calls) == 1  # a recusa não dispara retry automático
+        assert "A API recusou" in refused.text and "Não sei se" not in refused.text
+        unconfirmed = await world.runner.call(
+            spec, {k: v for k, v in arguments.items() if k != "confirm"}, NeverAsks()
+        )
+        assert unconfirmed.awaiting and len(api.calls) == 1
         # Preserva o contrato anterior de uma nova chamada explicitamente confirmada após recusa.
         api.response = httpx.Response(200, json={"removed": True})
         retried = await world.runner.call(spec, arguments, NeverAsks())

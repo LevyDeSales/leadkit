@@ -63,7 +63,7 @@ from app.admin_mcp.client import (
 )
 from app.admin_mcp.config import Config
 from app.admin_mcp.confirmation import ConfirmationOutcome, blocked_message
-from app.admin_mcp.results import ToolOutput, confirmation_detail, render
+from app.admin_mcp.results import ToolOutput, confirmation_detail, known_refusal, render
 
 logger = logging.getLogger("gerador_mcp")
 
@@ -302,11 +302,16 @@ class ToolRunner:
                 return ToolOutput(step, awaiting=True)
             else:
                 return blocked(decision)
-        if response.ok:
-            self.pending.forget(key)
-        return render(
-            spec, response, redact=self.client.redact, download_dir=self.config.download_dir
+        output = render(
+            spec,
+            response,
+            redact=self.client.redact,
+            download_dir=self.config.download_dir,
+            simulated=bool(spec.confirm_unless and arguments.get(spec.confirm_unless) is True),
         )
+        if response.ok or not known_refusal(response.status, output.data):
+            self.pending.forget(key)
+        return output
 
 
 def blocked(outcome: ConfirmationOutcome) -> ToolOutput:

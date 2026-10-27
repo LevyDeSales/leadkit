@@ -50,7 +50,7 @@ from typing import Any
 from app.admin_mcp.catalog import CONFIRM, ToolSpec
 from app.admin_mcp.client import InputError
 from app.admin_mcp.confirmation import ConfirmationOutcome, blocked_message
-from app.admin_mcp.results import ToolOutput
+from app.admin_mcp.results import ToolOutput, known_refusal
 from app.admin_mcp.runner import Prompter, ToolRunner, clean, fingerprint
 
 logger = logging.getLogger("gerador_mcp")
@@ -174,7 +174,11 @@ class Steps:
         mesma** (a impressão digital leva `bound`: o que a pessoa viu). Não manda nada à API."""
         key = fingerprint(f"{self.composite.name}:{step}", bound)
         pending = self._runner.pending
-        answer = await self._prompter.ask(question)
+        try:
+            answer = await self._prompter.ask(question)
+        except BaseException:
+            pending.forget(key)
+            raise
         decision = pending.decide(key, answer, [CONFIRM], explicit=model_says_yes)
         if decision is ConfirmationOutcome.APPROVED:
             pending.forget(key)
@@ -446,8 +450,7 @@ def untouched(output: ToolOutput) -> bool:
         return True
     if output.status is None:
         return False
-    refusal = output.data.get("code") if isinstance(output.data, dict) else None
-    return 400 <= output.status < 500 or (output.status == 502 and refusal == "upstream_failed")
+    return known_refusal(output.status, output.data)
 
 
 def refused(

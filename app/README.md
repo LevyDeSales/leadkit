@@ -103,7 +103,11 @@ as confirmações adicionais são pedidas de novo e não herdam flags de um fall
 A chamada fica reservada antes da espera assíncrona, inclusive durante confirmações adicionais.
 Uma repetição idêntica concorrente informa que já há tentativa em andamento: aguarde o resultado e
 confira o estado antes de repetir. Erro ou cancelamento libera a reserva local e invalida a
-confirmação; não autoriza retry automático. Recusas HTTP conhecidas mantêm a recuperação existente.
+confirmação, inclusive quando a pergunta própria de uma composta é interrompida; não autoriza retry
+automático. Respostas HTTP incertas (como 500 ou 502 sem `upstream_failed`) também invalidam a
+pendência inteira e exigem conferir o estado antes de uma nova apresentação e confirmação.
+Recusas conhecidas sem efeito (4xx e `502 upstream_failed`, incluindo `409 version_conflict` e
+`422 validation_failed`) mantêm a recuperação por nova chamada explicitamente confirmada.
 A reserva pertence à sessão no processo MCP; não é um lock distribuído nem garante execução
 exatamente uma vez na API remota. Leituras, simulações e argumentos diferentes seguem independentes.
 
