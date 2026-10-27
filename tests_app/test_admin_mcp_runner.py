@@ -807,9 +807,8 @@ def test_an_unmarked_operation_never_asks(world: World) -> None:
     assert asker.messages == []
 
 
-def test_when_the_question_fails_the_server_falls_back_to_the_next_call(world: World) -> None:
-    """O cliente declarou a *elicitation* mas a pergunta caiu (`None`): vale o caminho da
-    chamada seguinte, e nada é executado."""
+def test_declared_lack_of_elicitation_support_uses_the_next_call(world: World) -> None:
+    """O double declara ausência de formulário (`None`): vale a chamada seguinte, sem envio agora."""
     output = world.call("activate_form", {"slug": "demo"}, Asker(None))
 
     assert output.text.startswith("CONFIRMAÇÃO NECESSÁRIA") and world.api.calls() == []

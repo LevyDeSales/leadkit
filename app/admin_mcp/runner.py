@@ -91,7 +91,8 @@ class PendingConfirmations:
 
     A chave é a impressão digital da chamada (a ferramenta e os argumentos, sem as confirmações), e o
     valor, quais confirmações (`confirm`, `confirm_contact`) a pessoa já viu. Expira (a pessoa não
-    voltou) e tem teto (um modelo em laço não enche a memória).
+    voltou) e tem teto (um modelo em laço não enche a memória). A reserva local impede que duas
+    tarefas usem a mesma pendência enquanto uma tentativa ainda espera confirmação ou resposta.
     """
 
     def __init__(
@@ -105,6 +106,21 @@ class PendingConfirmations:
         self._limit = limit
         self._clock = clock
         self._items: OrderedDict[str, tuple[float, set[str]]] = OrderedDict()
+        self._in_flight: set[str] = set()
+
+    def reserve(self, fingerprint: str) -> bool:
+        """Reserva a chamada sem await, na mesma sessão/processo e laço assíncrono do SDK.
+
+        A reserva dura até o fim da tentativa, inclusive perguntas adicionais; não expira com a
+        pendência enquanto o envio está em andamento. Não coordena processos nem efeitos remotos.
+        """
+        if fingerprint in self._in_flight:
+            return False
+        self._in_flight.add(fingerprint)
+        return True
+
+    def release(self, fingerprint: str) -> None:
+        self._in_flight.discard(fingerprint)
 
     def remember(self, fingerprint: str, flags: Iterable[str]) -> None:
         self._purge()
@@ -227,28 +243,35 @@ class ToolRunner:
         given = {name: arguments.pop(name) for name in list(arguments) if name in gates}
         key = fingerprint(spec.name, arguments, uploads, bound)
         send: dict[str, bool] = {}
-
-        if spec.needs_confirmation(arguments):
-            answer = await prompter.ask(question(spec, arguments, uploads))
-            decision = self.pending.decide(
-                key, answer, [CONFIRM], explicit=given.get(CONFIRM) is True
-            )
-            if decision is ConfirmationOutcome.UNSUPPORTED:
-                return ToolOutput(first_step(spec, arguments, uploads, via), awaiting=True)
-            if decision is not ConfirmationOutcome.APPROVED:
-                return blocked(decision)
-            send[CONFIRM] = True
-            if answer is ConfirmationOutcome.UNSUPPORTED:
-                for name in spec.companions:
-                    if given.get(name) is True and self.pending.allows(key, name):
-                        send[name] = True
+        # Leituras e simulações dispensadas de confirmação seguem concorrentes; uma operação sem
+        # marca também pode pedir uma confirmação adicional no 422.
+        guarded = spec.needs_confirmation(arguments) or (bool(spec.companions) and not spec.marked)
+        if guarded and not self.pending.reserve(key):
+            return blocked(ConfirmationOutcome.IN_PROGRESS)
         try:
+            if spec.needs_confirmation(arguments):
+                answer = await prompter.ask(question(spec, arguments, uploads))
+                decision = self.pending.decide(
+                    key, answer, [CONFIRM], explicit=given.get(CONFIRM) is True
+                )
+                if decision is ConfirmationOutcome.UNSUPPORTED:
+                    return ToolOutput(first_step(spec, arguments, uploads, via), awaiting=True)
+                if decision is not ConfirmationOutcome.APPROVED:
+                    return blocked(decision)
+                send[CONFIRM] = True
+                if answer is ConfirmationOutcome.UNSUPPORTED:
+                    for name in spec.companions:
+                        if given.get(name) is True and self.pending.allows(key, name):
+                            send[name] = True
             return await self._execute(spec, arguments, send, key, prompter, uploads, via, given)
-        except ApiUnavailable:
-            # Não se sabe se a escrita aconteceu: a confirmação desta chamada não vale mais, e uma
-            # nova tentativa pergunta à pessoa de novo (depois de ela conferir o estado).
+        except BaseException:
+            # Erro técnico ou cancelamento não restaura autoridade. A escrita pode ter ocorrido:
+            # uma nova tentativa precisa conferir o estado e obter confirmação novamente.
             self.pending.forget(key)
             raise
+        finally:
+            if guarded:
+                self.pending.release(key)
 
     async def _execute(
         self,

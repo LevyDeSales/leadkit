@@ -12,6 +12,7 @@ class ConfirmationOutcome(Enum):
     UNSUPPORTED = "unsupported"
     UNAVAILABLE = "unavailable"
     TIMED_OUT = "timed_out"
+    IN_PROGRESS = "in_progress"
 
 
 BLOCKED_MESSAGES = {
@@ -26,4 +27,9 @@ BLOCKED_MESSAGES = {
 
 def blocked_message(outcome: ConfirmationOutcome) -> str:
     """Descreve somente o resultado observado, sem atribuir interação humana ao cliente."""
+    if outcome is ConfirmationOutcome.IN_PROGRESS:
+        return (
+            "Já há uma tentativa desta mesma chamada em andamento. Aguarde seu resultado e confira "
+            "o estado antes de repetir; o efeito da tentativa em andamento ainda não é conhecido."
+        )
     return BLOCKED_MESSAGES[outcome] + " A operação solicitada não foi executada."

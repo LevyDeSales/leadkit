@@ -50,11 +50,13 @@ from test_admin import deliver_to_the_webhook, new_lead_job
 from test_admin_forms import CONTACT_PROMPT, DEFINITION, SLUG
 
 from app.admin_mcp import catalog
+from app.admin_mcp.client import ApiClient
 from app.admin_mcp.compose import Steps, untouched, without_clashes
 from app.admin_mcp.composites import BUILDERS, for_tools
 from app.admin_mcp.config import API_PREFIX
 from app.admin_mcp.confirmation import ConfirmationOutcome
 from app.admin_mcp.results import ToolOutput
+from app.admin_mcp.runner import NeverAsks, ToolRunner
 from app.deps import Deps
 from app.destinations import SecretCipher
 from app.forms import drafts, stored
@@ -2618,6 +2620,56 @@ def test_over_the_protocol_a_client_that_cannot_ask_gets_the_description_and_not
     )
     assert [bool(json.loads(r.content).get("dry_run")) for r in world.api.calls("POST")] == [True]
     world.close()
+
+
+def test_concurrent_publication_does_not_claim_nothing_was_published(tmp_path: Path) -> None:
+    """A composta conserva a incerteza enquanto a primeira publicação ainda espera resposta."""
+
+    async def scenario() -> None:
+        world = World(tmp_path)
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        publications: list[httpx.Request] = []
+
+        async def reply(request: httpx.Request) -> httpx.Response:
+            if request.method == "GET":
+                return answer(200, review_body())
+            if json.loads(request.content).get("dry_run"):
+                return answer(200, simulation_body())
+            publications.append(request)
+            entered.set()
+            await release.wait()
+            return answer(200, {"published_version": {"number": 2}})
+
+        client = ApiClient(world.config, transport=httpx.MockTransport(reply))
+        runner = ToolRunner(client, world.config)
+        composite = world.composites["publish_form_with_review"]
+        arguments = {"slug": SLUG, "note": NOTE, "publish": True}
+        tasks = []
+
+        async def invoke(given: dict[str, Any]) -> ToolOutput:
+            return await composite.invoke(runner, world.tools, given, NeverAsks())
+
+        try:
+            assert (await invoke(arguments)).awaiting
+            confirmed = {**arguments, "confirm": True}
+            tasks.append(asyncio.create_task(invoke(confirmed)))
+            await asyncio.wait_for(entered.wait(), 2)
+            tasks.append(asyncio.create_task(invoke(confirmed)))
+            concurrent = await asyncio.wait_for(asyncio.shield(tasks[1]), 2)
+            assert concurrent.is_error and not concurrent.awaiting
+            assert "em andamento" in concurrent.text
+            assert "Nada foi publicado" not in concurrent.text
+            assert "não foi executada" not in concurrent.text
+            assert "confira o estado" in concurrent.text
+            assert not tasks[0].done() and len(publications) == 1
+        finally:
+            release.set()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            await client.aclose()
+            await world.client.aclose()
+
+    asyncio.run(scenario())
 
 
 def test_baserow_composite_forwards_explicit_purpose_and_shows_it_before_confirmation(

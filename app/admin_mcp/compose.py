@@ -436,10 +436,12 @@ class Progress:
 def untouched(output: ToolOutput) -> bool:
     """A chamada falhou **sem deixar nada gravado**: a confirmação foi bloqueada, a API recusou (4xx: ela não
     grava ao recusar) ou o Baserow não respondeu (`502 upstream_failed`, que o contrato diz que não
-    grava). Uma falha de rede, ou outro 5xx, não prova nada: a escrita pode ter acontecido."""
+    grava). Uma tentativa idêntica em andamento, falha de rede ou outro 5xx não prova nada: a escrita
+    pode ter acontecido."""
     if output.confirmation is not None and output.confirmation not in (
         ConfirmationOutcome.APPROVED,
         ConfirmationOutcome.UNSUPPORTED,
+        ConfirmationOutcome.IN_PROGRESS,
     ):
         return True
     if output.status is None:

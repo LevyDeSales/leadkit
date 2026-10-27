@@ -100,6 +100,13 @@ e falha técnica não habilitam duas etapas. A pendência vale por 15 minutos e 
 vinculada a operação, argumentos, revisão, contexto composto e bytes do arquivo. Com formulário,
 as confirmações adicionais são pedidas de novo e não herdam flags de um fallback anterior.
 
+A chamada fica reservada antes da espera assíncrona, inclusive durante confirmações adicionais.
+Uma repetição idêntica concorrente informa que já há tentativa em andamento: aguarde o resultado e
+confira o estado antes de repetir. Erro ou cancelamento libera a reserva local e invalida a
+confirmação; não autoriza retry automático. Recusas HTTP conhecidas mantêm a recuperação existente.
+A reserva pertence à sessão no processo MCP; não é um lock distribuído nem garante execução
+exatamente uma vez na API remota. Leituras, simulações e argumentos diferentes seguem independentes.
+
 Após falha de confirmação, confira a conexão do cliente e faça uma nova tentativa explícita.
 Se a falha ocorreu **no envio à API**, confira o estado antes de repetir: a escrita pode ter
 acontecido. Essa distinção também aparece nas ferramentas compostas.
