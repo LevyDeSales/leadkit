@@ -53,6 +53,7 @@ from app.admin_mcp import catalog
 from app.admin_mcp.compose import Steps, untouched, without_clashes
 from app.admin_mcp.composites import BUILDERS, for_tools
 from app.admin_mcp.config import API_PREFIX
+from app.admin_mcp.confirmation import ConfirmationOutcome
 from app.admin_mcp.results import ToolOutput
 from app.deps import Deps
 from app.destinations import SecretCipher
@@ -310,6 +311,7 @@ ALLOWED_IMPORTS = {
     "app.admin_mcp.catalog",
     "app.admin_mcp.client",
     "app.admin_mcp.compose",
+    "app.admin_mcp.confirmation",  # desfechos neutros, sem SDK ou I/O
     "app.admin_mcp.composites_baserow",
     "app.admin_mcp.composites_forms",
     "app.admin_mcp.composites_orders",
@@ -349,7 +351,12 @@ def test_no_composite_writes_a_confirmation_literal() -> None:
                 for key, value in zip(node.keys, node.values, strict=True):
                     named = isinstance(key, ast.Constant) and str(key.value).startswith("confirm")
                     assert not (named and not isinstance(value, ast.Name)), (path.name, node.lineno)
-            if isinstance(node, ast.keyword) and node.arg and node.arg.startswith("confirm"):
+            if (
+                isinstance(node, ast.keyword)
+                and node.arg
+                and node.arg.startswith("confirm")
+                and node.arg != "confirmation"  # metadado de ToolOutput, não autorização HTTP
+            ):
                 raise AssertionError(f"{path.name}: argumento {node.arg}= escrito à mão")
             if isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant):
                 assert not str(node.slice.value).startswith("confirm") or not isinstance(
@@ -802,7 +809,11 @@ def test_a_no_leaves_the_draft_unpublished_and_says_so(deps: Deps, live: Live) -
         "publish_form_with_review", {"slug": SLUG, "note": NOTE, "publish": True}, Asker(False)
     )
 
-    assert output.is_error and "A pessoa não confirmou: nada foi executado." in output.text
+    assert (
+        output.is_error
+        and "O cliente não confirmou: informou recusa (`decline`). A operação solicitada não foi executada."
+        in output.text
+    )
     assert "Nada foi publicado." in output.text
     assert audited(deps, "form.publish") == [] and not any(confirmed(r) for r in live.sent())
 
@@ -912,7 +923,7 @@ def test_a_draft_that_changes_between_the_simulation_and_the_yes_is_a_409_and_no
     edit_draft(deps)
 
     class Racing(Asker):
-        async def ask(self, message: str) -> bool | None:
+        async def ask(self, message: str) -> ConfirmationOutcome:
             edit_draft(
                 deps, [{"op": "replace", "path": "/intro", "value": "Mudou enquanto a pessoa lia."}]
             )
@@ -1024,7 +1035,7 @@ def test_a_no_to_the_contact_confirmation_publishes_nothing(deps: Deps, contact:
         Asker(True, False),
     )
 
-    assert output.is_error and "A pessoa não confirmou" in output.text
+    assert output.is_error and "O cliente não confirmou" in output.text
     assert audited(deps, "form.publish") == []
 
 
@@ -1190,7 +1201,7 @@ def test_a_no_to_the_connection_changes_nothing(deps: Deps, live: Live) -> None:
 
     assert (
         output.is_error
-        and "A pessoa não confirmou" in output.text
+        and "O cliente não confirmou" in output.text
         and "Nada foi gravado." in output.text
     )
     assert stored_integration(deps) is None
@@ -1488,7 +1499,7 @@ def test_a_no_to_the_mapping_of_an_active_integration_leaves_it_as_it_was(
         "connect_baserow_integration", {**NO_TOKEN, "sources": NEW_MAPPING}, Asker(False)
     )
 
-    assert output.is_error and "A pessoa não confirmou" in output.text
+    assert output.is_error and "O cliente não confirmou" in output.text
     assert "O mapeamento não foi trocado." in output.text
     assert operations_since(activated, seen) == ["get_form_integration"]
     assert len(stored_map(deps)) == 6 and stored_integration(deps).active is True
@@ -2163,7 +2174,7 @@ def test_a_5xx_on_a_write_is_never_reported_as_nothing_published_or_nothing_save
         (ToolOutput("x", True, status=429), True),
         (ToolOutput("x", True, status=499), True),
         (ToolOutput("x", True, status=502, data={"code": "upstream_failed"}), True),
-        (ToolOutput("A pessoa não confirmou: nada foi executado.", True), True),
+        (ToolOutput("Recusa do cliente", True, confirmation=ConfirmationOutcome.DECLINED), True),
         (ToolOutput("x", True, status=500), False),
         (ToolOutput("x", True, status=500, data={"code": "upstream_failed"}), False),
         (ToolOutput("x", True, status=502, data={"code": "bad_gateway"}), False),

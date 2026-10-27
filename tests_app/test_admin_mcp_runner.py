@@ -38,6 +38,7 @@ from admin_mcp_world import Asker, World
 from app.admin_mcp import results
 from app.admin_mcp.client import ApiClient, ApiUnavailable, InputError, prepare
 from app.admin_mcp.config import Config
+from app.admin_mcp.confirmation import ConfirmationOutcome
 from app.admin_mcp.redaction import MASK, RedactingFilter, Redactor
 from app.admin_mcp.results import ToolOutput
 from app.admin_mcp.runner import NeverAsks, ToolRunner
@@ -591,7 +592,7 @@ def test_a_confirmation_is_for_that_file_not_for_that_name(world: World) -> None
 
 def test_the_bytes_sent_are_the_bytes_the_person_confirmed(world: World) -> None:
     class Swap(Asker):
-        async def ask(self, message: str) -> bool | None:
+        async def ask(self, message: str) -> ConfirmationOutcome:
             _write(picture, PNG + b"trocado depois da pergunta")
             return await super().ask(message)
 

@@ -85,6 +85,35 @@ O venv de uma instalação editável do MCP aponta para o clone. Mantenha a past
 na versão escolhida; mover ou apagar a pasta quebra a instalação. O campo de Python aceita um venv
 em outro disco. As datas de validade da chave na página usam o horário de Brasília.
 
+### Confirmação e recuperação do MCP
+
+O formulário de confirmação exige `accept` com `confirmar` booleano `true`. Caixa desmarcada,
+recusa (`decline`), cancelamento (`cancel`), resposta incompleta/inválida, indisponibilidade e
+timeout bloqueiam a operação e apagam todas as confirmações pendentes da mesma chamada, inclusive
+as adicionais. `confirm: true` nos argumentos não contorna esses resultados. A mensagem descreve
+o que o cliente informou; não comprova que uma janela apareceu ou que a operadora interagiu.
+
+Somente cliente inicializado sem suporte declarado a formulário recebe o fluxo de duas etapas:
+primeiro a descrição, depois a chamada idêntica com confirmação explícita. `elicitation: {}`
+continua compatível com formulário; suporte apenas a URL não o substitui. Sessão não inicializada
+e falha técnica não habilitam duas etapas. A pendência vale por 15 minutos e para uma execução,
+vinculada a operação, argumentos, revisão, contexto composto e bytes do arquivo. Com formulário,
+as confirmações adicionais são pedidas de novo e não herdam flags de um fallback anterior.
+
+Após falha de confirmação, confira a conexão do cliente e faça uma nova tentativa explícita.
+Se a falha ocorreu **no envio à API**, confira o estado antes de repetir: a escrita pode ter
+acontecido. Essa distinção também aparece nas ferramentas compostas.
+
+O log `mcp_confirmation` vai a stderr e usa uma allowlist: identificador efêmero de tentativa,
+desfecho, ação categorizada, tipos/presença dos campos, suporte anunciado, categoria de falha e
+versões observáveis. `protocol_requested` é a versão oferecida pelo cliente; `protocol_negotiated`
+fica `unknown`, pois o SDK atual não expõe esse resultado na sessão. `client_reported_version`
+é apenas a versão numérica informada pelo cliente; `sdk_package_version` e `server_package_version`
+identificam distribuições instaladas, sem afirmar o build do processo. Valores não reconhecidos
+ficam `unknown`. Não registra perguntas, argumentos, caminhos, conteúdo das respostas,
+`clientInfo` bruto, texto de exceções ou segredos. O servidor não observa a renderização da UI;
+diagnosticar uma janela ausente exige evidência própria do cliente efetivamente usado.
+
 ## Webhook
 
 O corpo JSON é assinado com HMAC-SHA256; os nomes dos headers `X-MCC-Event`, `X-MCC-Timestamp` e

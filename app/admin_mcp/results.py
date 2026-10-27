@@ -26,6 +26,7 @@ from typing import Any
 
 from app.admin_mcp.catalog import ToolSpec
 from app.admin_mcp.client import ApiResponse
+from app.admin_mcp.confirmation import ConfirmationOutcome
 from app.admin_mcp.redaction import Redactor
 
 # O teto do texto que volta ao modelo. Uma resposta maior é cortada, e o corte é dito.
@@ -38,12 +39,13 @@ EXTENSIONS = {"application/pdf": ".pdf", "text/html": ".html"}
 class ToolOutput:
     """O resultado de uma chamada: o texto e se é uma falha.
 
-    Os outros três campos são para as ferramentas compostas (`compose.py`), que juntam várias
+    Os outros campos são para as ferramentas compostas (`compose.py`), que juntam várias
     chamadas e precisam saber o que cada uma deu sem ler o texto: `status` é o status HTTP da
     resposta da API (`None` quando nada foi enviado: argumento que não vale, pergunta recusada, ou a
     confirmação ainda por vir); `data` é o JSON da resposta (o corpo do erro, numa recusa), já sem a
     chave; e `awaiting` diz que a chamada **parou à espera da confirmação da pessoa**: nada foi
-    executado. Ficam fora da igualdade: o que se compara é o texto e se falhou.
+    executado. `confirmation` preserva o motivo de um bloqueio antes do efeito, sem analisar texto.
+    Ficam fora da igualdade: o que se compara é o texto e se falhou.
     """
 
     text: str
@@ -51,6 +53,7 @@ class ToolOutput:
     status: int | None = field(default=None, compare=False)
     data: Any = field(default=None, compare=False, repr=False)
     awaiting: bool = field(default=False, compare=False)
+    confirmation: ConfirmationOutcome | None = field(default=None, compare=False)
 
 
 def render(

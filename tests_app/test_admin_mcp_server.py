@@ -26,6 +26,7 @@ from admin_mcp_support import answer, body_of, error, new_key, operation_ids, op
 from admin_mcp_world import World
 
 from app.admin_mcp import __main__ as entry
+from app.admin_mcp.confirmation import ConfirmationOutcome
 from app.admin_mcp.discovery import StartupError
 from app.admin_mcp.redaction import MASK, Redactor
 
@@ -386,7 +387,10 @@ def test_a_question_that_fails_is_not_a_yes() -> None:
         async def elicit_form(self, **_: Any) -> None:
             raise RuntimeError("o cliente caiu")
 
-    assert asyncio.run(server_module.SessionPrompter(Broken(), 1).ask("Confirma?")) is None
+    assert (
+        asyncio.run(server_module.SessionPrompter(Broken(), 1).ask("Confirma?"))
+        is ConfirmationOutcome.UNAVAILABLE
+    )
 
 
 # --- o ponto de entrada --------------------------------------------------------------------------
