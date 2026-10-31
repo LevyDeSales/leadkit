@@ -267,6 +267,11 @@ def commit(deps, slug, identity, *, principal, actor, command, confirmed, channe
             found = _lookup(session, slug, identity, principal, command, now)
             if found is not None:
                 return Committed(found, False)
+            from app.integration_readiness import configuration_lock
+
+            # Mesma ordem da publicação, mesmo se a definição mudar durante a espera.
+            # O replay histórico acima independe do contrato da definição atual.
+            configuration_lock(session, shared=True)
             form_id = session.scalar(sa.select(Form.id).where(Form.slug == slug).with_for_update())
             if form_id is None:
                 raise UnknownForm(slug)

@@ -126,7 +126,8 @@ def test_two_processes_observe_one_commit_and_only_creator_dispatches(deps):
 @pytest.mark.parametrize(
     "crash,dispatch", [("after_commit", "committed"), ("after_trigger", "uncertain")]
 )
-def test_process_loss_does_not_grant_replay_another_dispatch(deps, crash, dispatch):
+@pytest.mark.parametrize("replay_only", [True, False], ids=["lookup", "normal_retry"])
+def test_process_loss_does_not_grant_replay_another_dispatch(deps, crash, dispatch, replay_only):
     context = prepare(deps)
     ctx = multiprocessing.get_context("spawn")
     queue, release = ctx.Queue(), ctx.Event()
@@ -145,16 +146,17 @@ def test_process_loss_does_not_grant_replay_another_dispatch(deps, crash, dispat
     process.join(25)
     try:
         assert process.exitcode == 0
+        original = commands.resolve(deps, SLUG, context.command_id, principal=PRINCIPAL, now=NOW)
         sent = []
 
-        async def forbidden(test_id):
+        async def trigger(test_id):
             sent.append(test_id)
-            raise AssertionError("replay não pode disparar")
+            return "synthetic-run"
 
         receipt = asyncio.run(
             actions.start(
                 deps,
-                forbidden,
+                trigger,
                 SLUG,
                 actor="testes",
                 answers=None,
@@ -163,10 +165,13 @@ def test_process_loss_does_not_grant_replay_another_dispatch(deps, crash, dispat
                 command_id=context.command_id,
                 expected_version=context.expected_version,
                 principal=PRINCIPAL,
-                replay_only=True,
-                confirmed=False,
+                replay_only=replay_only,
+                confirmed=not replay_only,
             )
         )
+        assert receipt.command_id == original.command_id == context.command_id
+        assert receipt.test_id == original.test_id
+        assert receipt.audit_id == original.audit_id
         assert receipt.dispatch_state == dispatch
         assert not sent
     finally:
