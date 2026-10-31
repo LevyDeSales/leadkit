@@ -41,6 +41,16 @@ def spec(image, replicas):
     return {'TaskTemplate':{'ContainerSpec':{'Image':image}}, 'Mode':{'Replicated':{'Replicas':replicas}}}
 
 def image_id(ref):
+    if os.getenv('STUB_CONTENT_STORE'):
+        images = state['images']
+        if ref in images:
+            return images[ref]
+        if ref in images.values():
+            return ref
+        for name, identity in images.items():
+            if ref == name.rsplit(':', 1)[0] + '@' + identity:
+                return identity
+        return ''
     return b if ref in {b, 'leadkit:old'} else c if ref in {c, 'leadkit:one'} else a
 
 def apply(state, role, image, replicas):
@@ -93,6 +103,7 @@ if state_path.exists():
 else:
     floor = int(os.getenv('STUB_CONTRACT_FLOOR', '1' if os.getenv('STUB_NETWORK') else '0'))
     state = {'floor':floor, 'network':bool(os.getenv('STUB_NETWORK')), 'services':{}, 'tasks':{}, 'containers':{}, 'epoch':None}
+    state['images'] = {'gerador-planos:abc123':a, 'replacement:ci':c}
     if state['network']:
         for role in ('api','worker'):
             apply(state, role, 'leadkit:old' if floor == 0 else 'leadkit:one' if int(os.getenv('STUB_INITIAL_CONTRACT', str(floor))) == 1 and os.getenv('STUB_TARGET_CONTRACT') == '2' else 'gerador-planos:abc123', 1)
@@ -108,12 +119,20 @@ if head == ['image','inspect']:
     if '--format' in args:
         fmt = args[args.index('--format')+1]
         out = '[]' if 'RepoDigests' in fmt else image_id(args[-1])
+        if 'RepoDigests' in fmt and os.getenv('STUB_REPO_DIGESTS'):
+            identity = image_id(args[-1])
+            out = json.dumps([name.rsplit(':', 1)[0] + '@' + identity
+                              for name, value in state['images'].items() if value == identity])
     else:
         out = json.dumps([{'Id': image_id(args[-1])}])
     if os.getenv('STUB_OLD_IMAGE_UNRESOLVABLE') and args[-1] in {'leadkit:old', 'leadkit:one'} and not state.get('scaled'):
         code=1
+    if not image_id(args[-1]): code=1
 elif head == ['image','tag']:
-    pass
+    if os.getenv('STUB_CONTENT_STORE'):
+        identity = image_id(args[-2])
+        if identity: state['images'][args[-1]] = b if os.getenv('STUB_PIN_WRONG_CONTENT') else identity
+        else: code=1
 elif head == ['network','inspect']:
     if 'traefik-public' in args:
         code = 1 if os.getenv('STUB_NO_TRAEFIK_NETWORK') else 0
@@ -523,6 +542,60 @@ def migrate_call(server: Server) -> str:
 
 def deploy(server: Server, **env: str) -> subprocess.CompletedProcess[str]:
     return server.run("deploy.sh", IMAGE="gerador-planos:abc123", **env)
+
+
+@pytest.mark.parametrize("repo_digests", ["", "1"])
+def test_reused_tag_preserves_verified_content_and_rollback(server, monkeypatch, repo_digests):
+    # O store só resolve IDs/conteúdo enquanto alguma referência local ainda os conserva.
+    monkeypatch.setenv("PATH", f"{server.bin_dir}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setenv("STUB_CALLS", str(server.calls_file))
+    monkeypatch.setenv("STUB_CONTENT_STORE", "1")
+    monkeypatch.setenv("STUB_REPO_DIGESTS", repo_digests)
+
+    def docker(*args):
+        return subprocess.run(["docker", *args], capture_output=True, text=True, check=False)
+
+    first = deploy(server)
+    assert first.returncode == 0, first.stderr
+    old_ref = rollout_state(server)["services"]["api"]["Spec"]["TaskTemplate"]["ContainerSpec"][
+        "Image"
+    ]
+    old_id = "sha256:" + "a" * 64
+    new_id = "sha256:" + "c" * 64
+    for ref in (old_ref, old_id):
+        before = docker("image", "inspect", "--format", "{{.Id}}", ref)
+        assert before.returncode == 0 and before.stdout.strip() == old_id
+
+    assert docker("image", "tag", "replacement:ci", "gerador-planos:abc123").returncode == 0
+    after = [docker("image", "inspect", "--format", "{{.Id}}", ref) for ref in (old_ref, old_id)]
+    assert [(item.returncode, item.stdout.strip()) for item in after] == [(0, old_id)] * 2
+    assert (
+        docker("image", "inspect", "--format", "{{.Id}}", "gerador-planos:abc123").stdout.strip()
+        == new_id
+    )
+
+    updated = deploy(server)
+    assert updated.returncode == 0, updated.stderr
+    for service in rollout_state(server)["attested"]["services"].values():
+        assert service["image"] == new_id and service["previous_image"] == old_id
+        assert all(task["image"] == new_id and task["healthy"] for task in service["tasks"])
+
+    returned = server.run("deploy.sh", IMAGE=old_ref, ROLLBACK="1")
+    assert returned.returncode == 0, returned.stderr
+    for service in rollout_state(server)["attested"]["services"].values():
+        assert service["image"] == old_id and service["previous_image"] == new_id
+
+
+def test_pin_with_different_content_is_refused_before_stack_or_database_changes(server):
+    result = deploy(server, STUB_CONTENT_STORE="1", STUB_PIN_WRONG_CONTENT="1")
+    assert result.returncode == 1
+    assert "A referência local não conserva a imagem verificada" in result.stderr
+    assert not any(
+        call.startswith(("stack deploy", "service scale", "service update"))
+        or call.endswith((" migrate", " begin", " attest"))
+        for call in server.calls
+    )
+    assert "attested" not in rollout_state(server)
 
 
 def test_a_folder_without_stack_name_deploys_the_default_stack(server):

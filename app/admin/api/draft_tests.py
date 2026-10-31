@@ -47,10 +47,12 @@ from app.admin.api.schemas.draft_tests import (
     ScoreFormDraftRequest,
     StartedFormDraftTest,
     StartFormDraftTestRequest,
+    StartFormDraftTestResponse,
 )
 from app.admin.api.security import CurrentKey
 from app.deps import get_deps
 from app.forms import UnknownForm, draft_tests, drafts
+from app.forms import draft_test_commands as commands
 from app.forms.definition import DefinitionError, Problem
 from app.forms.definition.document import CompletionDoc
 
@@ -292,12 +294,16 @@ def list_form_draft_tests(slug: FORM, request: Request) -> FormDraftTests:
     role="total",
     external_effect=True,
     confirmation_text=START_TEXT,
+    confirm_unless="replay_only",
     errors={
-        404: "O formulário não existe (`not_found`).",
+        403: "Autoridade incompatível com o comando (`command_forbidden`), sem revelar recibo.",
+        404: "O formulário não existe (`not_found`) ou não há comando (`command_not_found`).",
         409: "Já há um teste deste formulário em andamento (`state_conflict`): espere ele terminar "
         "(`get_form_draft_test`, ou `list_form_draft_tests` para achá-lo). Nada é gravado nem "
         "disparado. É isto o que uma chamada repetida depois de uma resposta perdida recebe, sem "
-        "segundo teste.",
+        "segundo teste no caminho legado. Com identidade, namespace, formulário, revisão ou "
+        "argumentos incompatíveis com o vínculo retornam `command_conflict`, sem novo efeito.",
+        410: "Identidade dt1 expirada (`command_expired`); não será recriada.",
         422: "O corpo não vale (`validation_failed`: as respostas, a data ou o rascunho; o motivo "
         "vem em `errors`, com `answers.<pergunta>`, `answers` para uma pergunta que o formulário "
         "não tem e `simulated_date`, nunca o valor) ou falta "
@@ -309,6 +315,16 @@ def list_form_draft_tests(slug: FORM, request: Request) -> FormDraftTests:
     },
     summary="Testar o rascunho com o LLM",
     description=(
+        "Com `command_id` emitido por `get_form_draft_test_command_context`, exige revisão "
+        "explícita e retorna `receipt`, sem conteúdo do teste. `replay_only:true` apenas compara "
+        "os argumentos históricos e recupera o recibo, sem confirmação ou efeito, inclusive em "
+        "miss. O MCP faz essa consulta antes de perguntar; somente command_not_found elegível "
+        "permite seguir para a confirmação atual. Outra autoridade recebe command_forbidden; "
+        "mudança de revisão/argumentos/escopo conflita. A janela dt1 fixa é de três dias para "
+        "criar desde emissão e três dias para o recibo desde commit, sem renovação. Resultado "
+        "removido aparece como expired; despacho uncertain não prova custo zero nem permite "
+        "retry por replay. Identidade não autentica pessoa. O caminho sem identidade preserva "
+        "o contrato legado descrito a seguir, inclusive queued/launched e revisão opcional. "
         "Põe na fila um teste do rascunho do formulário `slug`, **uma chamada de verdade e paga ao "
         "LLM**, com `answers` (ou as respostas de exemplo do rascunho) e `simulated_date`, e "
         "dispara a task `draft_test` do worker, que recebe só o id do teste. O worker monta o "
@@ -329,12 +345,12 @@ def list_form_draft_tests(slug: FORM, request: Request) -> FormDraftTests:
         "id do teste, a versão do rascunho e a data simulada, nunca as respostas. Use respostas "
         "fictícias: elas ficam com o resultado, e qualquer chave o lê."
     ),
-    returns="O teste que entrou na fila, e se o engine do Hatchet recebeu o disparo.",
-    response_model=StartedFormDraftTest,
+    returns="Com command_id: recibo seguro do teste original. Sem identidade: teste e launched legados.",
+    response_model=StartFormDraftTestResponse,
 )
 async def start_form_draft_test(
     slug: FORM, body: StartFormDraftTestRequest, key: CurrentKey, request: Request
-) -> StartedFormDraftTest:
+) -> StartedFormDraftTest | commands.ReceiptResponse:
     try:
         started = await draft_test_actions.start(
             get_deps(),
@@ -345,7 +361,15 @@ async def start_form_draft_test(
             answers=body.answers,
             day=body.day,
             now=now(request),
+            clock=lambda: now(request),
+            command_id=body.command_id,
+            principal=commands.Principal("api_key", key.key_id),
+            confirmed=body.confirm,
+            replay_only=body.replay_only,
+            channel="api",
         )
+    except commands.CommandError as refused:
+        raise ApiError(refused.code, refused.message) from None
     except UnknownForm:
         raise ApiError("not_found", NOT_FOUND) from None
     except DefinitionError as refused:
@@ -358,6 +382,8 @@ async def start_form_draft_test(
                 "test_paused", refused.message, retry_after=refused.retry_after
             ) from None
         raise ApiError("state_conflict", refused.message) from None
+    if isinstance(started, commands.CommandReceipt):
+        return commands.ReceiptResponse(receipt=started)
     found = await run_in_threadpool(_found, request, slug, str(started.test_id))
     return StartedFormDraftTest.started(found, launched=started.launched)
 
@@ -464,3 +490,57 @@ def test_capture_form_draft(
         scores=result.scores,
         completion=CompletionDoc(**vars(result.completion)),
     )
+
+
+@router.operation(
+    "GET",
+    "/forms/{slug}/draft/test-command-context",
+    operation_id="get_form_draft_test_command_context",
+    role="leitura",
+    summary="Obter identidade para um novo teste",
+    description="Emite identidade dt1 e revisão do rascunho sem gravar ou confirmar nada. Use antes da partida e conserve o ID para recuperar resposta perdida. Não é aprovação; a janela técnica fixa é de três dias. Não depende do relógio da cliente.",
+    returns="Identidade, revisão, relógio do servidor e limite exclusivo da criação.",
+    response_model=commands.CommandContext,
+    errors={503: "Namespace da instalação ausente (`unavailable`)."},
+)
+def get_form_draft_test_command_context(slug: FORM, request: Request) -> commands.CommandContext:
+    try:
+        return commands.issue_context(get_deps(), slug, now=now(request))
+    except UnknownForm:
+        raise ApiError("not_found", NOT_FOUND) from None
+    except commands.CommandError as refused:
+        raise ApiError(refused.code, refused.message) from None
+
+
+@router.operation(
+    "GET",
+    "/forms/{slug}/draft/test-commands/{command_id}",
+    operation_id="get_form_draft_test_command",
+    role="leitura",
+    summary="Consultar recibo de um teste por comando",
+    description="Recupera somente IDs e fatos seguros do comando da mesma autoridade, sem ler respostas, gerar ou reenfileirar. Recibo dt1 vence três dias após commit. Se o resultado sair antes, mantém o test_id e informa result_state=expired. Identidade antiga não volta a criar após descarte.",
+    returns="Recibo seguro do teste original, ou expiração explícita.",
+    response_model=commands.ReceiptResponse,
+    errors={
+        403: "Comando indisponível para esta autoridade (`command_forbidden`).",
+        404: "Identidade ausente (`command_not_found`).",
+        409: "Conflito de estado do vínculo: namespace ou formulário incompatível com a "
+        "identidade (`command_conflict`). Não é conflito de versão do rascunho atual; a "
+        "consulta conserva a revisão histórica.",
+        410: "Identidade expirada (`command_expired`).",
+    },
+)
+def get_form_draft_test_command(
+    slug: FORM, command_id: str, key: CurrentKey, request: Request
+) -> commands.ReceiptResponse:
+    try:
+        receipt = commands.resolve(
+            get_deps(),
+            slug,
+            command_id,
+            principal=commands.Principal("api_key", key.key_id),
+            now=now(request),
+        )
+        return commands.ReceiptResponse(receipt=receipt)
+    except commands.CommandError as refused:
+        raise ApiError(refused.code, refused.message) from None

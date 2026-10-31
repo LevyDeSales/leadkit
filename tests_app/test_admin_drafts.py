@@ -309,7 +309,7 @@ def assembled(response: httpx.Response) -> str:
 def test_the_test_page_shows_the_prompt_assembled_with_the_example_answers(
     client: TestClient,
 ) -> None:
-    page = client.get(TESTS)
+    page = client.get(TESTS, follow_redirects=True)
 
     assert page.status_code == 200
     shown = assembled(page)
@@ -572,11 +572,13 @@ def test_only_the_latest_tests_stay_and_retention_removes_them_after_a_few_days(
         worker.run()
         clock.advance(31)
 
-    recent = client.get(TESTS).text
+    recent = client.get(TESTS, follow_redirects=True).text
     assert len(re.findall(rf'href="{TESTS}/[0-9a-f-]{{36}}"', section(recent, "recentes"))) == 5
     report = retention.purge_expired(deps, now=worker.now() + timedelta(days=4))
     assert report.draft_tests_deleted == 5
-    assert "Nenhum teste" in text(section(client.get(TESTS).text, "recentes"))
+    assert "Nenhum teste" in text(
+        section(client.get(TESTS, follow_redirects=True).text, "recentes")
+    )
 
 
 def test_each_test_is_audited_without_the_answers(
@@ -1263,3 +1265,147 @@ def test_editor_preserves_published_version_and_question_ids_when_cancelling_cap
         if name.startswith("steps."):
             assert capture[name] == fields[name], name
     assert deps.forms.current(SLUG).generation == "pdf"
+
+
+def test_command_action_url_survives_reload_and_repost(client, deps, worker):
+    entry = client.get(TESTS)
+    assert entry.status_code == 303
+    action_url = entry.headers["location"]
+    page = client.get(action_url)
+    assert page.status_code == 200
+    identity = re.search(r'name="command_id" value="([^"]+)"', page.text).group(1)
+    assert f'action="{action_url}"' in page.text
+    expected = re.search(r'name="expected" value="([^"]+)"', page.text).group(1)
+    result = post(
+        client,
+        TESTS,
+        command_id=identity,
+        expected=expected,
+        input_mode="json",
+        answers="",
+        confirm="on",
+    )
+    assert result.status_code == 303
+    recovery = client.get(action_url)
+    assert recovery.status_code == 200
+    assert "Recibo do teste" in recovery.text
+    assert identity in recovery.text
+    again = post(
+        client, TESTS, command_id=identity, expected=expected, input_mode="json", answers=""
+    )
+    assert again.status_code == 303
+    assert again.headers["location"] == result.headers["location"]
+    assert len(worker.queued) == 1
+
+
+def test_identified_fields_replay_does_not_read_new_schema(client, deps, worker, clock):
+    page = client.get(TESTS, follow_redirects=True)
+    identity, expected = hidden(page.text, "command_id"), hidden(page.text, "expected")
+    example = json.loads(DEFINITION)["examples"]["answers"]
+    data = {"_simulation_" + name: value for name, value in example.items()}
+    first = post(
+        client,
+        TESTS,
+        **data,
+        input_mode="fields",
+        expected=expected,
+        command_id=identity,
+        confirm="on",
+    )
+    assert first.status_code == 303
+    from app.forms import drafts
+
+    with deps.sessions() as session:
+        current = drafts.load(session, SLUG)
+    changed = json.loads(DEFINITION)
+    changed["examples"]["answers"]["escritorio"] = "Outro exemplo"
+    drafts.replace_document(deps, SLUG, changed, actor="testes", expected=current.token)
+    clock.advance(86400)
+    assert login(client).status_code == 303
+    again = post(client, TESTS, **data, input_mode="fields", expected=expected, command_id=identity)
+    assert again.status_code == 303
+    assert again.headers["location"] == first.headers["location"]
+    assert len(worker.queued) == 1
+
+
+def test_identified_form_rejects_unknown_input_mode(client, worker):
+    page = client.get(TESTS, follow_redirects=True)
+    response = post(
+        client,
+        TESTS,
+        input_mode="unknown",
+        answers="",
+        command_id=hidden(page.text, "command_id"),
+        expected=hidden(page.text, "expected"),
+        confirm="on",
+    )
+    assert response.status_code == 422
+    assert not worker.queued
+
+
+def test_failed_execution_is_shown_even_when_dispatch_is_uncertain(client, deps, clock):
+    from app.forms import draft_test_commands as commands
+
+    page = client.get(TESTS, follow_redirects=True)
+    identity = hidden(page.text, "command_id")
+    calls = []
+
+    class Fails:
+        def generate(self, spec, answers):
+            raise RuntimeError("falha sintética da geração")
+
+    deps.llm = Fails()
+
+    async def delivered_then_response_lost(test_id):
+        calls.append(test_id)
+        assert (
+            draft_tests.run(deps, test_id, now=lambda: datetime.fromtimestamp(clock(), UTC))
+            == "failed"
+        )
+
+    client.app.state.test_trigger = delivered_then_response_lost
+    response = post(
+        client,
+        TESTS,
+        command_id=identity,
+        expected=hidden(page.text, "expected"),
+        input_mode="json",
+        answers="",
+        confirm="on",
+    )
+    assert response.status_code == 303
+    receipt_page = client.get(response.headers["location"])
+    receipt = commands.resolve(
+        deps,
+        SLUG,
+        identity,
+        principal=commands.Principal("admin", "operadora"),
+        now=datetime.fromtimestamp(clock(), UTC),
+    )
+    assert receipt.test_status == "failed" and receipt.dispatch_state == "uncertain"
+    assert "O teste falhou" in receipt_page.text
+    assert "Despacho incerto" in receipt_page.text
+    assert len(calls) == 1
+
+
+def test_receipt_preserves_an_explicitly_not_started_dispatch(client):
+    from app.admin.launching import DraftTestDispatch
+
+    async def not_started(test_id):
+        return DraftTestDispatch("not_started")
+
+    client.app.state.test_trigger = not_started
+    page = client.get(TESTS, follow_redirects=True)
+    response = post(
+        client,
+        TESTS,
+        command_id=hidden(page.text, "command_id"),
+        expected=hidden(page.text, "expected"),
+        input_mode="json",
+        answers="",
+        confirm="on",
+    )
+    assert response.status_code == 303
+    receipt_page = client.get(response.headers["location"])
+    assert "Teste não iniciado" in receipt_page.text
+    assert "O teste falhou" not in receipt_page.text

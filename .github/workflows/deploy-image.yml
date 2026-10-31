@@ -496,7 +496,7 @@ jobs:
               from app.migrations.compatibility import validate_database
               from app.migrations.contracts import SIGNATURES
               with deps.sessions() as session:
-                  assert validate_database(session.connection(), SIGNATURES) == "0019_persisted_webhook_v2"
+                  assert validate_database(session.connection(), SIGNATURES) == "0020_draft_test_commands"
                   assert all(hashlib.sha256(json.dumps(SIGNATURES[revision], sort_keys=True).encode()).hexdigest() == digest for revision, digest in state["signatures"].items())
                   job = session.get_one(Job, UUID(state["history_job"]))
                   deps.signer.verify(state["history_token"], job)
@@ -982,7 +982,7 @@ jobs:
           test -s before-ddl
           test -e ddl-committed-launcher-failed
           cat before-ddl
-          test "$(psql_compat 'select version_num from alembic_version')" = 0019_persisted_webhook_v2
+          test "$(psql_compat 'select version_num from alembic_version')" = 0020_draft_test_commands
           test "$(psql_compat "select minimum_contract || ':' || phase from deployment_contract where id=1")" = 3:blocked
           for role in api worker; do
             bootstrap_role="$role"
@@ -1699,11 +1699,28 @@ jobs:
           echo "::group::7. tag reaproveitada: o conteúdo verificado fica fixado por identidade"
           # Mesmo nome e imagem nova: o helper usa referência de conteúdo e confere o ID real.
           previous=$(docker image inspect --format '{{.Id}}' gerador-planos:ci)
+          old_api_ref=$(docker service inspect --format '{{.Spec.TaskTemplate.ContainerSpec.Image}}' gerador-planos_api)
+          old_worker_ref=$(docker service inspect --format '{{.Spec.TaskTemplate.ContainerSpec.Image}}' gerador-planos_worker)
+          for ref in "$old_api_ref" "$old_worker_ref" "$previous"; do
+            test "$(docker image inspect --format '{{.Id}}' "$ref")" = "$previous"
+          done
           printf 'FROM gerador-planos:ci\nLABEL ci.build=reaproveitada\n' | docker build --quiet --tag gerador-planos:ci - > /dev/null
           test "$(docker image inspect --format '{{.Id}}' gerador-planos:ci)" != "$previous"
-          IMAGE=gerador-planos:ci ./deploy.sh > "$RUNNER_TEMP/stale.log" 2>&1 || { cat "$RUNNER_TEMP/stale.log"; exit 1; }
+          # O retag preserva a resolução e o conteúdo histórico, sem alias de resgate no ensaio.
+          for ref in "$old_api_ref" "$old_worker_ref" "$previous"; do
+            test "$(docker image inspect --format '{{.Id}}' "$ref")" = "$previous"
+          done
+          if ! IMAGE=gerador-planos:ci ./deploy.sh > "$RUNNER_TEMP/stale.log" 2>&1; then
+            cat "$RUNNER_TEMP/stale.log"
+            exit 1
+          fi
           cat "$RUNNER_TEMP/stale.log"
           assert_image gerador-planos:ci
+          for role in api worker; do
+            return_ref=$(docker service inspect --format '{{.PreviousSpec.TaskTemplate.ContainerSpec.Image}}' "gerador-planos_$role")
+            test "$(docker image inspect --format '{{.Id}}' "$return_ref")" = "$previous"
+            test "$(docker service inspect --format '{{.PreviousSpec.Mode.Replicated.Replicas}}' "gerador-planos_$role")" -gt 0
+          done
           grep -F 'contrato participante verificado' "$RUNNER_TEMP/stale.log"
           echo "::endgroup::"
 

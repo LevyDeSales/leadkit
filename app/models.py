@@ -576,6 +576,37 @@ class DraftTest(Base):
     failure_detail: Mapped[str | None] = mapped_column(sa.Text)
 
 
+class DraftTestCommand(Base):
+    """Vínculo técnico sem conteúdo, independente da retenção do resultado do teste."""
+
+    __tablename__ = "draft_test_commands"
+    __table_args__ = (
+        sa.CheckConstraint("principal_kind in ('admin', 'api_key')", name="principal_kind"),
+        sa.CheckConstraint(
+            "dispatch_state in ('committed', 'dispatching', 'enqueued', 'not_started', 'uncertain')",
+            name="dispatch_state",
+        ),
+        sa.Index("ix_draft_test_commands_expires_at", "expires_at"),
+    )
+    command_id: Mapped[str] = mapped_column(sa.String(128), primary_key=True)
+    namespace: Mapped[uuid.UUID] = mapped_column(sa.Uuid)
+    form_id: Mapped[uuid.UUID] = mapped_column(sa.Uuid)
+    form_slug: Mapped[str] = mapped_column(sa.Text)
+    expected_version: Mapped[str] = mapped_column(sa.Text)
+    principal_kind: Mapped[str] = mapped_column(sa.String(16))
+    principal_id: Mapped[str] = mapped_column(sa.Text)
+    input_digest: Mapped[str] = mapped_column(sa.String(64))
+    effective_digest: Mapped[str] = mapped_column(sa.String(64))
+    issued_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True))
+    committed_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True))
+    expires_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True))
+    test_id: Mapped[uuid.UUID] = mapped_column(sa.Uuid)
+    audit_id: Mapped[uuid.UUID] = mapped_column(sa.Uuid)
+    channel: Mapped[str] = mapped_column(sa.String(16))
+    dispatch_state: Mapped[str] = mapped_column(sa.String(16), default="committed")
+    dispatch_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+
+
 class FormAsset(Base):
     """Uma imagem de formulário (`app.forms.assets`): conteúdo que os templates do PDF e da prévia
     pedem por nome (`asset:<nome>`). Os bytes ficam no storage, pela chave do conteúdo

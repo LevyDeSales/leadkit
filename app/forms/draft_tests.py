@@ -172,14 +172,30 @@ def _overdue(status: str, started_at: datetime, claimed_at: datetime | None, now
     return status == "running" and claimed_at is not None and now > claimed_at + RUN_DEADLINE
 
 
+def _status(
+    status: str,
+    failure_code: str | None,
+    started_at: datetime,
+    claimed_at: datetime | None,
+    now: datetime,
+) -> tuple[str, str | None]:
+    """Normaliza a interrupção para detalhe e recibo usando somente metadados seguros."""
+    if failure_code == INTERRUPTED_CODE or _overdue(status, started_at, claimed_at, now):
+        return "interrupted", INTERRUPTED_CODE
+    return status, failure_code
+
+
 def _result(row: sa.Row[Any], now: datetime) -> DraftTestResult:
     values = row._asdict()
-    claimed_at = values.pop("claimed_at")
-    interrupted = values["failure_code"] == INTERRUPTED_CODE
-    if interrupted or _overdue(values["status"], values["started_at"], claimed_at, now):
-        values.update(
-            status="interrupted", failure_code=INTERRUPTED_CODE, failure_detail=INTERRUPTED
-        )
+    values["status"], values["failure_code"] = _status(
+        values["status"],
+        values["failure_code"],
+        values["started_at"],
+        values.pop("claimed_at"),
+        now,
+    )
+    if values["status"] == "interrupted":
+        values["failure_detail"] = INTERRUPTED
     return DraftTestResult(**values)
 
 
@@ -251,7 +267,6 @@ def start(
     check_version(draft, expected_version)
     assembled = assemble(draft, answers=answers, day=day, now=now)
     test_id = uuid.uuid4()
-    simulated = assembled.simulated
     try:
         with deps.sessions.begin() as session:
             from app.forms.continuation_contract import assert_definition_contract
@@ -263,43 +278,52 @@ def start(
             if latest is None or latest.form_id != draft.form_id or latest.token != draft.token:
                 raise DraftVersionConflict(VERSION_CONFLICT)
             check_version(latest, expected_version)
-            _interrupt_overdue(session, draft.form_id, now)
-            _refuse_while_busy(session, draft.form_id, now)
-            _keep_latest(session, draft.form_id, KEEP_TESTS - 1)
-            session.add(
-                DraftTest(
-                    id=test_id,
-                    form_id=draft.form_id,
-                    status="queued",
-                    started_by=actor,
-                    started_at=now,
-                    simulated_date=simulated,
-                    definition=draft.document,
-                    definition_fingerprint=draft.token,
-                    llm_fingerprint=llm_fingerprint(draft.document),
-                    answers=assembled.answers.model_dump(mode="json"),
-                    instructions=assembled.instructions,
-                    prompt=assembled.prompt,
-                    usage={},
-                )
-            )
-            session.add(
-                AuditLog(
-                    actor=actor,
-                    action="form.draft.test",
-                    target_type="form",
-                    target_id=str(draft.form_id),
-                    details={
-                        "form_slug": slug,
-                        "test": str(test_id),
-                        "fingerprint": draft.token,
-                        **({"simulated_date": simulated.isoformat()} if simulated else {}),
-                    },
-                )
-            )
+            _persist_start(session, draft, assembled, actor=actor, now=now, test_id=test_id)
     except IntegrityError:  # o outro clique passou na frente
         raise DraftTestRefused(BUSY) from None
     return test_id
+
+
+def _persist_start(session, draft, assembled, *, actor, now, test_id):
+    """Persiste teste e auditoria na transação da chamadora, já sob lock do formulário."""
+    simulated = assembled.simulated
+    _interrupt_overdue(session, draft.form_id, now)
+    _refuse_while_busy(session, draft.form_id, now)
+    _keep_latest(session, draft.form_id, KEEP_TESTS - 1)
+    session.add(
+        DraftTest(
+            id=test_id,
+            form_id=draft.form_id,
+            status="queued",
+            started_by=actor,
+            started_at=now,
+            simulated_date=simulated,
+            definition=draft.document,
+            definition_fingerprint=draft.token,
+            llm_fingerprint=llm_fingerprint(draft.document),
+            answers=assembled.answers.model_dump(mode="json"),
+            instructions=assembled.instructions,
+            prompt=assembled.prompt,
+            usage={},
+        )
+    )
+    audit_id = uuid.uuid4()
+    session.add(
+        AuditLog(
+            id=audit_id,
+            actor=actor,
+            action="form.draft.test",
+            target_type="form",
+            target_id=str(draft.form_id),
+            details={
+                "form_slug": draft.document["slug"],
+                "test": str(test_id),
+                "fingerprint": draft.token,
+                **({"simulated_date": simulated.isoformat()} if simulated else {}),
+            },
+        )
+    )
+    return audit_id
 
 
 def _interrupt_overdue(session: Session, form_id: uuid.UUID, now: datetime) -> None:

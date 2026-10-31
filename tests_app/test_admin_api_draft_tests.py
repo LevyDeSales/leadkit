@@ -246,7 +246,9 @@ def test_assemble_form_draft_prompt_gives_the_prompt_the_page_shows_with_the_exa
     writer: ApiClient, deps: Deps
 ) -> None:
     assert login(writer).status_code == 303
-    shown = text(section_of(writer.get(f"{PAGE_DRAFT}/tests"), "prompt-montado"))
+    shown = text(
+        section_of(writer.get(f"{PAGE_DRAFT}/tests", follow_redirects=True), "prompt-montado")
+    )
 
     response = writer.post(prompt_url(), json={})
 
@@ -596,7 +598,7 @@ def test_list_form_draft_tests_lists_the_same_tests_in_the_same_order_as_the_pag
         finish(deps, begin(deps, moment(clock)), clock)
         clock.advance(31)
     assert login(writer).status_code == 303
-    page = writer.get(TESTS_PAGE).text
+    page = writer.get(TESTS_PAGE, follow_redirects=True).text
 
     body = writer.get(list_url()).json()
 
@@ -1556,3 +1558,145 @@ def test_mcp_forwards_optional_expected_version_and_refuses_stale_origin(
         assert worker.queued == []
     finally:
         live.close()
+
+
+def test_idempotent_command_recovery_and_conflict_without_reconfirmation(writer, worker, clock):
+    root = API + f"/forms/{SLUG}/draft"
+    context = writer.get(url_of("get_form_draft_test_command_context", slug=SLUG))
+    assert context.status_code == 200
+    identity = context.json()
+    body = {"command_id": identity["command_id"], "expected_version": identity["expected_version"]}
+    miss = writer.post(root + "/tests", json={**body, "replay_only": True})
+    assert miss.status_code == 404 and miss.json()["code"] == "command_not_found"
+    first = writer.post(root + "/tests", json={**body, "confirm": True})
+    assert first.status_code == 200, first.text
+    test_id = first.json()["receipt"]["test_id"]
+    clock.advance(31)
+    again = writer.post(root + "/tests", json={**body, "replay_only": True})
+    assert again.status_code == 200, again.text
+    assert again.json()["receipt"]["test_id"] == test_id
+    assert len(worker.queued) == 1
+    conflict = writer.post(root + "/tests", json={**body, "answers": {}, "replay_only": True})
+    assert conflict.status_code == 409 and conflict.json()["code"] == "command_conflict"
+    queried = writer.get(
+        url_of("get_form_draft_test_command", slug=SLUG, command_id=identity["command_id"])
+    )
+    assert queried.status_code == 200 and queried.json()["receipt"]["test_id"] == test_id
+
+
+def test_command_recovery_denies_other_key_and_revoked_key(writer, reader, worker, deps):
+    context = writer.get(url_of("get_form_draft_test_command_context", slug=SLUG)).json()
+    body = {"command_id": context["command_id"], "expected_version": context["expected_version"]}
+    first = writer.post(start_url(), json={**body, "confirm": True})
+    assert first.status_code == 200
+    foreign = reader.get(
+        url_of("get_form_draft_test_command", slug=SLUG, command_id=context["command_id"])
+    )
+    assert foreign.status_code == 403 and foreign.json()["code"] == "command_forbidden"
+    # Outro principal total também não pode tratar o recibo como ausência elegível.
+    from app.admin.api import keys
+
+    with deps.sessions.begin() as session:
+        keys.revoke(session, writer.key.info.key_id, actor="testes", now=moment(writer.clock))
+    revoked = writer.post(start_url(), json={**body, "replay_only": True})
+    assert revoked.status_code == 401 and revoked.json()["code"] == "key_revoked"
+    assert len(worker.queued) == 1
+
+
+@pytest.mark.parametrize(
+    "fault",
+    ["timeout", "http503", "http403", "cancelled", "exception", "invalid_json", "invalid_body"],
+)
+def test_failed_command_preflight_requires_a_fresh_unsupported_presentation(
+    writer, deps, worker, tmp_path, fault
+):
+    import asyncio
+
+    from admin_mcp_live import Live
+
+    live = Live(writer, tmp_path)
+    try:
+        context = live.ok("get_form_draft_test_command_context", {"slug": SLUG})
+        arguments = {"slug": SLUG, **{k: context[k] for k in ("command_id", "expected_version")}}
+        assert live.call("start_form_draft_test", arguments).awaiting
+        original = live.wire.handle_async_request
+
+        async def fail_preflight(request):
+            if request.method == "POST" and json.loads(request.content).get("replay_only"):
+                if fault == "timeout":
+                    raise httpx.ReadTimeout("Falha sintética de leitura")
+                if fault == "cancelled":
+                    raise asyncio.CancelledError()
+                if fault == "exception":
+                    raise RuntimeError("Falha sintética de transporte")
+                if fault == "invalid_json":
+                    return httpx.Response(404, content=b"{")
+                if fault == "invalid_body":
+                    return httpx.Response(404, json=["command_not_found"])
+                status = 503 if fault == "http503" else 403
+                return httpx.Response(
+                    status, json={"code": "unavailable", "detail": "Falha sintética"}
+                )
+            return await original(request)
+
+        live.wire.handle_async_request = fail_preflight
+        if fault == "cancelled":
+            with pytest.raises(asyncio.CancelledError):
+                live.call("start_form_draft_test", {**arguments, "confirm": True})
+        else:
+            assert live.call("start_form_draft_test", {**arguments, "confirm": True}).is_error
+        live.wire.handle_async_request = original
+        retry = live.call("start_form_draft_test", {**arguments, "confirm": True})
+        assert retry.awaiting
+        with deps.sessions() as session:
+            assert session.scalar(sa.select(sa.func.count()).select_from(DraftTest)) == 0
+        assert worker.queued == []
+        # Só a apresentação renovada permite a segunda etapa da compatibilidade unsupported.
+        accepted = live.call("start_form_draft_test", {**arguments, "confirm": True})
+        assert accepted.status == 200 and len(worker.queued) == 1
+    finally:
+        live.close()
+
+
+def test_receipt_preserves_interruption_after_another_start_persists_it(writer, clock):
+    context = writer.get(url_of("get_form_draft_test_command_context", slug=SLUG)).json()
+    first = writer.post(
+        start_url(),
+        json={
+            **{k: context[k] for k in ("command_id", "expected_version")},
+            "confirm": True,
+        },
+    )
+    assert first.status_code == 200
+    test_id = first.json()["receipt"]["test_id"]
+    clock.advance(draft_tests.QUEUE_DEADLINE.total_seconds() + 1)
+    receipt_url = url_of("get_form_draft_test_command", slug=SLUG, command_id=context["command_id"])
+    before = writer.get(receipt_url).json()["receipt"]
+    assert before["test_status"] == "interrupted"
+    assert writer.post(start_url(), json={"confirm": True}).status_code == 200
+    after = writer.get(receipt_url).json()["receipt"]
+    detail = writer.get(result_url(test_id)).json()
+    assert after["test_status"] == detail["status"] == "interrupted"
+    assert after["failure_code"] == before["failure_code"] == "interrupted"
+    assert after["test_id"] == before["test_id"] == test_id
+    assert all(
+        field not in after for field in ("answers", "prompt", "plan", "pdf", "failure_detail")
+    )
+
+
+def test_command_receipt_conflicts_with_a_different_form(writer, worker):
+    context = writer.get(url_of("get_form_draft_test_command_context", slug=SLUG)).json()
+    first = writer.post(
+        start_url(),
+        json={
+            **{k: context[k] for k in ("command_id", "expected_version")},
+            "confirm": True,
+        },
+    )
+    assert first.status_code == 200
+    wrong_form = writer.get(
+        url_of("get_form_draft_test_command", slug=PHASED, command_id=context["command_id"])
+    )
+    assert wrong_form.status_code == 409 and wrong_form.json()["code"] == "command_conflict"
+    assert "receipt" not in wrong_form.json()
+    assert len(worker.queued) == 1

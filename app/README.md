@@ -291,3 +291,25 @@ captura e PDF. O envelope2 e o emissor da instalação ficam fixados no banco no
 Hatchet recebe só IDs/contagens. A cópia das respostas na outbox é removida pela cascata da
 submissão e não entra em consultas administrativas de estado. Veja o [contrato](../docs/api/integracoes.md)
 e a [adoção do piso3](../deploy/swarm/README.md). A opção fica desligada por padrão.
+
+### Comando idempotente do teste de rascunho
+
+Antes de `start_form_draft_test`, `get_form_draft_test_command_context(slug)` fornece `command_id`,
+`expected_version`, relógio e limite da criação, sem efeito persistido. Conserve o ID antes do POST.
+Envie-o com a revisão e a confirmação atual; respostas/data omitidas são fixadas na primeira criação.
+O resultado identificado é `receipt`, com IDs seguros, principal da chave, revisão, instantes,
+`dispatch_state`, `test_status` e `result_state`. O legado sem command_id conserva sua resposta anterior.
+
+MCP faz preflight com o mesmo corpo e `replay_only:true`, dispensado de confirmação pelo contrato
+existente. Esse modo é leitura mesmo quando o comando não existe. Somente `404 command_not_found`
+permite perguntar e tentar a primeira criação; `403 command_forbidden`, `409 command_conflict`,
+`410 command_expired`, `422 command_in_future` e falhas de transporte não seguem para efeito.
+Consulta direta usa `get_form_draft_test_command(slug, command_id)`. A identidade não autentica e
+recibos de outra chave/admin não são transferidos por paridade.
+
+A janela v1 fixa é de três dias para criar desde emissão e três dias para consultar desde commit;
+timestamps futuros são recusados. Os prazos não renovam aprovação. Após descarte, identidade antiga
+nunca vira novo teste, mesmo com mudança de retenção dos resultados. `uncertain` indica ausência
+de confirmação do despacho, sem afirmar custo zero; consulta/replay jamais reenfileiram. Para nova
+execução, obtenha outra identidade e outra confirmação. Native decline/cancel/falso/inválido/falha
+continuam bloqueando, e a compatibilidade unsupported não comprova clique humano.

@@ -100,3 +100,9 @@ entidade no mesmo diagnóstico, independente da ordem de chegada.
 
 **Declaração de comparecimento:** relato de presença, ausência ou estado não informado associado
 à revisão exata de um agendamento da mesma fonte. Não decorre de convite ou agendamento.
+
+**Comando de teste de rascunho:** identidade de uma ação de teste, vinculada à revisão,
+argumentos e autoridade executora para recuperar a mesma execução sem criar outra.
+
+**Recibo de teste de rascunho:** fatos mínimos da criação e do despacho de um comando,
+consultáveis com autorização; não contém respostas nem comprova autoria humana ou sucesso da IA.

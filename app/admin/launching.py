@@ -21,6 +21,8 @@ import asyncio
 import uuid
 from collections.abc import Awaitable, Callable, Sequence
 from concurrent.futures import Future, InvalidStateError, ThreadPoolExecutor
+from dataclasses import dataclass
+from typing import Literal
 
 from app.deps import Deps
 
@@ -29,6 +31,14 @@ from app.deps import Deps
 Trigger = Callable[[uuid.UUID, int], Awaitable[str | None]]
 # O disparador do teste do rascunho (`app.state.test_trigger`): o mesmo, com o id do teste.
 DraftTestTrigger = Callable[[uuid.UUID], Awaitable[str | None]]
+
+
+@dataclass(frozen=True)
+class DraftTestDispatch:
+    """Fato explícito de transporte; timeout não prova que nenhum envio aconteceu."""
+
+    state: Literal["enqueued", "not_started", "uncertain"]
+
 
 # Quantas sincronizações com a planilha um reenvio em lote põe de volta na fila e dispara de uma vez
 # (`app.admin.actions.integrations.resend_failed`): o teto da fila de disparos em segundo plano. Quem

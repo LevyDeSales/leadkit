@@ -41,3 +41,16 @@ detalha a diferença.
 Credenciais de encaminhamento, credenciais de fontes de eventos, segredo do Webhook e token do Baserow têm finalidades próprias. Uma chave administrativa não funciona como credencial do resolvedor de encaminhamento. Peça à administradora a credencial correta; não tente reutilizar o mesmo segredo em todas as áreas.
 
 Referências técnicas opcionais para a equipe: [referência da aplicação](../../app/README.md), [contratos de integração](../api/integracoes.md) e [contrato da jornada](../api/jornada.md). Elas complementam este guia e não são tarefas de implementação para a operadora.
+
+### Recuperar o teste pelo MCP
+
+Para testar o rascunho, peça ao assistente que obtenha o contexto de um novo teste e conserve a
+identidade antes de iniciar. A ferramenta pede a confirmação atual da cliente. Recusa,
+cancelamento, caixa desmarcada, resposta inválida e falha continuam bloqueando o primeiro efeito;
+um `confirm:true` escrito pelo assistente não comprova aceite humano.
+
+Após resposta perdida ou reinício, repetir a mesma ação consulta primeiro o comando histórico,
+sem pedir novo aceite nem despachar outro teste. Também é possível consultar o recibo pela
+identidade. O recibo contém somente identificadores e estados, sem respostas, prompt ou plano.
+Se houver conflito, falta de permissão, identidade expirada ou falha técnica, o assistente deve
+parar e explicar o estado. Outra execução requer nova identidade e nova confirmação.
