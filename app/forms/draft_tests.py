@@ -172,14 +172,30 @@ def _overdue(status: str, started_at: datetime, claimed_at: datetime | None, now
     return status == "running" and claimed_at is not None and now > claimed_at + RUN_DEADLINE
 
 
+def _status(
+    status: str,
+    failure_code: str | None,
+    started_at: datetime,
+    claimed_at: datetime | None,
+    now: datetime,
+) -> tuple[str, str | None]:
+    """Normaliza a interrupção para detalhe e recibo usando somente metadados seguros."""
+    if failure_code == INTERRUPTED_CODE or _overdue(status, started_at, claimed_at, now):
+        return "interrupted", INTERRUPTED_CODE
+    return status, failure_code
+
+
 def _result(row: sa.Row[Any], now: datetime) -> DraftTestResult:
     values = row._asdict()
-    claimed_at = values.pop("claimed_at")
-    interrupted = values["failure_code"] == INTERRUPTED_CODE
-    if interrupted or _overdue(values["status"], values["started_at"], claimed_at, now):
-        values.update(
-            status="interrupted", failure_code=INTERRUPTED_CODE, failure_detail=INTERRUPTED
-        )
+    values["status"], values["failure_code"] = _status(
+        values["status"],
+        values["failure_code"],
+        values["started_at"],
+        values.pop("claimed_at"),
+        now,
+    )
+    if values["status"] == "interrupted":
+        values["failure_detail"] = INTERRUPTED
     return DraftTestResult(**values)
 
 

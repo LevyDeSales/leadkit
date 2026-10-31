@@ -2820,6 +2820,8 @@ def capture_detail_page(submission_id: str, request: Request) -> Response:
 @protected.post("/forms/{slug}/draft/capture-test")
 async def capture_test_page(slug: str, request: Request) -> Response:
     options = await run_in_threadpool(_simulation_post, slug, await posted_form(request))
+    # Identidade e recibo pertencem somente ao teste com geração, nunca à captura local.
+    options.pop("command_id")
     return await run_in_threadpool(_capture_tests_page, request, _draft(slug), **options)
 
 

@@ -148,7 +148,7 @@ def test_prompt_mode_guard_uses_the_same_snapshot_as_assembly(deps, tmp_path, su
         from test_admin_drafts import hidden
 
         assert login(api).status_code == 303
-        page = api.get("/admin/forms/mode-switch/draft/tests")
+        page = api.get("/admin/forms/mode-switch/draft/tests", follow_redirects=True)
         csrf = hidden(page.text, "csrf_token")
     switched = False
     live = Live(api, tmp_path) if surface == "mcp" else None
@@ -211,7 +211,7 @@ def test_capture_local_test_rejects_pdf_equally_in_html_http_and_mcp(deps, tmp_p
     finally:
         live.close()
     assert login(api).status_code == 303
-    page = api.get("/admin/forms/pdf-source/draft/tests")
+    page = api.get("/admin/forms/pdf-source/draft/tests", follow_redirects=True)
     response = api.post(
         "/admin/forms/pdf-source/draft/capture-test",
         data={"csrf_token": hidden(page.text, "csrf_token")},

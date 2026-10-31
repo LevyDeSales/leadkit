@@ -12708,6 +12708,18 @@
         "title": "StartFormDraftTestRequest",
         "type": "object"
       },
+      "StartFormDraftTestResponse": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/StartedFormDraftTest"
+          },
+          {
+            "$ref": "#/components/schemas/ReceiptResponse"
+          }
+        ],
+        "description": "União nomeada: mantém o JSON legado ou o envelope de recibo, sem camada adicional.",
+        "title": "StartFormDraftTestResponse"
+      },
       "StartedFormDraftTest": {
         "description": "O teste que entrou na fila, e se o engine do Hatchet recebeu o disparo.",
         "properties": {
@@ -19137,7 +19149,7 @@
                 }
               }
             },
-            "description": "Escopo incompatível (`command_conflict`)."
+            "description": "Conflito de estado do vínculo: namespace ou formulário incompatível com a identidade (`command_conflict`). Não é conflito de versão do rascunho atual; a consulta conserva a revisão histórica."
           },
           "410": {
             "content": {
@@ -19322,15 +19334,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/components/schemas/StartedFormDraftTest"
-                    },
-                    {
-                      "$ref": "#/components/schemas/ReceiptResponse"
-                    }
-                  ],
-                  "title": "Response Start Form Draft Test"
+                  "$ref": "#/components/schemas/StartFormDraftTestResponse"
                 }
               }
             },
@@ -19385,7 +19389,7 @@
                 }
               }
             },
-            "description": "Já há um teste deste formulário em andamento (`state_conflict`): espere ele terminar (`get_form_draft_test`, ou `list_form_draft_tests` para achá-lo). Nada é gravado nem disparado. É isto o que uma chamada repetida depois de uma resposta perdida recebe, sem segundo teste."
+            "description": "Já há um teste deste formulário em andamento (`state_conflict`): espere ele terminar (`get_form_draft_test`, ou `list_form_draft_tests` para achá-lo). Nada é gravado nem disparado. É isto o que uma chamada repetida depois de uma resposta perdida recebe, sem segundo teste no caminho legado. Com identidade, namespace, formulário, revisão ou argumentos incompatíveis com o vínculo retornam `command_conflict`, sem novo efeito."
           },
           "410": {
             "content": {

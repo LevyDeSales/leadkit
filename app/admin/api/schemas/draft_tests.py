@@ -15,11 +15,12 @@ from collections.abc import Mapping
 from datetime import date
 from typing import Any, Literal
 
-from pydantic import AwareDatetime, BaseModel, Field
+from pydantic import AwareDatetime, BaseModel, Field, RootModel
 
 from app.admin.actions import draft_tests as actions
 from app.admin.api.common import ApiInput, ConfirmedInput, Page, utc
 from app.admin.api.errors import ErrorItem
+from app.forms import draft_test_commands as commands
 from app.forms import draft_tests, drafts
 from app.forms.definition.phases import PhaseStatus
 
@@ -440,6 +441,10 @@ class StartedFormDraftTest(FormDraftTest):
     @classmethod
     def started(cls, found: actions.Found, *, launched: bool) -> StartedFormDraftTest:
         return cls(**_detail_of(found), launched=launched)
+
+
+class StartFormDraftTestResponse(RootModel[StartedFormDraftTest | commands.ReceiptResponse]):
+    """União nomeada: mantém o JSON legado ou o envelope de recibo, sem camada adicional."""
 
 
 class FormDraftTests(Page[FormDraftTestBrief]):

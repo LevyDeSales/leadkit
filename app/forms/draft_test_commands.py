@@ -198,9 +198,11 @@ def _receipt(session, row: DraftTestCommand, now: datetime) -> CommandReceipt:
         .where(DraftTest.id == row.test_id)
     )
     retained = test is not None and now <= test.started_at + timedelta(days=draft_tests.TEST_DAYS)
-    status, code = (test.status, test.failure_code) if retained else (None, None)
-    if retained and draft_tests._overdue(test.status, test.started_at, test.claimed_at, now):
-        status, code = "interrupted", draft_tests.INTERRUPTED_CODE
+    status, code = (
+        draft_tests._status(test.status, test.failure_code, test.started_at, test.claimed_at, now)
+        if retained
+        else (None, None)
+    )
     return CommandReceipt(
         **{
             name: getattr(row, name)

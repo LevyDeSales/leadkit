@@ -241,41 +241,47 @@ class ToolRunner:
         uploads = read_uploads(spec, arguments, self.config.upload_dir)
         gates = {CONFIRM, *spec.companions} & set(spec.locations)
         given = {name: arguments.pop(name) for name in list(arguments) if name in gates}
-        if (
-            spec.name == "start_form_draft_test"
-            and arguments.get("command_id")
-            and spec.confirm_unless == "replay_only"
-            and arguments.get("replay_only") is not True
-        ):
-            # Recuperação histórica compara o corpo inteiro ANTES de pedir outro aceite.
-            response = await self.client.send(
-                prepare(spec, {**arguments, "replay_only": True}, {}, uploads=uploads)
-            )
-            try:
-                payload = json.loads(response.content)
-            except (ValueError, UnicodeError):
-                payload = None
-            eligible = (
-                response.status == 404
-                and isinstance(payload, dict)
-                and payload.get("code") == "command_not_found"
-            )
-            if not eligible:
-                return render(
-                    spec,
-                    response,
-                    redact=self.client.redact,
-                    download_dir=self.config.download_dir,
-                    simulated=True,
-                )
         key = fingerprint(spec.name, arguments, uploads, bound)
         send: dict[str, bool] = {}
         # Leituras e simulações dispensadas de confirmação seguem concorrentes; uma operação sem
         # marca também pode pedir uma confirmação adicional no 422.
         guarded = spec.needs_confirmation(arguments) or (bool(spec.companions) and not spec.marked)
-        if guarded and not self.pending.reserve(key):
-            return blocked(ConfirmationOutcome.IN_PROGRESS)
+        reserved = False
         try:
+            if (
+                spec.name == "start_form_draft_test"
+                and arguments.get("command_id")
+                and spec.confirm_unless == "replay_only"
+                and arguments.get("replay_only") is not True
+            ):
+                # Recuperação histórica compara o corpo inteiro ANTES de pedir outro aceite.
+                response = await self.client.send(
+                    prepare(spec, {**arguments, "replay_only": True}, {}, uploads=uploads)
+                )
+                try:
+                    payload = json.loads(response.content)
+                except (ValueError, UnicodeError):
+                    payload = None
+                eligible = (
+                    response.status == 404
+                    and isinstance(payload, dict)
+                    and payload.get("code") == "command_not_found"
+                )
+                if not eligible:
+                    self.pending.forget(key)
+                    return render(
+                        spec,
+                        response,
+                        redact=self.client.redact,
+                        download_dir=self.config.download_dir,
+                        simulated=True,
+                    )
+            # O preflight é leitura histórica: pode recuperar um commit enquanto a criadora
+            # aguarda o transporte. A reserva continua protegendo somente a tentativa de efeito.
+            if guarded:
+                reserved = self.pending.reserve(key)
+                if not reserved:
+                    return blocked(ConfirmationOutcome.IN_PROGRESS)
             if spec.needs_confirmation(arguments):
                 answer = await prompter.ask(question(spec, arguments, uploads))
                 decision = self.pending.decide(
@@ -297,7 +303,7 @@ class ToolRunner:
             self.pending.forget(key)
             raise
         finally:
-            if guarded:
+            if reserved:
                 self.pending.release(key)
 
     async def _execute(

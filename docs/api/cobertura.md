@@ -632,9 +632,28 @@ pode preceder outra confirmação no MCP; `command_forbidden`, conflito, expira�
 não autorizam criação. O primeiro efeito sempre exige confirmação atual; o legado sem ID permanece.
 As operações GET acima correspondem ao contexto/recibo que a página de teste usa na URL da ação.
 
+A resposta 200 da partida usa o modelo nomeado `StartFormDraftTestResponse`: a união conserva
+o JSON legado ou `{receipt: ...}`, sem envelope adicional. No GET do recibo, 409 é conflito de
+estado do vínculo por namespace ou formulário incompatível (`command_conflict`), sem comparar
+a revisão atual. Na partida, revisão/argumentos incompatíveis também usam `command_conflict`;
+ocupação ou origem obsoleta do primeiro efeito continuam usando `state_conflict`.
+
+Falha, cancelamento ou resposta inválida no preflight MCP invalidam a pendência anterior da
+mesma chamada. A compatibilidade `unsupported` exige nova apresentação antes da segunda etapa;
+somente uma ausência elegível permite chegar à confirmação. O recibo e o detalhe conservam
+`interrupted` mesmo após persistir a interrupção; um resultado terminal conhecido aparece no HTML
+antes da incerteza de transporte, que permanece explícita e não significa custo zero.
+Captura sem PDF mantém sua validação local (200/422), sem identidade ou recibo de teste pago.
+
 Identidade é global na instalação e vinculada ao ID da chave (admin tem principal próprio),
 formulário, revisão e argumentos normalizados. A criação tem janela dt1 fixa de três dias desde emissão;
 o recibo vence três dias após commit. Consulta não renova prazos, não prova clique humano nem
 sucesso da IA. Resultado conserva sua política independente de cinco testes/três dias; se sair antes,
 o recibo devolve o ID original e `result_state: expired`. Após descarte técnico, ID antigo retorna
 `command_expired`; aumentar a retenção de resultado não ressuscita identidades v1.
+
+Regressões específicas: `test_admin_api_draft_tests.py` cobre preflight com API/PostgreSQL reais,
+incluindo cancelamento, e interrupção persistida; `test_admin_drafts.py` cobre falha conhecida com
+despacho incerto; `test_admin_simulation.py` cobre captura válida/inválida e simulação após o
+redirect canônico. `test_draft_test_commands.py` verifica o ID original sob política ampliada nos
+dois consumidores de retenção, além da evicção por quantidade e do replay expirado.

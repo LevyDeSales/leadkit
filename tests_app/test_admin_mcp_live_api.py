@@ -439,6 +439,45 @@ def test_draft_test_replay_recovers_before_native_confirmation(api_client, world
         live.close()
 
 
+def test_committed_replay_is_readable_while_the_original_dispatch_waits(
+    api_client, world, tmp_path
+):
+    import asyncio
+
+    entered, release = asyncio.Event(), asyncio.Event()
+    sent = []
+
+    async def trigger(test_id):
+        sent.append(test_id)
+        entered.set()
+        await release.wait()
+        return "synthetic-run"
+
+    live = Live(api_client("total", test_trigger=trigger), tmp_path)
+    try:
+        context = live.ok("get_form_draft_test_command_context", {"slug": SLUG})
+        arguments = {"slug": SLUG, **{k: context[k] for k in ("command_id", "expected_version")}}
+        refused = Asker(False)
+
+        async def concurrent_replay():
+            tool = live.tools["start_form_draft_test"]
+            first = asyncio.create_task(live.runner.call(tool, arguments, Asker(True)))
+            try:
+                await asyncio.wait_for(entered.wait(), timeout=10)
+                return await live.runner.call(tool, arguments, refused)
+            finally:
+                release.set()
+                created = await first
+                assert created.status == 200
+
+        recovered = asyncio.run(concurrent_replay())
+        assert recovered.status == 200
+        assert recovered.data["receipt"]["test_id"] == str(sent[0])
+        assert not refused.messages and len(sent) == 1
+    finally:
+        live.close()
+
+
 @pytest.mark.parametrize("answer", [False, None])
 def test_identified_draft_test_negative_or_pending_never_creates(
     api_client, world, tmp_path, answer

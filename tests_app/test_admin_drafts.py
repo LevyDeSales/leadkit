@@ -1341,3 +1341,71 @@ def test_identified_form_rejects_unknown_input_mode(client, worker):
     )
     assert response.status_code == 422
     assert not worker.queued
+
+
+def test_failed_execution_is_shown_even_when_dispatch_is_uncertain(client, deps, clock):
+    from app.forms import draft_test_commands as commands
+
+    page = client.get(TESTS, follow_redirects=True)
+    identity = hidden(page.text, "command_id")
+    calls = []
+
+    class Fails:
+        def generate(self, spec, answers):
+            raise RuntimeError("falha sintética da geração")
+
+    deps.llm = Fails()
+
+    async def delivered_then_response_lost(test_id):
+        calls.append(test_id)
+        assert (
+            draft_tests.run(deps, test_id, now=lambda: datetime.fromtimestamp(clock(), UTC))
+            == "failed"
+        )
+
+    client.app.state.test_trigger = delivered_then_response_lost
+    response = post(
+        client,
+        TESTS,
+        command_id=identity,
+        expected=hidden(page.text, "expected"),
+        input_mode="json",
+        answers="",
+        confirm="on",
+    )
+    assert response.status_code == 303
+    receipt_page = client.get(response.headers["location"])
+    receipt = commands.resolve(
+        deps,
+        SLUG,
+        identity,
+        principal=commands.Principal("admin", "operadora"),
+        now=datetime.fromtimestamp(clock(), UTC),
+    )
+    assert receipt.test_status == "failed" and receipt.dispatch_state == "uncertain"
+    assert "O teste falhou" in receipt_page.text
+    assert "Despacho incerto" in receipt_page.text
+    assert len(calls) == 1
+
+
+def test_receipt_preserves_an_explicitly_not_started_dispatch(client):
+    from app.admin.launching import DraftTestDispatch
+
+    async def not_started(test_id):
+        return DraftTestDispatch("not_started")
+
+    client.app.state.test_trigger = not_started
+    page = client.get(TESTS, follow_redirects=True)
+    response = post(
+        client,
+        TESTS,
+        command_id=hidden(page.text, "command_id"),
+        expected=hidden(page.text, "expected"),
+        input_mode="json",
+        answers="",
+        confirm="on",
+    )
+    assert response.status_code == 303
+    receipt_page = client.get(response.headers["location"])
+    assert "Teste não iniciado" in receipt_page.text
+    assert "O teste falhou" not in receipt_page.text

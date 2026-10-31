@@ -47,6 +47,7 @@ from app.admin.api.schemas.draft_tests import (
     ScoreFormDraftRequest,
     StartedFormDraftTest,
     StartFormDraftTestRequest,
+    StartFormDraftTestResponse,
 )
 from app.admin.api.security import CurrentKey
 from app.deps import get_deps
@@ -300,7 +301,8 @@ def list_form_draft_tests(slug: FORM, request: Request) -> FormDraftTests:
         409: "Já há um teste deste formulário em andamento (`state_conflict`): espere ele terminar "
         "(`get_form_draft_test`, ou `list_form_draft_tests` para achá-lo). Nada é gravado nem "
         "disparado. É isto o que uma chamada repetida depois de uma resposta perdida recebe, sem "
-        "segundo teste.",
+        "segundo teste no caminho legado. Com identidade, namespace, formulário, revisão ou "
+        "argumentos incompatíveis com o vínculo retornam `command_conflict`, sem novo efeito.",
         410: "Identidade dt1 expirada (`command_expired`); não será recriada.",
         422: "O corpo não vale (`validation_failed`: as respostas, a data ou o rascunho; o motivo "
         "vem em `errors`, com `answers.<pergunta>`, `answers` para uma pergunta que o formulário "
@@ -344,7 +346,7 @@ def list_form_draft_tests(slug: FORM, request: Request) -> FormDraftTests:
         "fictícias: elas ficam com o resultado, e qualquer chave o lê."
     ),
     returns="Com command_id: recibo seguro do teste original. Sem identidade: teste e launched legados.",
-    response_model=StartedFormDraftTest | commands.ReceiptResponse,
+    response_model=StartFormDraftTestResponse,
 )
 async def start_form_draft_test(
     slug: FORM, body: StartFormDraftTestRequest, key: CurrentKey, request: Request
@@ -522,7 +524,9 @@ def get_form_draft_test_command_context(slug: FORM, request: Request) -> command
     errors={
         403: "Comando indisponível para esta autoridade (`command_forbidden`).",
         404: "Identidade ausente (`command_not_found`).",
-        409: "Escopo incompatível (`command_conflict`).",
+        409: "Conflito de estado do vínculo: namespace ou formulário incompatível com a "
+        "identidade (`command_conflict`). Não é conflito de versão do rascunho atual; a "
+        "consulta conserva a revisão histórica.",
         410: "Identidade expirada (`command_expired`).",
     },
 )

@@ -308,7 +308,7 @@ def test_the_editor_without_scoring_says_so(client: TestClient) -> None:
 def test_the_test_page_calculates_the_score_with_the_example_answers_or_with_others(
     client: TestClient,
 ) -> None:
-    page = client.get(TESTS)
+    page = client.get(TESTS, follow_redirects=True)
     assert page.status_code == 200
     assert "Calcular a pontuação" in text(page.text)
 

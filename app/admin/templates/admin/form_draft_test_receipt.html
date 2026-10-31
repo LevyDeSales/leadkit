@@ -15,12 +15,13 @@
   {% elif receipt.test_status == 'succeeded' %}<h2 id="estado-teste">Teste concluído</h2><p>O resultado desta execução está disponível abaixo.</p>
   {% elif receipt.test_status == 'running' %}<h2 id="estado-teste">Teste em execução</h2><p>Atualize o recibo para acompanhar.</p>
   {% elif receipt.test_status == 'interrupted' %}<h2 id="estado-teste">Teste interrompido</h2><p>Este comando não será reenviado. Confira o resultado antes de iniciar outro teste.</p>
+  {% elif receipt.test_status == 'failed' and receipt.dispatch_state != 'not_started' %}<h2 id="estado-teste">O teste falhou</h2><p>Este comando conserva a execução original. Confira o resultado antes de iniciar outro teste.</p>
   {% elif receipt.dispatch_state in ('dispatching', 'uncertain') %}<h2 id="estado-teste">Despacho incerto</h2><p>Ainda não há confirmação do enfileiramento. Isso não significa custo zero. Atualize o recibo; reenviar não inicia outro teste.</p>
   {% elif receipt.dispatch_state == 'not_started' %}<h2 id="estado-teste">Teste não iniciado</h2><p>Para outra execução, escolha Novo teste e confirme novamente o possível custo.</p>
-  {% elif receipt.test_status == 'failed' %}<h2 id="estado-teste">O teste falhou</h2><p>Este comando conserva a execução original. Confira o resultado antes de iniciar outro teste.</p>
   {% elif receipt.dispatch_state == 'enqueued' %}<h2 id="estado-teste">Teste enfileirado</h2><p>Aguardando a execução. Atualize o recibo para acompanhar.</p>
   {% else %}<h2 id="estado-teste">Criação confirmada</h2><p>O teste foi salvo. O enfileiramento ainda não foi confirmado.</p>{% endif %}
   </div>
+  {% if receipt.dispatch_state in ('dispatching', 'uncertain') and receipt.test_status in ('succeeded', 'failed', 'interrupted') %}<p class="muted">Despacho incerto: o transporte não confirmou o enfileiramento. O estado da execução acima é conhecido; a incerteza do transporte não significa custo zero.</p>{% endif %}
   <dl class="kv footnote"><dt>Criação confirmada</dt><dd>{{ m.when(created) }}</dd><dt>Recibo disponível até</dt><dd>{{ m.when(expires) }}</dd></dl>
   <p class="muted footnote">Datas no horário de Brasília. O recibo confirma a criação; o estado mostra a execução e o resultado.</p>
   <div class="btns footnote">

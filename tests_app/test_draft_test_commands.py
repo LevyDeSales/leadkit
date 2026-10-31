@@ -173,7 +173,7 @@ def test_failed_transaction_leaves_neither_test_command_nor_audit(deps, context,
     assert commit(deps, context).created
 
 
-def test_eviction_preserves_receipt_without_answers_and_fixed_retention(deps, context, monkeypatch):
+def test_eviction_preserves_receipt_without_answers_and_fixed_retention(deps, context):
     first = commit(deps, context)
     from app.forms import draft_tests
 
@@ -185,12 +185,26 @@ def test_eviction_preserves_receipt_without_answers_and_fixed_retention(deps, co
     assert receipt.result_state == "expired"
     output = receipt.model_dump_json()
     assert all(word not in output for word in ("answers", "prompt", "plan", "digest"))
+
+
+def test_receipt_expiry_retains_the_original_result_under_an_extended_policy(
+    deps, context, monkeypatch
+):
+    from app import retention
+    from app.forms import draft_tests
+
+    first = commit(deps, context)
+    test_id = first.receipt.test_id
+    assert draft_tests.run(deps, test_id, now=lambda: NOW) == "succeeded"
     monkeypatch.setattr(draft_tests, "TEST_DAYS", 30)
+    monkeypatch.setattr(retention, "TEST_DAYS", 30)
     later = NOW + timedelta(days=3, seconds=1)
     purge_expired(deps, now=later)
+    # A partida também consome a política de resultado; nenhum dos dois consumidores o apaga.
+    draft_tests.start(deps, SLUG, actor="testes", now=later)
     with deps.sessions() as session:
         assert session.get(DraftTestCommand, context.command_id) is None
-        assert session.scalar(sa.select(sa.func.count()).select_from(DraftTest)) > 0
+        assert session.get(DraftTest, test_id) is not None
     with pytest.raises(commands.CommandError) as caught:
         commit(deps, context, clock=lambda: later)
     assert caught.value.code == "command_expired"
