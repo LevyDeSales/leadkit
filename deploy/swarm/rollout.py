@@ -734,12 +734,14 @@ class Rollout:
             raise RolloutError(
                 "Não há contrato compatível para rollback; use a primeira adoção com migration."
             )
-        # O comando de capacidade usa o ID exato; o serviço usa referência de conteúdo, não tag móvel.
-        digests = self.decoded("image", "inspect", "--format", "{{json .RepoDigests}}", self.target)
-        self.pinned = next((d for d in (digests or []) if "@sha256:" in d), "")
-        if not self.pinned:
-            self.pinned = "leadkit-local:" + self.target.removeprefix("sha256:")
-            self.docker("image", "tag", self.target, self.pinned)
+        # RepoDigests pode ser derivado do nome local e perder resolução após retag no containerd.
+        # Conserve outra associação ao conteúdo antes de instalar a Spec, mesmo com RepoDigests.
+        self.pinned = "leadkit-local:" + self.target.removeprefix("sha256:")
+        self.docker("image", "tag", self.target, self.pinned)
+        if self.image_id(self.pinned) != self.target:
+            raise RolloutError(
+                "A referência local não conserva a imagem verificada; nada foi instalado."
+            )
         os.environ["IMAGE"] = self.pinned
         initial = self.services() if network else {}
         bootstrap = floor == 0

@@ -1699,75 +1699,28 @@ jobs:
           echo "::group::7. tag reaproveitada: o conteúdo verificado fica fixado por identidade"
           # Mesmo nome e imagem nova: o helper usa referência de conteúdo e confere o ID real.
           previous=$(docker image inspect --format '{{.Id}}' gerador-planos:ci)
-          # Diagnóstico temporário somente deste cenário; não altera o helper distribuído.
-          tag_bin="$RUNNER_TEMP/tag-diagnostic-bin"
-          mkdir -p "$tag_bin"
-          export CI_TAG_REAL_DOCKER="$(command -v docker)"
-          export CI_TAG_LOG="$RUNNER_TEMP/tag-diagnostic.log"
-          export CI_TAG_OLD_ID="$previous"
-          export CI_TAG_OLD_REF="$(docker service inspect --format '{{.Spec.TaskTemplate.ContainerSpec.Image}}' gerador-planos_api)"
-          : > "$CI_TAG_LOG"
-          cat > "$tag_bin/docker" <<'SH'
-          #!/usr/bin/env bash
-          set -u
-          operation=other
-          case "${1:-}:${2:-}" in
-            image:inspect) operation=image_inspect ;;
-            image:tag) operation=image_tag ;;
-            service:inspect) operation=service_inspect ;;
-            service:ls) operation=service_list ;;
-            service:ps) operation=service_tasks ;;
-            service:scale) operation=service_scale ;;
-            service:update) operation=service_update ;;
-            node:inspect) operation=node_inspect ;;
-            network:inspect) operation=network_inspect ;;
-            stack:deploy) operation=stack_deploy ;;
-            container:wait) operation=container_wait ;;
-          esac
-          case "${1:-}" in
-            info) operation=info ;;
-            ps) operation=container_list ;;
-            inspect) operation=object_inspect ;;
-            events) operation=events ;;
-            run)
-              operation=run_other
-              case "${@: -1}" in
-                capability|status|begin|migrate|attest) operation=run_${@: -1} ;;
-              esac ;;
-          esac
-          subject=other
-          if [[ "$operation" == image_inspect ]]; then
-            case "${@: -1}" in
-              "$CI_TAG_OLD_REF") subject=old_service_ref ;;
-              "$CI_TAG_OLD_ID") subject=old_id ;;
-              "${CI_TAG_TARGET_ID:-}") subject=target_id ;;
-              gerador-planos:ci) subject=target_tag ;;
-            esac
-          fi
-          phase=other
-          case "${CI_TAG_PHASE:-}" in before|after|rollout) phase=$CI_TAG_PHASE ;; esac
-          "$CI_TAG_REAL_DOCKER" "$@"
-          status=$?
-          printf 'ci-tag-diagnostic phase=%s operation=%s subject=%s exitcode=%d\n' \
-            "$phase" "$operation" "$subject" "$status" >> "$CI_TAG_LOG" || exit 125
-          exit "$status"
-          SH
-          chmod 700 "$tag_bin/docker"
-          for ref in "$CI_TAG_OLD_REF" "$CI_TAG_OLD_ID"; do
-            CI_TAG_PHASE=before "$tag_bin/docker" image inspect "$ref" >/dev/null 2>&1 || true
+          old_api_ref=$(docker service inspect --format '{{.Spec.TaskTemplate.ContainerSpec.Image}}' gerador-planos_api)
+          old_worker_ref=$(docker service inspect --format '{{.Spec.TaskTemplate.ContainerSpec.Image}}' gerador-planos_worker)
+          for ref in "$old_api_ref" "$old_worker_ref" "$previous"; do
+            test "$(docker image inspect --format '{{.Id}}' "$ref")" = "$previous"
           done
           printf 'FROM gerador-planos:ci\nLABEL ci.build=reaproveitada\n' | docker build --quiet --tag gerador-planos:ci - > /dev/null
           test "$(docker image inspect --format '{{.Id}}' gerador-planos:ci)" != "$previous"
-          export CI_TAG_TARGET_ID="$(docker image inspect --format '{{.Id}}' gerador-planos:ci)"
-          for ref in "$CI_TAG_OLD_REF" "$CI_TAG_OLD_ID"; do
-            CI_TAG_PHASE=after "$tag_bin/docker" image inspect "$ref" >/dev/null 2>&1 || true
+          # O retag preserva a resolução e o conteúdo histórico, sem alias de resgate no ensaio.
+          for ref in "$old_api_ref" "$old_worker_ref" "$previous"; do
+            test "$(docker image inspect --format '{{.Id}}' "$ref")" = "$previous"
           done
-          tag_status=0
-          CI_TAG_PHASE=rollout PATH="$tag_bin:$PATH" IMAGE=gerador-planos:ci ./deploy.sh > "$RUNNER_TEMP/stale.log" 2>&1 || tag_status=$?
-          cat "$CI_TAG_LOG"
-          if [ "$tag_status" != 0 ]; then cat "$RUNNER_TEMP/stale.log"; exit 1; fi
+          if ! IMAGE=gerador-planos:ci ./deploy.sh > "$RUNNER_TEMP/stale.log" 2>&1; then
+            cat "$RUNNER_TEMP/stale.log"
+            exit 1
+          fi
           cat "$RUNNER_TEMP/stale.log"
           assert_image gerador-planos:ci
+          for role in api worker; do
+            return_ref=$(docker service inspect --format '{{.PreviousSpec.TaskTemplate.ContainerSpec.Image}}' "gerador-planos_$role")
+            test "$(docker image inspect --format '{{.Id}}' "$return_ref")" = "$previous"
+            test "$(docker service inspect --format '{{.PreviousSpec.Mode.Replicated.Replicas}}' "gerador-planos_$role")" -gt 0
+          done
           grep -F 'contrato participante verificado' "$RUNNER_TEMP/stale.log"
           echo "::endgroup::"
 

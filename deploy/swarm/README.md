@@ -56,11 +56,15 @@ existente. Falha conserva intenções e configurações; repetir entrega não ge
 ## Imagens, retorno e recuperação
 
 A capacidade vem de **executar o comando da imagem exata**, nunca de um label arbitrário.
-O deploy usa um RepoDigest quando disponível. Builds locais sem registry recebem a referência
-`leadkit-local:<hash-do-ID>` no daemon local; cada container é conferido contra o ID efetivamente
-validado. Essa referência precisa permanecer disponível para restart e rollback. Tags de entrada
-reaproveitadas resolvem uma nova referência de conteúdo e passam pelas mesmas verificações; o
-helper não aceita silenciosamente uma réplica que continue com outro ID. A documentação Docker
+O deploy sempre conserva a referência `leadkit-local:<hash-do-ID>` no daemon local antes de
+instalar a Spec, inclusive quando há RepoDigest. No image store containerd, um RepoDigest pode ser
+derivado do nome local; reaproveitar a última tag desse nome pode impedir a resolução da referência
+antiga e até do ID, sem comprovar descarte físico dos dados. O alias adicional conserva uma
+associação ao conteúdo e seu ID é conferido após a criação; cada container continua sendo conferido
+contra o ID efetivamente validado. Preserve esse alias e a imagem para restart e rollback; não os
+retagueie nem remova enquanto Spec ou PreviousSpec os usar. O nome sozinho não atesta identidade.
+Tags de entrada reaproveitadas recebem outra referência de conteúdo e passam pelas mesmas
+verificações; o helper não aceita silenciosamente uma réplica que continue com outro ID. A documentação Docker
 explica por que [digests fixam a imagem e tags podem variar](https://docs.docker.com/engine/swarm/services/).
 
 Guarde imagens compatíveis e backup verificado. O retorno suportado usa a mesma pasta/scripts:
@@ -68,6 +72,17 @@ Guarde imagens compatíveis e backup verificado. O retorno suportado usa a mesma
 ```sh
 ROLLBACK=1 IMAGE=leadkit:VERSAO_COMPATIVEL ./deploy.sh
 ```
+
+Em instalação antiga, atualize os scripts e execute o roteiro enquanto as referências históricas
+ainda resolvem, antes de reutilizar a tag de entrada. Só reutilize a tag depois de confirmar o
+sucesso e a normalização de Spec/PreviousSpec para referências conservadas pelo helper. Se uma
+PreviousSpec legada permanecer após a primeira execução, mantenha a tag histórica intacta e
+planeje outra atualização compatível por uma tag própria, sem substituir aquela referência.
+Se uma referência histórica já deixou de resolver, o helper pode recusar a operação antes das migrations;
+esse caso não tem recuperação automática por nome. Preserve o gate, o inventário e as provas no
+host e investigue a identidade original por um procedimento operacional próprio. Não baixe nem
+retagueie uma imagem arbitrária para fazê-la parecer a imagem histórica, nem descarte serviços ou
+provas para contornar a recusa. Criar o alias da imagem nova não recupera a referência antiga.
 
 `ROLLBACK=1` pula migrations, mas **não pula o piso, as provas de capacidade, réplicas, saúde,
 PreviousSpec e atestação**. Imagem abaixo do piso persistido é recusada antes de alterar a stack ou o banco.
