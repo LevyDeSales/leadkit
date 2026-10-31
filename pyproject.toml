@@ -1,5 +1,6 @@
 [build-system]
-requires = ["setuptools>=77", "wheel"]
+# O backend isolado tem piso próprio, separado das constraints do runtime abaixo.
+requires = ["setuptools>=84.1.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -26,7 +27,7 @@ dependencies = [
   "jinja2>=3.1",
   "weasyprint>=70,<71",
   "pillow>=13.0.0",
-  "pypdf>=6.21.1",
+  "pypdf>=6.21.2",
   "itsdangerous>=2.2",
   "argon2-cffi>=23.1",
   "cryptography>=42",
@@ -56,8 +57,13 @@ include = ["app", "app.*"]
 app = ["alembic.ini", "migrations/script.py.mako", "migrations/**/*.json", "forms/**/*.json", "forms/**/*.html", "forms/**/*.css", "forms/**/*.md", "assets/**/*", "web/static/**/*", "web/templates/**/*", "admin/templates/**/*"]
 
 [tool.uv]
-# Piso de segurança para o bundle de CAs usado pelos clientes HTTP transitivos.
-constraint-dependencies = ["certifi>=2026.10.19"]
+# Pisos de segurança para dependências transitivas; não adicionam pacotes ao runtime.
+constraint-dependencies = [
+  "brotli>=1.2.1",
+  "brotlicffi>=1.2.1.0",
+  "certifi>=2026.10.19",
+  "setuptools>=84.1.0",
+]
 
 [tool.ruff]
 line-length = 100
