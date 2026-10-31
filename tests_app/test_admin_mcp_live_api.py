@@ -58,7 +58,7 @@ def test_the_contract_the_live_api_serves_generates_the_same_tools_as_the_file(l
 
     assert live.role == "total"
     assert live.tools == {tool.name: tool for tool in expected}
-    assert len(live.tools) == 83
+    assert len(live.tools) == 85
     retry = live.tools["retry_job_persisted_delivery"]
     assert retry.role == "total" and retry.external_effect
     assert retry.annotations["openWorldHint"] is True
@@ -70,7 +70,7 @@ def test_a_leitura_key_of_the_live_api_starts_with_the_read_tools(
 ) -> None:
     reader = Live(api_client("leitura"), tmp_path)
 
-    assert reader.role == "leitura" and len(reader.tools) == 38
+    assert reader.role == "leitura" and len(reader.tools) == 40
     assert reader.ok("list_forms")["items"]
     reader.close()
 
@@ -388,3 +388,81 @@ def test_with_the_option_the_lead_data_and_the_pdf_are_there_on_request(
     assert saved.suffix == ".pdf" and saved.read_bytes().startswith(b"%PDF")
     assert jobs.ana.public_id not in saved.name
     on.close()
+
+
+def test_draft_test_replay_recovers_before_native_confirmation(api_client, world, tmp_path, deps):
+    from app.admin_mcp.runner import ToolRunner
+
+    sent = []
+
+    async def trigger(test_id):
+        sent.append(test_id)
+        return "synthetic-run"
+
+    live = Live(api_client("total", test_trigger=trigger), tmp_path)
+    try:
+        context = live.ok("get_form_draft_test_command_context", {"slug": SLUG})
+        body = {
+            "slug": SLUG,
+            "command_id": context["command_id"],
+            "expected_version": context["expected_version"],
+        }
+        ask = Asker(True)
+        import httpx
+
+        send_request = live.wire.handle_async_request
+
+        async def lose_committed_response(request):
+            response = await send_request(request)
+            if (
+                request.method == "POST"
+                and request.url.path.endswith("/draft/tests")
+                and not json.loads(request.content).get("replay_only")
+            ):
+                raise httpx.ReadTimeout("resposta sintética perdida após commit")
+            return response
+
+        live.wire.handle_async_request = lose_committed_response
+        lost = live.call("start_form_draft_test", body, ask)
+        assert lost.is_error
+        assert len(ask.messages) == 1
+        live.runner = ToolRunner(live.client, live.config)
+        again_ask = Asker(False)
+        recovered = live.ok("start_form_draft_test", body, again_ask)
+        assert not again_ask.messages
+        assert recovered["receipt"]["test_id"] == str(sent[0])
+        assert len(sent) == 1
+        conflict = live.call("start_form_draft_test", {**body, "answers": {}}, again_ask)
+        assert conflict.is_error and conflict.data["code"] == "command_conflict"
+        assert not again_ask.messages
+    finally:
+        live.close()
+
+
+@pytest.mark.parametrize("answer", [False, None])
+def test_identified_draft_test_negative_or_pending_never_creates(
+    api_client, world, tmp_path, answer
+):
+    sent = []
+
+    async def trigger(test_id):
+        sent.append(test_id)
+        return "synthetic-run"
+
+    live = Live(api_client("total", test_trigger=trigger), tmp_path)
+    try:
+        context = live.ok("get_form_draft_test_command_context", {"slug": SLUG})
+        body = {
+            "slug": SLUG,
+            "command_id": context["command_id"],
+            "expected_version": context["expected_version"],
+            "confirm": True,
+        }
+        refused = live.call("start_form_draft_test", body, Asker(answer))
+        assert refused.is_error or refused.awaiting
+        assert not sent
+        checked = live.call("start_form_draft_test", {**body, "replay_only": True}, Asker(True))
+        assert checked.status == 404 and checked.data["code"] == "command_not_found"
+        assert not sent
+    finally:
+        live.close()

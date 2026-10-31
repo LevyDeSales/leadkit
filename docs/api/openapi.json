@@ -2043,6 +2043,173 @@
         "title": "CaptureTestResult",
         "type": "object"
       },
+      "CommandContext": {
+        "properties": {
+          "command_id": {
+            "title": "Command Id",
+            "type": "string"
+          },
+          "create_until": {
+            "format": "date-time",
+            "title": "Create Until",
+            "type": "string"
+          },
+          "expected_version": {
+            "title": "Expected Version",
+            "type": "string"
+          },
+          "server_time": {
+            "format": "date-time",
+            "title": "Server Time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "command_id",
+          "expected_version",
+          "server_time",
+          "create_until"
+        ],
+        "title": "CommandContext",
+        "type": "object"
+      },
+      "CommandReceipt": {
+        "properties": {
+          "audit_id": {
+            "format": "uuid",
+            "title": "Audit Id",
+            "type": "string"
+          },
+          "channel": {
+            "title": "Channel",
+            "type": "string"
+          },
+          "command_id": {
+            "title": "Command Id",
+            "type": "string"
+          },
+          "committed_at": {
+            "format": "date-time",
+            "title": "Committed At",
+            "type": "string"
+          },
+          "confirmation_evidence": {
+            "default": "client_reported",
+            "title": "Confirmation Evidence",
+            "type": "string"
+          },
+          "dispatch_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dispatch At"
+          },
+          "dispatch_state": {
+            "title": "Dispatch State",
+            "type": "string"
+          },
+          "expected_version": {
+            "title": "Expected Version",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "failure_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Code"
+          },
+          "form_id": {
+            "format": "uuid",
+            "title": "Form Id",
+            "type": "string"
+          },
+          "form_slug": {
+            "title": "Form Slug",
+            "type": "string"
+          },
+          "issued_at": {
+            "format": "date-time",
+            "title": "Issued At",
+            "type": "string"
+          },
+          "namespace": {
+            "format": "uuid",
+            "title": "Namespace",
+            "type": "string"
+          },
+          "operation": {
+            "default": "start_form_draft_test/v1",
+            "title": "Operation",
+            "type": "string"
+          },
+          "principal_id": {
+            "title": "Principal Id",
+            "type": "string"
+          },
+          "principal_kind": {
+            "title": "Principal Kind",
+            "type": "string"
+          },
+          "result_state": {
+            "title": "Result State",
+            "type": "string"
+          },
+          "test_id": {
+            "format": "uuid",
+            "title": "Test Id",
+            "type": "string"
+          },
+          "test_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Test Status"
+          }
+        },
+        "required": [
+          "command_id",
+          "namespace",
+          "form_id",
+          "form_slug",
+          "expected_version",
+          "principal_kind",
+          "principal_id",
+          "channel",
+          "issued_at",
+          "committed_at",
+          "expires_at",
+          "test_id",
+          "audit_id",
+          "dispatch_state",
+          "dispatch_at",
+          "test_status",
+          "failure_code",
+          "result_state"
+        ],
+        "title": "CommandReceipt",
+        "type": "object"
+      },
       "ComparisonSection": {
         "description": "Uma seção da definição numa comparação.",
         "properties": {
@@ -9864,6 +10031,18 @@
         "title": "ReceiptData",
         "type": "object"
       },
+      "ReceiptResponse": {
+        "properties": {
+          "receipt": {
+            "$ref": "#/components/schemas/CommandReceipt"
+          }
+        },
+        "required": [
+          "receipt"
+        ],
+        "title": "ReceiptResponse",
+        "type": "object"
+      },
       "Receiver": {
         "properties": {
           "active": {
@@ -12469,6 +12648,19 @@
             ],
             "title": "Answers"
           },
+          "command_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Identidade dt1 de get_form_draft_test_command_context, disponível antes do envio. Exige expected_version; não é segredo nem autorização.",
+            "title": "Command Id"
+          },
           "confirm": {
             "default": false,
             "description": "Precisa ser `true` nesta operação, que tem efeito difícil de desfazer ou fora do sistema: é o jeito de dizer que você sabe qual é. Sem ele, a resposta é `422 confirmation_required` e nada acontece.",
@@ -12489,6 +12681,12 @@
             ],
             "description": "Versão de get_form_draft.version (Draft.token). Se divergir do rascunho usado, 409 state_conflict antes de qualquer efeito. Ausente mantém compatibilidade.",
             "title": "Expected Version"
+          },
+          "replay_only": {
+            "default": false,
+            "description": "Somente consultar e comparar um comando já persistido, sem confirmação, criação ou despacho, inclusive quando a identidade não existe.",
+            "title": "Replay Only",
+            "type": "boolean"
           },
           "simulated_date": {
             "anyOf": [
@@ -13265,7 +13463,7 @@
   "info": {
     "description": "Tudo o que o painel admin faz, por chave de API com papel.\n\n**Autenticação.** Só `Authorization: Bearer <chave>`: a chave não vai na URL nem em cookie, e a\nsessão do painel não vale em nenhuma operação (ela só abre esta referência e o `openapi.json`). Cada\noperação diz o papel mínimo (`x-required-role`): `leitura` só consulta; `total` faz tudo o que o\nadmin logado faz. Toda escrita fica na auditoria em nome da chave (`chave:<nome>`).\n\n**Erros.** Um formato só, `{\"code\", \"detail\"}`, com `errors` (`field`, `message`, `line`) no `422`.\nA resposta nunca traz o valor recebido.\n\n**Operações marcadas.** As que apagam ou sobrescrevem algo difícil de desfazer (`x-destructive`) e\nas que mudam o que a lead vê, para onde os dados dela vão ou chamam um serviço de fora\n(`x-external-effect`) exigem `\"confirm\": true` em toda chamada (na query, em `DELETE`). Sem ele, a\nresposta é `422 confirmation_required` e nada acontece.\n\n**Limite de uso.** Cada chave tem um balde de chamadas por minuto; passou, `429 rate_limited` com\n`Retry-After`.\n\n**Fora das operações.** De qualquer endereço podem vir `404 not_found` (caminho sem operação),\n`405 method_not_allowed` (com `Allow`, os métodos do caminho), `413 payload_too_large`,\n`500 internal_error` e `503 unavailable` (banco fora do ar, com `Retry-After`).\n\n## MCP: usar a API pelo Claude\n\nO **MCP** (`python -m app.admin_mcp`) é um programa que roda no computador da operadora e deixa o\nClaude Desktop e o Claude Code chamarem esta API numa conversa. É um cliente HTTP desta API, só por\n`stdio` (não há MCP remoto), com a chave de quem o usa: nada novo sobe no servidor, e a autorização é\na da chave.\n\n**Configurar.** A tela [Configurar o MCP](/admin/mcp), no menu do painel, leva do zero ao servidor\nfuncionando: escolhe ou cria a chave (o segredo aparece uma vez), mostra a instalação, monta o comando\ndo Claude Code ou o bloco do Claude Desktop já com o endereço deste painel e confere a chave.\n\n**Ferramentas por papel.** Cada operação desta referência é uma ferramenta, com o `operationId` como\nnome, o `summary` e a `description` como texto, e os parâmetros e o corpo juntos num só objeto de\nentrada. Uma chave `leitura` recebe as operações de papel `leitura`; uma `total`, todas. Vêm além\ndelas algumas **compostas**, que juntam as chamadas de um fluxo (`attention_overview`,\n`diagnose_order`, `edit_form_draft`, `publish_form_with_review` e `connect_baserow_integration`) e só\nchamam ferramentas que a chave já tem. Para explorar, prefira `leitura`: são menos ferramentas.\n\n**Confirmações.** Uma operação marcada (`x-destructive` ou `x-external-effect`) não executa sozinha: o\nMCP mostra o efeito e o alvo e só chama a API com o sim da pessoa. O `confirm` que o modelo escrever\npor conta própria é ignorado.\n\n**Dado da lead.** Fica desligado: sem `GERADOR_MCP_LEAD_DATA=1`, o nome, o e-mail e as respostas das\nleads não chegam ao modelo, e o argumento `include_lead_data`, a busca `q` de `list_jobs` e a\n`download_job_pdf` não existem. Com a opção e uma chave `total` eles voltam, e o que o Claude ler vai\nao provedor do modelo.\n\n**Pastas.** PDFs e HTML vão para arquivo, em `GERADOR_MCP_DOWNLOAD_DIR` (ou numa pasta só do usuário\nno diretório temporário), e a ferramenta devolve o caminho, nunca os bytes. As imagens\n(`upload_asset` e `replace_asset`) só saem de `GERADOR_MCP_UPLOAD_DIR`, uma pasta que a pessoa\nescolhe e que não tem padrão. **A imagem enviada é servida sem login**: ponha nessa pasta só o que\npode ser público.\n\n**A chave.** Vai no ambiente do cliente (`GERADOR_API_URL` e `GERADOR_API_KEY`), nunca na linha de\ncomando do servidor, e só viaja no cabeçalho `Authorization: Bearer`: não aparece em retorno de\nferramenta, em erro nem em log.\n",
     "title": "Leadkit: API de admin",
-    "version": "1.86.0"
+    "version": "1.88.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -18733,6 +18931,266 @@
         "x-required-role": "leitura"
       }
     },
+    "/forms/{slug}/draft/test-command-context": {
+      "get": {
+        "description": "Emite identidade dt1 e revisão do rascunho sem gravar ou confirmar nada. Use antes da partida e conserve o ID para recuperar resposta perdida. Não é aprovação; a janela técnica fixa é de três dias. Não depende do relógio da cliente.",
+        "operationId": "get_form_draft_test_command_context",
+        "parameters": [
+          {
+            "description": "O endereço do formulário (`slug`), como `list_forms` o mostra.",
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "description": "O endereço do formulário (`slug`), como `list_forms` o mostra.",
+              "title": "Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandContext"
+                }
+              }
+            },
+            "description": "Identidade, revisão, relógio do servidor e limite exclusivo da criação."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Sem chave, chave desconhecida ou de segredo errado (`invalid_credentials`: a mesma resposta nos três casos), ou chave vencida (`key_expired`) ou revogada (`key_revoked`). Leva `WWW-Authenticate: Bearer`.",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Sempre `Bearer`: o único esquema que a API aceita.",
+                "schema": {
+                  "examples": [
+                    "Bearer"
+                  ],
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "O recurso do caminho não existe (`not_found`)."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "O corpo ou a definição não valem (`validation_failed`; `errors` traz o caminho de cada campo) ou falta `confirm: true` numa operação marcada (`confirmation_required`; nada acontece)."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Limite de uso da chave ou bloqueio por chave errada (`rate_limited`), ou pausa entre os testes pagos do rascunho (`test_paused`). Leva `Retry-After`.",
+            "headers": {
+              "Retry-After": {
+                "description": "Quantos segundos esperar antes de tentar de novo.",
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Namespace da instalação ausente (`unavailable`).",
+            "headers": {
+              "Retry-After": {
+                "description": "Quantos segundos esperar antes de tentar de novo.",
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "summary": "Obter identidade para um novo teste",
+        "tags": [
+          "Teste do rascunho"
+        ],
+        "x-required-role": "leitura"
+      }
+    },
+    "/forms/{slug}/draft/test-commands/{command_id}": {
+      "get": {
+        "description": "Recupera somente IDs e fatos seguros do comando da mesma autoridade, sem ler respostas, gerar ou reenfileirar. Recibo dt1 vence três dias após commit. Se o resultado sair antes, mantém o test_id e informa result_state=expired. Identidade antiga não volta a criar após descarte.",
+        "operationId": "get_form_draft_test_command",
+        "parameters": [
+          {
+            "description": "O endereço do formulário (`slug`), como `list_forms` o mostra.",
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "description": "O endereço do formulário (`slug`), como `list_forms` o mostra.",
+              "title": "Slug",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "command_id",
+            "required": true,
+            "schema": {
+              "title": "Command Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReceiptResponse"
+                }
+              }
+            },
+            "description": "Recibo seguro do teste original, ou expiração explícita."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Sem chave, chave desconhecida ou de segredo errado (`invalid_credentials`: a mesma resposta nos três casos), ou chave vencida (`key_expired`) ou revogada (`key_revoked`). Leva `WWW-Authenticate: Bearer`.",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "Sempre `Bearer`: o único esquema que a API aceita.",
+                "schema": {
+                  "examples": [
+                    "Bearer"
+                  ],
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Comando indisponível para esta autoridade (`command_forbidden`)."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Identidade ausente (`command_not_found`)."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Escopo incompatível (`command_conflict`)."
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Identidade expirada (`command_expired`)."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "O corpo ou a definição não valem (`validation_failed`; `errors` traz o caminho de cada campo) ou falta `confirm: true` numa operação marcada (`confirmation_required`; nada acontece)."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Limite de uso da chave ou bloqueio por chave errada (`rate_limited`), ou pausa entre os testes pagos do rascunho (`test_paused`). Leva `Retry-After`.",
+            "headers": {
+              "Retry-After": {
+                "description": "Quantos segundos esperar antes de tentar de novo.",
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "summary": "Consultar recibo de um teste por comando",
+        "tags": [
+          "Teste do rascunho"
+        ],
+        "x-required-role": "leitura"
+      }
+    },
     "/forms/{slug}/draft/tests": {
       "get": {
         "description": "A página do teste do rascunho do formulário `slug`, em dados: as respostas de exemplo do rascunho (`example_answers`), o prompt montado com elas na data de hoje (`prompt`) e os testes guardados, em `items` (o envelope das listas), o mais recente primeiro. Só os `keep_latest` mais recentes de cada formulário ficam guardados, por `keep_days` dias, então todos cabem na resposta: `next_cursor` é sempre nulo e a lista não tem `limit` nem `cursor`. Cada teste vem em resumo (estado, quem começou, quando, a data simulada e o código da falha); o resultado inteiro, com o plano, os tempos e os tokens, é `get_form_draft_test`. Se o prompt não monta (um rascunho que já não compila neste deploy), `prompt` é nulo e o motivo vem em `problems`, sem que a chamada falhe: os testes saem do mesmo jeito. Para achar o teste que está rodando, procure `finished: false`. Não grava nada nem chama o LLM.",
@@ -18834,7 +19292,7 @@
         "x-required-role": "leitura"
       },
       "post": {
-        "description": "Põe na fila um teste do rascunho do formulário `slug`, **uma chamada de verdade e paga ao LLM**, com `answers` (ou as respostas de exemplo do rascunho) e `simulated_date`, e dispara a task `draft_test` do worker, que recebe só o id do teste. O worker monta o prompt (o mesmo de `assemble_form_draft_prompt`), chama o LLM uma vez, com a rodada de reparo do adaptador, e gera o PDF de exemplo, **sem criar envio, pedido, plano, arquivo no armazenamento nem entrega**. A resposta é o teste na fila (`queued`) e `launched`; acompanhe com `get_form_draft_test` até `finished: true`. Um teste com sucesso do rascunho (ou de um rascunho que só mudou em partes que não vão ao LLM depois dele) é a prova que `publish_form_draft` pede. Tem efeito fora do sistema e custo, por isso exige `\"confirm\": true`; sem ele a resposta é `422 confirmation_required` e nada acontece. Só um teste roda por vez em cada formulário (`409 state_conflict`) e há uma pausa de 30 s depois de cada um (`429 test_paused`, com `Retry-After`): se a resposta se perder e você repetir a chamada, ela cai numa das duas, sem segundo teste. `launched: false` **não é erro**: o engine do Hatchet não recebeu o teste, que já terminou como `failed` com `failure_code` `not_started` (o LLM não foi chamado, nada foi gasto e não há pausa): tente de novo. Um teste que passa de 6 minutos na fila ou de 10 rodando conta como `interrupted` e libera a vez. A partida fica na auditoria (`form.draft.test`) em nome da chave, com o endereço, o id do teste, a versão do rascunho e a data simulada, nunca as respostas. Use respostas fictícias: elas ficam com o resultado, e qualquer chave o lê.",
+        "description": "Com `command_id` emitido por `get_form_draft_test_command_context`, exige revisão explícita e retorna `receipt`, sem conteúdo do teste. `replay_only:true` apenas compara os argumentos históricos e recupera o recibo, sem confirmação ou efeito, inclusive em miss. O MCP faz essa consulta antes de perguntar; somente command_not_found elegível permite seguir para a confirmação atual. Outra autoridade recebe command_forbidden; mudança de revisão/argumentos/escopo conflita. A janela dt1 fixa é de três dias para criar desde emissão e três dias para o recibo desde commit, sem renovação. Resultado removido aparece como expired; despacho uncertain não prova custo zero nem permite retry por replay. Identidade não autentica pessoa. O caminho sem identidade preserva o contrato legado descrito a seguir, inclusive queued/launched e revisão opcional. Põe na fila um teste do rascunho do formulário `slug`, **uma chamada de verdade e paga ao LLM**, com `answers` (ou as respostas de exemplo do rascunho) e `simulated_date`, e dispara a task `draft_test` do worker, que recebe só o id do teste. O worker monta o prompt (o mesmo de `assemble_form_draft_prompt`), chama o LLM uma vez, com a rodada de reparo do adaptador, e gera o PDF de exemplo, **sem criar envio, pedido, plano, arquivo no armazenamento nem entrega**. A resposta é o teste na fila (`queued`) e `launched`; acompanhe com `get_form_draft_test` até `finished: true`. Um teste com sucesso do rascunho (ou de um rascunho que só mudou em partes que não vão ao LLM depois dele) é a prova que `publish_form_draft` pede. Tem efeito fora do sistema e custo, por isso exige `\"confirm\": true`; sem ele a resposta é `422 confirmation_required` e nada acontece. Só um teste roda por vez em cada formulário (`409 state_conflict`) e há uma pausa de 30 s depois de cada um (`429 test_paused`, com `Retry-After`): se a resposta se perder e você repetir a chamada, ela cai numa das duas, sem segundo teste. `launched: false` **não é erro**: o engine do Hatchet não recebeu o teste, que já terminou como `failed` com `failure_code` `not_started` (o LLM não foi chamado, nada foi gasto e não há pausa): tente de novo. Um teste que passa de 6 minutos na fila ou de 10 rodando conta como `interrupted` e libera a vez. A partida fica na auditoria (`form.draft.test`) em nome da chave, com o endereço, o id do teste, a versão do rascunho e a data simulada, nunca as respostas. Use respostas fictícias: elas ficam com o resultado, e qualquer chave o lê.",
         "operationId": "start_form_draft_test",
         "parameters": [
           {
@@ -18864,11 +19322,19 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/StartedFormDraftTest"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/StartedFormDraftTest"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ReceiptResponse"
+                    }
+                  ],
+                  "title": "Response Start Form Draft Test"
                 }
               }
             },
-            "description": "O teste que entrou na fila, e se o engine do Hatchet recebeu o disparo."
+            "description": "Com command_id: recibo seguro do teste original. Sem identidade: teste e launched legados."
           },
           "401": {
             "content": {
@@ -18899,7 +19365,7 @@
                 }
               }
             },
-            "description": "A chave tem papel `leitura` e a operação pede `total` (`forbidden_role`)."
+            "description": "Autoridade incompatível com o comando (`command_forbidden`), sem revelar recibo."
           },
           "404": {
             "content": {
@@ -18909,7 +19375,7 @@
                 }
               }
             },
-            "description": "O formulário não existe (`not_found`)."
+            "description": "O formulário não existe (`not_found`) ou não há comando (`command_not_found`)."
           },
           "409": {
             "content": {
@@ -18920,6 +19386,16 @@
               }
             },
             "description": "Já há um teste deste formulário em andamento (`state_conflict`): espere ele terminar (`get_form_draft_test`, ou `list_form_draft_tests` para achá-lo). Nada é gravado nem disparado. É isto o que uma chamada repetida depois de uma resposta perdida recebe, sem segundo teste."
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Identidade dt1 expirada (`command_expired`); não será recriada."
           },
           "422": {
             "content": {
@@ -18960,6 +19436,7 @@
         "tags": [
           "Teste do rascunho"
         ],
+        "x-confirm-unless": "replay_only",
         "x-external-effect": true,
         "x-required-role": "total"
       }

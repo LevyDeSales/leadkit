@@ -24,6 +24,7 @@ def upgrade():
     op.create_table(
         "draft_test_commands",
         *columns,
+        sa.PrimaryKeyConstraint("command_id", name=op.f("pk_draft_test_commands")),
         sa.CheckConstraint(
             "principal_kind in ('admin', 'api_key')",
             name=op.f("ck_draft_test_commands_principal_kind"),

@@ -194,3 +194,53 @@ def test_eviction_preserves_receipt_without_answers_and_fixed_retention(deps, co
     with pytest.raises(commands.CommandError) as caught:
         commit(deps, context, clock=lambda: later)
     assert caught.value.code == "command_expired"
+
+
+def test_unrelated_integrity_failure_is_not_reinterpreted_as_replay(deps, context):
+    def invalid_state(mapper, connection, row):
+        row.dispatch_state = "invalid"
+
+    sa.event.listen(DraftTestCommand, "before_insert", invalid_state)
+    try:
+        with pytest.raises(sa.exc.IntegrityError):
+            commit(deps, context)
+    finally:
+        sa.event.remove(DraftTestCommand, "before_insert", invalid_state)
+
+
+@pytest.mark.parametrize("state", ["not_started", "uncertain", "exception", "completed_uncertain"])
+def test_dispatch_facts_do_not_restore_the_right_to_start(deps, context, state):
+    from app.admin.launching import DraftTestDispatch
+    from app.forms import draft_tests
+
+    sent = []
+
+    async def trigger(test_id):
+        sent.append(test_id)
+        if state == "exception":
+            raise RuntimeError("falha sintética de transporte")
+        if state == "completed_uncertain":
+            assert draft_tests.run(deps, test_id, now=lambda: NOW) == "succeeded"
+            return None
+        return DraftTestDispatch(state)
+
+    options = {
+        "actor": "testes",
+        "answers": None,
+        "day": "",
+        "now": NOW,
+        "command_id": context.command_id,
+        "expected_version": context.expected_version,
+        "principal": PRINCIPAL,
+        "confirmed": True,
+        "clock": lambda: NOW,
+    }
+    first = asyncio.run(actions.start(deps, trigger, SLUG, **options))
+    second = asyncio.run(actions.start(deps, trigger, SLUG, **options))
+    assert first.test_id == second.test_id
+    assert sent == [first.test_id]
+    assert second.dispatch_state == ("not_started" if state == "not_started" else "uncertain")
+    if state == "not_started":
+        assert second.failure_code == "not_started"
+    if state == "completed_uncertain":
+        assert second.test_status == "succeeded"

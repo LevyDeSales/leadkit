@@ -89,6 +89,16 @@ class ScoreFormDraftRequest(ApiInput):
 class StartFormDraftTestRequest(ConfirmedInput, DraftTestInput):
     """As respostas e a data do teste, e a confirmação da chamada paga ao LLM."""
 
+    command_id: str | None = Field(
+        default=None,
+        max_length=128,
+        description="Identidade dt1 de get_form_draft_test_command_context, disponível antes do envio. Exige expected_version; não é segredo nem autorização.",
+    )
+    replay_only: bool = Field(
+        default=False,
+        description="Somente consultar e comparar um comando já persistido, sem confirmação, criação ou despacho, inclusive quando a identidade não existe.",
+    )
+
 
 # --- o prompt montado ---------------------------------------------------------------------------
 

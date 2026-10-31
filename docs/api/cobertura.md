@@ -390,7 +390,7 @@ pede o teste do rascunho.
 
 ## Operações novas (sem rota no admin)
 
-Estas duas operações não vêm de uma ação que o admin tem: `get_current_api_key` diz quem está chamando
+As operações desta seção não vêm de uma ação que o admin tem: `get_current_api_key` diz quem está chamando
 (decisão 1 da ADR), e `list_audit_log` lê a auditoria, que o admin só mostra, por pedido, na linha do
 tempo. As três operações das chaves (`list_api_keys`, `create_api_key` e `revoke_api_key`) vêm da
 página delas e estão em ["Chaves de API"](#chaves-de-api).
@@ -399,6 +399,9 @@ página delas e estão em ["Chaves de API"](#chaves-de-api).
 | --- | --- | --- | --- | --- | --- |
 | `get_current_api_key` | `GET /me` | Quem está chamando: nome da chave, papel e validade; o primeiro teste de uma chave nova | leitura | — | feita · tests_app/test_admin_api_keys_api.py::test_me_says_who_is_calling_without_the_secret |
 | `list_audit_log` | `GET /audit-log` | Lê a auditoria (autor, ação, alvo, detalhes), filtrada por alvo, autor ou ação | leitura | — | feita · tests_app/test_admin_api_audit.py::test_list_audit_log_answers_an_envelope_of_the_newest_entries_first |
+| `get_form_draft_test_command_context` | `GET /forms/{slug}/draft/test-command-context` | Emite identidade de teste e revisão sem persistir nem aprovar; o admin usa o mesmo contexto internamente | leitura | — | feita · tests_app/test_admin_api_draft_tests.py::test_idempotent_command_recovery_and_conflict_without_reconfirmation |
+| `get_form_draft_test_command` | `GET /forms/{slug}/draft/test-commands/{command_id}` | Recupera recibo mínimo da mesma autoridade sem gerar nem reenfileirar | leitura | — | feita · tests_app/test_admin_api_draft_tests.py::test_idempotent_command_recovery_and_conflict_without_reconfirmation |
+
 
 **Como a auditoria se lê na API** (fase 8, referência técnica).
 `list_audit_log` lê a tabela `audit_log` inteira, da entrada mais nova para a mais antiga, com os filtros
@@ -619,3 +622,19 @@ mantém confirmação e versão esperada. `get_job` acrescenta detalhes somente 
 MCP continua derivado do OpenAPI e do opt-in existente. Provas focais:
 `tests_app/test_consent_methods.py`, `tests_app/test_admin_form_editor.py` e contratos
 existentes `test_admin_api_drafts.py`, `test_admin_mcp_server.py` e `test_admin_api_openapi.py`.
+
+## Comando de teste de rascunho e recibo
+
+`start_form_draft_test` aceita `command_id` dt1 e exige `expected_version` nesse caminho.
+`replay_only:true` usa `x-confirm-unless` para somente comparar o corpo com o comando histórico;
+mesmo sem vínculo não cria, audita criação ou despacha. Só a ausência real (`command_not_found`)
+pode preceder outra confirmação no MCP; `command_forbidden`, conflito, expiração e falha técnica
+não autorizam criação. O primeiro efeito sempre exige confirmação atual; o legado sem ID permanece.
+As operações GET acima correspondem ao contexto/recibo que a página de teste usa na URL da ação.
+
+Identidade é global na instalação e vinculada ao ID da chave (admin tem principal próprio),
+formulário, revisão e argumentos normalizados. A criação tem janela dt1 fixa de três dias desde emissão;
+o recibo vence três dias após commit. Consulta não renova prazos, não prova clique humano nem
+sucesso da IA. Resultado conserva sua política independente de cinco testes/três dias; se sair antes,
+o recibo devolve o ID original e `result_state: expired`. Após descarte técnico, ID antigo retorna
+`command_expired`; aumentar a retenção de resultado não ressuscita identidades v1.

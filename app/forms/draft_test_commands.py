@@ -13,6 +13,7 @@ from typing import Any
 import sqlalchemy as sa
 from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import load_only
 
 from app.forms import UnknownForm, draft_tests, drafts
 from app.forms.definition import Clock, DefinitionError, Problem, compile_definition
@@ -184,7 +185,18 @@ def _authorize(session, principal: Principal, now: datetime, *, writing=False):
 
 
 def _receipt(session, row: DraftTestCommand, now: datetime) -> CommandReceipt:
-    test = session.get(DraftTest, row.test_id)
+    test = session.scalar(
+        sa.select(DraftTest)
+        .options(
+            load_only(
+                DraftTest.status,
+                DraftTest.failure_code,
+                DraftTest.started_at,
+                DraftTest.claimed_at,
+            )
+        )
+        .where(DraftTest.id == row.test_id)
+    )
     retained = test is not None and now <= test.started_at + timedelta(days=draft_tests.TEST_DAYS)
     status, code = (test.status, test.failure_code) if retained else (None, None)
     if retained and draft_tests._overdue(test.status, test.started_at, test.claimed_at, now):
@@ -206,10 +218,10 @@ def _receipt(session, row: DraftTestCommand, now: datetime) -> CommandReceipt:
                 "expires_at",
                 "test_id",
                 "audit_id",
-                "dispatch_state",
                 "dispatch_at",
             )
         },
+        dispatch_state="uncertain" if row.dispatch_state == "dispatching" else row.dispatch_state,
         test_status=status,
         failure_code=code,
         result_state="retained" if retained else "expired",
@@ -311,7 +323,12 @@ def commit(deps, slug, identity, *, principal, actor, command, confirmed, channe
             session.flush()
             receipt = _receipt(session, row, now)
         return Committed(receipt, True)
-    except IntegrityError:
+    except IntegrityError as error:
+        if (
+            getattr(getattr(error.orig, "diag", None), "constraint_name", None)
+            != "pk_draft_test_commands"
+        ):
+            raise
         # A PK global arbitra a mesma identidade disputada até por formulários distintos.
         receipt = resolve(deps, slug, identity, principal=principal, command=command, now=clock())
         return Committed(receipt, False)

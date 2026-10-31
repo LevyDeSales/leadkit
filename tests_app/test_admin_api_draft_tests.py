@@ -246,7 +246,9 @@ def test_assemble_form_draft_prompt_gives_the_prompt_the_page_shows_with_the_exa
     writer: ApiClient, deps: Deps
 ) -> None:
     assert login(writer).status_code == 303
-    shown = text(section_of(writer.get(f"{PAGE_DRAFT}/tests"), "prompt-montado"))
+    shown = text(
+        section_of(writer.get(f"{PAGE_DRAFT}/tests", follow_redirects=True), "prompt-montado")
+    )
 
     response = writer.post(prompt_url(), json={})
 
@@ -596,7 +598,7 @@ def test_list_form_draft_tests_lists_the_same_tests_in_the_same_order_as_the_pag
         finish(deps, begin(deps, moment(clock)), clock)
         clock.advance(31)
     assert login(writer).status_code == 303
-    page = writer.get(TESTS_PAGE).text
+    page = writer.get(TESTS_PAGE, follow_redirects=True).text
 
     body = writer.get(list_url()).json()
 
@@ -1556,3 +1558,46 @@ def test_mcp_forwards_optional_expected_version_and_refuses_stale_origin(
         assert worker.queued == []
     finally:
         live.close()
+
+
+def test_idempotent_command_recovery_and_conflict_without_reconfirmation(writer, worker, clock):
+    root = API + f"/forms/{SLUG}/draft"
+    context = writer.get(url_of("get_form_draft_test_command_context", slug=SLUG))
+    assert context.status_code == 200
+    identity = context.json()
+    body = {"command_id": identity["command_id"], "expected_version": identity["expected_version"]}
+    miss = writer.post(root + "/tests", json={**body, "replay_only": True})
+    assert miss.status_code == 404 and miss.json()["code"] == "command_not_found"
+    first = writer.post(root + "/tests", json={**body, "confirm": True})
+    assert first.status_code == 200, first.text
+    test_id = first.json()["receipt"]["test_id"]
+    clock.advance(31)
+    again = writer.post(root + "/tests", json={**body, "replay_only": True})
+    assert again.status_code == 200, again.text
+    assert again.json()["receipt"]["test_id"] == test_id
+    assert len(worker.queued) == 1
+    conflict = writer.post(root + "/tests", json={**body, "answers": {}, "replay_only": True})
+    assert conflict.status_code == 409 and conflict.json()["code"] == "command_conflict"
+    queried = writer.get(
+        url_of("get_form_draft_test_command", slug=SLUG, command_id=identity["command_id"])
+    )
+    assert queried.status_code == 200 and queried.json()["receipt"]["test_id"] == test_id
+
+
+def test_command_recovery_denies_other_key_and_revoked_key(writer, reader, worker, deps):
+    context = writer.get(url_of("get_form_draft_test_command_context", slug=SLUG)).json()
+    body = {"command_id": context["command_id"], "expected_version": context["expected_version"]}
+    first = writer.post(start_url(), json={**body, "confirm": True})
+    assert first.status_code == 200
+    foreign = reader.get(
+        url_of("get_form_draft_test_command", slug=SLUG, command_id=context["command_id"])
+    )
+    assert foreign.status_code == 403 and foreign.json()["code"] == "command_forbidden"
+    # Outro principal total também não pode tratar o recibo como ausência elegível.
+    from app.admin.api import keys
+
+    with deps.sessions.begin() as session:
+        keys.revoke(session, writer.key.info.key_id, actor="testes", now=moment(writer.clock))
+    revoked = writer.post(start_url(), json={**body, "replay_only": True})
+    assert revoked.status_code == 401 and revoked.json()["code"] == "key_revoked"
+    assert len(worker.queued) == 1
