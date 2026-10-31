@@ -54,7 +54,8 @@ O mapeamento é por função, sem promessa de equivalência de desempenho entre 
 | Implementadora de mudança delimitada | `gpt-6.1-sol` | `medium` |
 | Revisora independente de alterações | `gpt-6.1-sol` | `high` |
 | Gestora de issues | `gpt-6.1-sol` | `medium` |
-| Guardiã: revisão de admin/API/MCP e serviços compartilhados | `gpt-6.1-sol` | `high` |
+| Guardiã da API: revisão de admin/API/MCP e serviços compartilhados | `gpt-6.1-sol` | `high` |
+| [Guardião da qualidade](guardiao-da-qualidade.md): revisão dos cinco eixos de qualidade | `gpt-6.1-sol` | `high` |
 | Operadora: execução de roteiro e tarefas mecânicas | `gpt-6-luna` | `medium` |
 
 Use exclusivamente Orca supervisionado, com no máximo três workers além da coordenadora;
@@ -66,7 +67,7 @@ Cada objetivo tem um Run, cada resultado uma Task e cada tentativa um Dispatch. 
 alvo, resultado, ownership, restrições, dependências, aceite observável e skills concretas.
 Nomeie `implement`/`implement-spec` para a autora e `tdd` quando houver mudança de comportamento;
 em instruções/documentação, use `writing-for-agents` e `research` quando houver fontes a investigar.
-Nomeie `code-review` para a revisão independente e a função de guardiã nos casos abaixo.
+Nomeie `code-review` para a revisão independente e os papéis de guardiã nos casos abaixo.
 Use só as workers necessárias, com ownership sem disputa; código isolado parte de `origin/develop`, preservando o
 worktree principal em `main`. Confira modelo e esforço efetivos no recibo antes de afirmar seleção.
 
@@ -78,8 +79,18 @@ precisam de destino explícito e os terminais devem ser liberados pelo ciclo Orc
 
 A revisora é independente da implementadora. Revisão sem escrita não transfere ownership;
 correções retornam por novo Dispatch. Mudança em `app/admin/`, `app/admin_mcp/`, `app/api/` ou
-serviços usados pelo admin exige guardiã, incluindo equivalência admin/API/MCP, segurança e LGPD.
+serviços usados pelo admin exige guardiã da API, incluindo equivalência admin/API/MCP, segurança e LGPD.
 Se a guardiã implementar correções, outra agente revisa essa implementação.
+
+Todo PR com código, testes, dependências, CI ou estrutura de módulos exige também o
+[guardião da qualidade](guardiao-da-qualidade.md), independente da autora, com parecer sobre
+cobertura, dependências, complexidade ciclomática, tamanho/responsabilidades e mutações.
+Cada eixo informa verificado, não aplicável com razão ou bloqueador. Documentação isolada
+valida texto, links e diff proporcionalmente, sem pytest ou mutações inúteis.
+A revisão da API/MCP permanece obrigatória em paralelo nos seus caminhos, em Tasks distintas
+respeitando o limite de três workers além da coordenadora. O papel permanente tem perfil e gatilho
+estáveis, sessões por Task e encerramento/liberação normais; não é daemon ocioso.
+A tabela seleciona modelo/esforço; preserve `codex` como nome de runtime.
 
 ## Integração e autorização
 
