@@ -1490,7 +1490,7 @@ def test_post_ddl_rehearsal_accepts_only_the_composed_schema_and_blocked_floor(t
     script = (
         """psql_compat() {
       case "$1" in
-        *version_num*) echo 0019_persisted_webhook_v2 ;;
+        *version_num*) echo 0020_draft_test_commands ;;
         *) echo 3:blocked ;;
       esac
     }
@@ -1542,8 +1542,7 @@ def test_composed_image_probe_is_isolated_and_checks_real_http_capabilities():
     assert 'body["release_id"] == state["release_id"]' in probe
     assert 'phase == "blocked"' in probe and "assert_contract(session, required=3)" in probe
     assert (
-        'validate_database(session.connection(), SIGNATURES) == "0019_persisted_webhook_v2"'
-        in probe
+        'validate_database(session.connection(), SIGNATURES) == "0020_draft_test_commands"' in probe
     )
 
 

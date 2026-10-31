@@ -31,6 +31,26 @@ As chamadas exigem uma chave de API própria, com o papel exigido pela operaçã
 
 Defina antes o que o assistente pode consultar ou alterar. Conectar não autoriza publicar formulário, liberar plano, trocar credenciais ou reenviar dados por decisão própria. Use uma credencial com o menor alcance necessário e confira os resultados no painel.
 
+Se o cliente informar recusa, cancelamento, resposta inválida ou falha de confirmação, a operação
+fica bloqueada. Isso não comprova que você clicou ou que uma janela foi exibida. Peça à
+administradora técnica para conferir a conexão antes de tentar novamente; não peça ao assistente
+para ignorar a confirmação. Se a mensagem disser que o envio à API pode ter ocorrido, confira o
+estado no painel antes de repetir. O [guia técnico de recuperação](../../app/README.md#confirmação-e-recuperação-do-mcp)
+detalha a diferença.
+
 Credenciais de encaminhamento, credenciais de fontes de eventos, segredo do Webhook e token do Baserow têm finalidades próprias. Uma chave administrativa não funciona como credencial do resolvedor de encaminhamento. Peça à administradora a credencial correta; não tente reutilizar o mesmo segredo em todas as áreas.
 
 Referências técnicas opcionais para a equipe: [referência da aplicação](../../app/README.md), [contratos de integração](../api/integracoes.md) e [contrato da jornada](../api/jornada.md). Elas complementam este guia e não são tarefas de implementação para a operadora.
+
+### Recuperar o teste pelo MCP
+
+Para testar o rascunho, peça ao assistente que obtenha o contexto de um novo teste e conserve a
+identidade antes de iniciar. A ferramenta pede a confirmação atual da cliente. Recusa,
+cancelamento, caixa desmarcada, resposta inválida e falha continuam bloqueando o primeiro efeito;
+um `confirm:true` escrito pelo assistente não comprova aceite humano.
+
+Após resposta perdida ou reinício, repetir a mesma ação consulta primeiro o comando histórico,
+sem pedir novo aceite nem despachar outro teste. Também é possível consultar o recibo pela
+identidade. O recibo contém somente identificadores e estados, sem respostas, prompt ou plano.
+Se houver conflito, falta de permissão, identidade expirada ou falha técnica, o assistente deve
+parar e explicar o estado. Outra execução requer nova identidade e nova confirmação.

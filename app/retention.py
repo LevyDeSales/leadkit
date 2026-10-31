@@ -58,6 +58,7 @@ from app.models import (
     CaptureReceipt,
     Delivery,
     DraftTest,
+    DraftTestCommand,
     Form,
     IntegrationSync,
     Job,
@@ -230,6 +231,8 @@ def due_for_form(
 def _purge_draft_tests(deps: Deps, now: datetime, report: RetentionReport) -> None:
     """Os testes do rascunho começados há mais de `TEST_DAYS` dias, com tudo o que guardam."""
     with deps.sessions.begin() as session:
+        # O prazo técnico dt1 não encurta nem prolonga a política independente do resultado.
+        session.execute(sa.delete(DraftTestCommand).where(DraftTestCommand.expires_at <= now))
         deleted = session.execute(
             sa.delete(DraftTest).where(DraftTest.started_at < now - timedelta(days=TEST_DAYS))
         )

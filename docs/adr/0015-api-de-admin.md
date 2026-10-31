@@ -57,3 +57,22 @@ cópias remotas. Replay de apagamento já aplicado não registra nova auditoria.
 a referência com CASCADE permite que a retenção anterior continue apagando filhos, sem adicionar
 locks de Job/Lead à ingestão. A migration0018 é aditiva sob runtime2; o migrador anterior continua
 recusando o head desconhecido, distinto da compatibilidade do runtime.
+
+## Comando idempotente de teste de rascunho
+
+O fluxo opt-in de `start_form_draft_test` usa identidade dt1 emitida sem persistência pelo
+contexto específico do teste. Tipo/versão, namespace persistido existente, formulário UUID,
+revisão obrigatória, entrada canônica e principal técnico (`api_key:key_id`, distinto do admin)
+ficam vinculados a teste e auditoria na mesma transação. Somente a vencedora despacha após commit.
+Identidade não é segredo, credencial, assinatura ou comprovação de pessoa autenticada.
+
+`replay_only:true` na mesma operação é somente leitura via `x-confirm-unless`: compara argumentos
+históricos e nunca cria ou reenfileira, inclusive em miss. MCP consulta antes de elicitation e
+só `command_not_found` elegível permite seguir para a confirmação atual; autoridade incompatível
+recebe erro opaco distinto. Negativas e a compatibilidade unsupported das #61/#63 permanecem.
+O caminho legado sem identidade conserva contrato e revisão opcional, sem promessa de replay durável.
+
+A janela dt1 é fixa: criação antes de emissão + três dias, timestamp futuro recusado e relógio
+revalidado após locks; recibo mínimo antes de commit + três dias, sem renovação. Nenhum GET cria
+namespace ou autorização. Despacho incerto não prova ausência de custo; replay não dá direito a
+reenvio. Recibo mostra fatos recebidos da cliente, persistência e execução como estados separados.

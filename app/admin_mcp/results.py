@@ -26,6 +26,7 @@ from typing import Any
 
 from app.admin_mcp.catalog import ToolSpec
 from app.admin_mcp.client import ApiResponse
+from app.admin_mcp.confirmation import ConfirmationOutcome
 from app.admin_mcp.redaction import Redactor
 
 # O teto do texto que volta ao modelo. Uma resposta maior é cortada, e o corte é dito.
@@ -38,12 +39,13 @@ EXTENSIONS = {"application/pdf": ".pdf", "text/html": ".html"}
 class ToolOutput:
     """O resultado de uma chamada: o texto e se é uma falha.
 
-    Os outros três campos são para as ferramentas compostas (`compose.py`), que juntam várias
+    Os outros campos são para as ferramentas compostas (`compose.py`), que juntam várias
     chamadas e precisam saber o que cada uma deu sem ler o texto: `status` é o status HTTP da
     resposta da API (`None` quando nada foi enviado: argumento que não vale, pergunta recusada, ou a
     confirmação ainda por vir); `data` é o JSON da resposta (o corpo do erro, numa recusa), já sem a
     chave; e `awaiting` diz que a chamada **parou à espera da confirmação da pessoa**: nada foi
-    executado. Ficam fora da igualdade: o que se compara é o texto e se falhou.
+    executado. `confirmation` preserva o motivo de um bloqueio antes do efeito, sem analisar texto.
+    Ficam fora da igualdade: o que se compara é o texto e se falhou.
     """
 
     text: str
@@ -51,18 +53,29 @@ class ToolOutput:
     status: int | None = field(default=None, compare=False)
     data: Any = field(default=None, compare=False, repr=False)
     awaiting: bool = field(default=False, compare=False)
+    confirmation: ConfirmationOutcome | None = field(default=None, compare=False)
 
 
 def render(
-    spec: ToolSpec, response: ApiResponse, *, redact: Redactor, download_dir: Path | None
+    spec: ToolSpec,
+    response: ApiResponse,
+    *,
+    redact: Redactor,
+    download_dir: Path | None,
+    simulated: bool = False,
 ) -> ToolOutput:
     """O retorno de `spec` para a resposta da API."""
     status = response.status
     if not response.ok:
         failure = redact.tree(_payload(response))
-        return ToolOutput(
-            redact(render_error(response)), is_error=True, status=status, data=failure
-        )
+        uncertain = not spec.read_only and not simulated and not known_refusal(status, failure)
+        message = render_error(response, uncertain=uncertain)
+        if uncertain:
+            message += (
+                "\nNão sei se a operação chegou a gravar: confira o estado com a ferramenta de leitura "
+                "antes de repetir."
+            )
+        return ToolOutput(redact(message), is_error=True, status=status, data=failure)
     if _is_json(response.media_type):
         return ToolOutput(
             redact(_json_text(response)), status=status, data=redact.tree(_payload(response))
@@ -72,14 +85,24 @@ def render(
     return ToolOutput(redact(save_download(spec, response, download_dir)), status=status)
 
 
-def render_error(response: ApiResponse) -> str:
+def known_refusal(status: int, data: Any) -> bool:
+    """A API recusou sem gravar, conforme o contrato: 4xx ou `502 upstream_failed`.
+
+    Outros erros HTTP não comprovam ausência de efeito, mesmo quando trazem corpo de erro.
+    """
+    code = data.get("code") if isinstance(data, dict) else None
+    return 400 <= status < 500 or (status == 502 and code == "upstream_failed")
+
+
+def render_error(response: ApiResponse, *, uncertain: bool = False) -> str:
     """O erro da API em português. Uma resposta que não é o erro dela (um proxy, uma página) vira só o
     status: o corpo dela não é repetido."""
     payload = _payload(response)
     if not isinstance(payload, dict) or "code" not in payload:
         return f"A API respondeu {response.status}, sem o corpo de erro esperado."
+    action = "respondeu" if uncertain else "recusou"
     lines = [
-        f"A API recusou ({response.status} {payload['code']}): {payload.get('detail', '')}".rstrip()
+        f"A API {action} ({response.status} {payload['code']}): {payload.get('detail', '')}".rstrip()
     ]
     errors = payload.get("errors") or []
     for item in errors[:MAX_LISTED]:
@@ -98,7 +121,11 @@ def render_error(response: ApiResponse) -> str:
             "que mudou e repita com essa versão em `expected_version`."
         )
     if response.retry_after:
-        lines.append(f"Tente de novo depois de {response.retry_after} s.")
+        lines.append(
+            f"Após conferir o estado, aguarde {response.retry_after} s antes de uma nova tentativa."
+            if uncertain
+            else f"Tente de novo depois de {response.retry_after} s."
+        )
     return "\n".join(lines)
 
 

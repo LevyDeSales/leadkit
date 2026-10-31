@@ -53,6 +53,11 @@ NO_OPERATION = "Não há operação neste endereço."
 # A tabela de erros da ADR 0015 ("Erros"): o código e o status dele. O `method_not_allowed` (405) é
 # do roteador, não de uma operação.
 STATUS_OF: dict[str, int] = {
+    "command_not_found": 404,
+    "command_forbidden": 403,
+    "command_conflict": 409,
+    "command_expired": 410,
+    "command_in_future": 422,
     "invalid_credentials": 401,
     "key_expired": 401,
     "key_revoked": 401,

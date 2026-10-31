@@ -17,8 +17,44 @@ def visual_answers(answers):
     return {"_simulation_" + name: value for name, value in answers.items()}
 
 
+@pytest.mark.parametrize("invalid", [False, True])
+def test_capture_validation_has_no_paid_command_identity(client, deps, invalid):
+    from fastapi.testclient import TestClient
+
+    from app.forms import drafts
+
+    slug = drafts.create(
+        deps, title="Pesquisa sintética", slug="local-capture", actor="operadora", generation="none"
+    )
+    path = f"/admin/forms/{slug}/draft"
+    page = client.get(path + "/tests")
+    assert page.status_code == 200
+    assert 'name="command_id"' not in page.text
+    with deps.sessions() as session:
+        answers = drafts.load(session, slug).document["examples"]["answers"]
+    if invalid:
+        answers["email"] = "invalido"
+    http = TestClient(client.app, follow_redirects=False, raise_server_exceptions=False)
+    http.cookies.update(client.cookies)
+    response = post(
+        http,
+        path + "/capture-test",
+        input_mode="fields",
+        expected=hidden(page.text, "expected"),
+        command_id="identidade-ignorada-na-captura",
+        **visual_answers(answers),
+    )
+    assert response.status_code == (422 if invalid else 200)
+    assert 'name="command_id"' not in response.text
+    if invalid:
+        assert 'value="invalido"' in response.text
+        assert 'aria-invalid="true"' in response.text
+
+
 def test_simulation_renders_saved_fields_and_preserves_invalid_values(client):
-    page = client.get(f"{DRAFT}/tests")
+    page = client.get(f"{DRAFT}/tests", follow_redirects=True)
+    assert page.history[0].status_code == 303
+    assert "command_id=" in str(page.url)
     assert 'name="_simulation_escritorio"' in page.text
     assert "Rascunho salvo" in page.text
     expected = hidden(page.text, "expected")
@@ -77,7 +113,7 @@ def test_fields_and_json_produce_same_prompt_for_all_six_types(client, deps, wor
         "telefone": "+55 11 99999-0000",
         "canais": ["email", "site"],
     }
-    page = client.get(f"{DRAFT}/tests")
+    page = client.get(f"{DRAFT}/tests", follow_redirects=True)
     for kind in ('type="email"', 'type="tel"', 'type="checkbox"', "<textarea"):
         assert kind in page.text
     fields = post(
@@ -106,7 +142,7 @@ def test_fields_and_json_produce_same_prompt_for_all_six_types(client, deps, wor
 
 
 def test_visual_empty_answers_never_load_examples_and_json_empty_object_is_explicit(client):
-    expected = hidden(client.get(f"{DRAFT}/tests").text, "expected")
+    expected = hidden(client.get(f"{DRAFT}/tests", follow_redirects=True).text, "expected")
     empty = post(client, f"{DRAFT}/prompt", input_mode="fields", expected=expected)
     assert empty.status_code == 422
     empty_json = post(client, f"{DRAFT}/prompt", answers="{}")
@@ -123,7 +159,7 @@ def test_simulation_conditions_remove_hidden_questions_and_refuse_hidden_options
 
     stored.import_definition(deps, DEFINITION_TEXT, actor="testes")
     path = f"/admin/forms/{SLUG}/draft"
-    expected = hidden(client.get(f"{path}/tests").text, "expected")
+    expected = hidden(client.get(f"{path}/tests", follow_redirects=True).text, "expected")
     accepted = post(
         client,
         f"{path}/prompt",
@@ -158,7 +194,7 @@ def test_only_confirmed_visual_generation_enqueues_and_snapshot_matches(client, 
 
     from app.admin.actions import draft_tests
 
-    expected = hidden(client.get(f"{DRAFT}/tests").text, "expected")
+    expected = hidden(client.get(f"{DRAFT}/tests", follow_redirects=True).text, "expected")
     before = counts(deps)
     for action in ("prompt", "score"):
         assert (
@@ -263,7 +299,7 @@ def test_capture_visual_preserves_errors_and_refuses_stale_origin(client, deps, 
 
 
 def test_invalid_simulated_date_has_navigable_error_and_keeps_input(client):
-    expected = hidden(client.get(f"{DRAFT}/tests").text, "expected")
+    expected = hidden(client.get(f"{DRAFT}/tests", follow_redirects=True).text, "expected")
     response = post(
         client,
         f"{DRAFT}/prompt",
@@ -304,7 +340,7 @@ def test_visual_answer_names_cannot_override_admin_controls(client, deps, worker
     document["examples"]["answers"].update(special)
     draft = drafts.replace_document(deps, SLUG, document, actor="testes", expected=draft.token)
     fields = {"_simulation_" + name: value for name, value in {**EXAMPLE, **special}.items()}
-    page = client.get(f"{DRAFT}/tests")
+    page = client.get(f"{DRAFT}/tests", follow_redirects=True)
     for name in special:
         assert 'name="_simulation_' + name + '"' in page.text
     # A resposta confirm=on não autoriza a chamada paga, nem toma o lugar do checkbox administrativo.

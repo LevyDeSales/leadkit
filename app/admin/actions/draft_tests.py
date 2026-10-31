@@ -32,7 +32,8 @@ from fastapi.concurrency import run_in_threadpool
 from app.admin import launching
 from app.deps import Deps
 from app.forms import UnknownForm, draft_tests, drafts
-from app.forms.definition import DefinitionError, Problem
+from app.forms import draft_test_commands as commands
+from app.forms.definition import Clock, DefinitionError, Problem
 
 logger = logging.getLogger(__name__)
 
@@ -169,7 +170,14 @@ async def start(
     day: str,
     now: datetime,
     expected_version: str | None = None,
-) -> Started:
+    command_id: str | None = None,
+    principal: commands.Principal | None = None,
+    confirmed: bool = False,
+    channel: str = "admin",
+    replay_only: bool = False,
+    clock: Clock | None = None,
+    input_kind: str = "json",
+) -> Started | commands.CommandReceipt:
     """Põe na fila o teste do rascunho salvo do formulário `slug`, em nome de `actor`, e dispara a
     task `draft_test` (`test_trigger` é o `app.state.test_trigger`). `answers` são as respostas
     (texto JSON da página ou objeto da API; `None`, as de exemplo do rascunho) e `day`, a data
@@ -178,6 +186,58 @@ async def start(
     Levanta `UnknownForm`, `DefinitionError` (as respostas, a data ou o rascunho que não compila) e
     `DraftTestRefused` (um teste em andamento, ou a pausa depois do último); nada é gravado nem
     disparado nesses casos."""
+    if command_id is not None or replay_only:
+        if not command_id or principal is None:
+            raise commands.CommandError("validation_failed")
+        command = commands.CommandInput(expected_version or "", answers, day, input_kind)
+        current = clock or (lambda: now)
+        if replay_only:
+            return await run_in_threadpool(
+                commands.resolve,
+                deps,
+                slug,
+                command_id,
+                principal=principal,
+                command=command,
+                now=current(),
+            )
+        committed = await run_in_threadpool(
+            commands.commit,
+            deps,
+            slug,
+            command_id,
+            principal=principal,
+            actor=actor,
+            command=command,
+            confirmed=confirmed,
+            channel=channel,
+            clock=current,
+        )
+        if committed.created and await run_in_threadpool(
+            commands.begin_dispatch, deps, command_id, now=current()
+        ):
+            state = "uncertain"
+            try:
+                dispatched = await test_trigger(committed.receipt.test_id)
+                if isinstance(dispatched, launching.DraftTestDispatch):
+                    state = dispatched.state
+                elif dispatched:
+                    state = "enqueued"
+            except Exception:  # noqa: BLE001 — falha de transporte conserva a execução incerta.
+                # Sem texto do provedor e sem repetir um envio possivelmente recebido.
+                logger.warning("despacho do teste incerto test=%s", committed.receipt.test_id)
+            await run_in_threadpool(commands.record_dispatch, deps, command_id, state)
+            if state == "not_started":
+                await run_in_threadpool(draft_tests.not_started, deps, committed.receipt.test_id)
+        return await run_in_threadpool(
+            commands.resolve,
+            deps,
+            slug,
+            command_id,
+            principal=principal,
+            command=command,
+            now=current(),
+        )
     test_id = await run_in_threadpool(
         draft_tests.start,
         deps,

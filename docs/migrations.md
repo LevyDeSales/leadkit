@@ -188,3 +188,13 @@ que recusa head desconhecido. Siga o [roteiro Swarm autoritativo](../deploy/swar
 para pausa, atestação e recuperação. Não faça downgrade destrutivo nem restaure backup perdendo
 submissões confirmadas. Correção de configuração requer retry explícito da entrega, com revisão
 esperada do mesmo destino. Remover uma conexão apaga suas intenções por cascade, sem apagar dados já enviados ao receptor.
+
+
+## Comandos de teste de rascunho (0020)
+
+Após0019, a0020 acrescenta somente a tabela técnica `draft_test_commands` e seus índices/constraints.
+Não altera piso de runtime, tabelas anteriores ou seus gatilhos. O runtime anterior continua criando,
+processando e removendo testes legados; seu migrador ainda recusa o head desconhecido por contrato.
+A remoção do resultado não depende do vínculo: não há FK bloqueante para o teste. O purge novo
+limpa vínculos técnicos em prazo próprio, sem apagar resultados antes da política deles.
+Não use stamp para contornar o guard; siga a cadeia e confira a assinatura estrutural0020.

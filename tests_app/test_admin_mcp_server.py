@@ -26,6 +26,7 @@ from admin_mcp_support import answer, body_of, error, new_key, operation_ids, op
 from admin_mcp_world import World
 
 from app.admin_mcp import __main__ as entry
+from app.admin_mcp.confirmation import ConfirmationOutcome
 from app.admin_mcp.discovery import StartupError
 from app.admin_mcp.redaction import MASK, Redactor
 
@@ -91,7 +92,7 @@ def test_the_server_lists_one_tool_per_operation_the_key_allows(world: World) ->
         "get_job_plan_projection",
         "render_job_participant_preview",
     }
-    assert len(listed.tools) == 83
+    assert len(listed.tools) == 85
     for tool in listed.tools:
         spec = world.tools[tool.name]
         assert tool.description == spec.description and tool.title == spec.summary
@@ -123,7 +124,7 @@ def test_a_leitura_key_gets_only_the_leitura_tools(tmp_path: Path) -> None:
 
     listed = session_run(reader, lambda session: session.list_tools())
 
-    assert len(listed.tools) == 38
+    assert len(listed.tools) == 40
     assert all(tool.annotations.readOnlyHint for tool in listed.tools)
     assert {"publish_form_draft", "upload_asset", "download_job_pdf"}.isdisjoint(
         tool.name for tool in listed.tools
@@ -386,7 +387,10 @@ def test_a_question_that_fails_is_not_a_yes() -> None:
         async def elicit_form(self, **_: Any) -> None:
             raise RuntimeError("o cliente caiu")
 
-    assert asyncio.run(server_module.SessionPrompter(Broken(), 1).ask("Confirma?")) is None
+    assert (
+        asyncio.run(server_module.SessionPrompter(Broken(), 1).ask("Confirma?"))
+        is ConfirmationOutcome.UNAVAILABLE
+    )
 
 
 # --- o ponto de entrada --------------------------------------------------------------------------

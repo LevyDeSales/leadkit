@@ -20,8 +20,9 @@
     <section class="box" id="respostas" aria-labelledby="resp-titulo">
       <h2 id="resp-titulo">Respostas e data</h2>
       <p class="muted">O teste usa o rascunho salvo. Use respostas fictícias: elas ficam guardadas com o resultado do teste por poucos dias.</p>
-      <form class="form-stack" novalidate data-simulation method="post" action="{{ page.nav.tests_url }}">
+      <form class="form-stack" novalidate data-simulation method="post" action="{{ page.nav.tests_url }}{% if command_id %}?command_id={{ command_id }}{% endif %}">
         <input type="hidden" name="csrf_token" value="{{ session.csrf_token }}">
+        {% if command_id %}<input type="hidden" name="command_id" value="{{ command_id }}">{% endif %}
         {% set simulation_slug = page.nav.slug %}
         {% set simulation_answers = page.answers %}
         {% include "admin/_simulation_fields.html" %}

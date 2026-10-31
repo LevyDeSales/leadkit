@@ -85,6 +85,46 @@ O venv de uma instalação editável do MCP aponta para o clone. Mantenha a past
 na versão escolhida; mover ou apagar a pasta quebra a instalação. O campo de Python aceita um venv
 em outro disco. As datas de validade da chave na página usam o horário de Brasília.
 
+### Confirmação e recuperação do MCP
+
+O formulário de confirmação exige `accept` com `confirmar` booleano `true`. Caixa desmarcada,
+recusa (`decline`), cancelamento (`cancel`), resposta incompleta/inválida, indisponibilidade e
+timeout bloqueiam a operação e apagam todas as confirmações pendentes da mesma chamada, inclusive
+as adicionais. `confirm: true` nos argumentos não contorna esses resultados. A mensagem descreve
+o que o cliente informou; não comprova que uma janela apareceu ou que a operadora interagiu.
+
+Somente cliente inicializado sem suporte declarado a formulário recebe o fluxo de duas etapas:
+primeiro a descrição, depois a chamada idêntica com confirmação explícita. `elicitation: {}`
+continua compatível com formulário; suporte apenas a URL não o substitui. Sessão não inicializada
+e falha técnica não habilitam duas etapas. A pendência vale por 15 minutos e para uma execução,
+vinculada a operação, argumentos, revisão, contexto composto e bytes do arquivo. Com formulário,
+as confirmações adicionais são pedidas de novo e não herdam flags de um fallback anterior.
+
+A chamada fica reservada antes da espera assíncrona, inclusive durante confirmações adicionais.
+Uma repetição idêntica concorrente informa que já há tentativa em andamento: aguarde o resultado e
+confira o estado antes de repetir. Erro ou cancelamento libera a reserva local e invalida a
+confirmação, inclusive quando a pergunta própria de uma composta é interrompida; não autoriza retry
+automático. Respostas HTTP incertas (como 500 ou 502 sem `upstream_failed`) também invalidam a
+pendência inteira e exigem conferir o estado antes de uma nova apresentação e confirmação.
+Recusas conhecidas sem efeito (4xx e `502 upstream_failed`, incluindo `409 version_conflict` e
+`422 validation_failed`) mantêm a recuperação por nova chamada explicitamente confirmada.
+A reserva pertence à sessão no processo MCP; não é um lock distribuído nem garante execução
+exatamente uma vez na API remota. Leituras, simulações e argumentos diferentes seguem independentes.
+
+Após falha de confirmação, confira a conexão do cliente e faça uma nova tentativa explícita.
+Se a falha ocorreu **no envio à API**, confira o estado antes de repetir: a escrita pode ter
+acontecido. Essa distinção também aparece nas ferramentas compostas.
+
+O log `mcp_confirmation` vai a stderr e usa uma allowlist: identificador efêmero de tentativa,
+desfecho, ação categorizada, tipos/presença dos campos, suporte anunciado, categoria de falha e
+versões observáveis. `protocol_requested` é a versão oferecida pelo cliente; `protocol_negotiated`
+fica `unknown`, pois o SDK atual não expõe esse resultado na sessão. `client_reported_version`
+é apenas a versão numérica informada pelo cliente; `sdk_package_version` e `server_package_version`
+identificam distribuições instaladas, sem afirmar o build do processo. Valores não reconhecidos
+ficam `unknown`. Não registra perguntas, argumentos, caminhos, conteúdo das respostas,
+`clientInfo` bruto, texto de exceções ou segredos. O servidor não observa a renderização da UI;
+diagnosticar uma janela ausente exige evidência própria do cliente efetivamente usado.
+
 ## Webhook
 
 O corpo JSON é assinado com HMAC-SHA256; os nomes dos headers `X-MCC-Event`, `X-MCC-Timestamp` e
@@ -251,3 +291,25 @@ captura e PDF. O envelope2 e o emissor da instalação ficam fixados no banco no
 Hatchet recebe só IDs/contagens. A cópia das respostas na outbox é removida pela cascata da
 submissão e não entra em consultas administrativas de estado. Veja o [contrato](../docs/api/integracoes.md)
 e a [adoção do piso3](../deploy/swarm/README.md). A opção fica desligada por padrão.
+
+### Comando idempotente do teste de rascunho
+
+Antes de `start_form_draft_test`, `get_form_draft_test_command_context(slug)` fornece `command_id`,
+`expected_version`, relógio e limite da criação, sem efeito persistido. Conserve o ID antes do POST.
+Envie-o com a revisão e a confirmação atual; respostas/data omitidas são fixadas na primeira criação.
+O resultado identificado é `receipt`, com IDs seguros, principal da chave, revisão, instantes,
+`dispatch_state`, `test_status` e `result_state`. O legado sem command_id conserva sua resposta anterior.
+
+MCP faz preflight com o mesmo corpo e `replay_only:true`, dispensado de confirmação pelo contrato
+existente. Esse modo é leitura mesmo quando o comando não existe. Somente `404 command_not_found`
+permite perguntar e tentar a primeira criação; `403 command_forbidden`, `409 command_conflict`,
+`410 command_expired`, `422 command_in_future` e falhas de transporte não seguem para efeito.
+Consulta direta usa `get_form_draft_test_command(slug, command_id)`. A identidade não autentica e
+recibos de outra chave/admin não são transferidos por paridade.
+
+A janela v1 fixa é de três dias para criar desde emissão e três dias para consultar desde commit;
+timestamps futuros são recusados. Os prazos não renovam aprovação. Após descarte, identidade antiga
+nunca vira novo teste, mesmo com mudança de retenção dos resultados. `uncertain` indica ausência
+de confirmação do despacho, sem afirmar custo zero; consulta/replay jamais reenfileiram. Para nova
+execução, obtenha outra identidade e outra confirmação. Native decline/cancel/falso/inválido/falha
+continuam bloqueando, e a compatibilidade unsupported não comprova clique humano.

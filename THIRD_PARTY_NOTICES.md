@@ -56,8 +56,8 @@ expressas pelos respectivos arquivos, sem relicenciá-los como MIT.
 | [attrs](https://pypi.org/pypi/attrs/26.1.0/json) | 26.1.0 | MIT |
 | [boto3](https://pypi.org/pypi/boto3/1.43.113/json) | 1.43.113 | Apache-2.0 |
 | [botocore](https://pypi.org/pypi/botocore/1.43.113/json) | 1.43.113 | Apache-2.0 |
-| [brotli](https://pypi.org/pypi/brotli/1.2.0/json) | 1.2.0 | MIT |
-| [brotlicffi](https://pypi.org/pypi/brotlicffi/1.2.0.2/json) | 1.2.0.2 | MIT |
+| [brotli](https://pypi.org/pypi/brotli/1.2.1/json) | 1.2.1 | MIT |
+| [brotlicffi](https://pypi.org/pypi/brotlicffi/1.2.1.0/json) | 1.2.1.0 | MIT |
 | [certifi](https://pypi.org/pypi/certifi/2026.7.22/json) | 2026.7.22 | MPL-2.0 |
 | [cffi](https://pypi.org/pypi/cffi/2.1.1/json) | 2.1.1 | MIT-0 |
 | [charset-normalizer](https://pypi.org/pypi/charset-normalizer/3.5.2/json) | 3.5.2 | MIT |
@@ -115,7 +115,7 @@ expressas pelos respectivos arquivos, sem relicenciá-los como MIT.
 | [pydyf](https://pypi.org/pypi/pydyf/0.13.0/json) | 0.13.0 | BSD License |
 | [pygments](https://pypi.org/pypi/pygments/2.21.0/json) | 2.21.0 | BSD-2-Clause |
 | [pyjwt](https://pypi.org/pypi/pyjwt/2.15.1/json) | 2.15.1 | MIT |
-| [pypdf](https://pypi.org/pypi/pypdf/6.20.1/json) | 6.20.1 | BSD-3-Clause |
+| [pypdf](https://pypi.org/pypi/pypdf/6.21.2/json) | 6.21.2 | BSD-3-Clause |
 | [pyphen](https://pypi.org/pypi/pyphen/0.18.1/json) | 0.18.1 | GNU General Public License v2 or later (GPLv2+); GNU Lesser General Public License v2 or later (LGPLv2+); Mozilla Public License 1.1 (MPL 1.1) |
 | [pytest](https://pypi.org/pypi/pytest/9.1.1/json) | 9.1.1 | MIT |
 | [pytest-xdist](https://pypi.org/pypi/pytest-xdist/3.8.0/json) | 3.8.0 | MIT |
@@ -131,7 +131,7 @@ expressas pelos respectivos arquivos, sem relicenciá-los como MIT.
 | [rpds-py](https://pypi.org/pypi/rpds-py/2026.6.3/json) | 2026.6.3 | MIT |
 | [ruff](https://pypi.org/pypi/ruff/0.17.0/json) | 0.17.0 | MIT |
 | [s3transfer](https://pypi.org/pypi/s3transfer/0.19.2/json) | 0.19.2 | Apache License 2.0 |
-| [setuptools](https://pypi.org/pypi/setuptools/84.0.0/json) | 84.0.0 | MIT |
+| [setuptools](https://pypi.org/pypi/setuptools/84.1.0/json) | 84.1.0 | MIT |
 | [six](https://pypi.org/pypi/six/1.17.0/json) | 1.17.0 | MIT |
 | [sniffio](https://pypi.org/pypi/sniffio/1.3.1/json) | 1.3.1 | MIT OR Apache-2.0 |
 | [sqlalchemy](https://pypi.org/pypi/sqlalchemy/2.1.4/json) | 2.1.4 | MIT |

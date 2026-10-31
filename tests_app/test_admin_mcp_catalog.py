@@ -316,7 +316,14 @@ def test_the_dry_run_exemption_comes_from_the_contract() -> None:
     assert publish.needs_confirmation({"expected_version": "3"})
     assert publish.needs_confirmation({"dry_run": False})
     assert not publish.needs_confirmation({"dry_run": True})
-    assert [name for name, tool in TOOLS.items() if tool.confirm_unless] == ["publish_form_draft"]
+    assert {name for name, tool in TOOLS.items() if tool.confirm_unless} == {
+        "publish_form_draft",
+        "start_form_draft_test",
+    }
+    start = TOOLS["start_form_draft_test"]
+    assert start.confirm_unless == "replay_only"
+    assert not start.needs_confirmation({"replay_only": True})
+    assert start.needs_confirmation({"replay_only": False})
     # `dry_run` em outra operação marcada não dispensa nada, e `"true"` não é `true`.
     assert TOOLS["activate_form"].needs_confirmation({"dry_run": True})
     assert publish.needs_confirmation({"dry_run": "true"})

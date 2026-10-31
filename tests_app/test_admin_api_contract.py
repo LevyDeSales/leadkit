@@ -628,7 +628,19 @@ def _errors(
             found.append(
                 f"{where}: o 409 de uma operação sem versão não fala de `version_conflict`"
             )
-        if "state_conflict" not in text and "version_conflict" not in text:
+        # O recibo conflita com o estado do vínculo histórico, sem receber versão corrente.
+        # Exigir o código real e a categoria evita documentar state_conflict inexistente no GET.
+        command_receipt = operation.get("operationId") == "get_form_draft_test_command"
+        if command_receipt and ("command_conflict" not in text or "estado" not in text):
+            found.append(
+                f"{where}: o 409 do recibo descreve o estado do vínculo (`command_conflict`)"
+            )
+        if (
+            operation.get("operationId") == "start_form_draft_test"
+            and "command_conflict" not in text
+        ):
+            found.append(f"{where}: o 409 da partida também declara `command_conflict`")
+        if not command_receipt and "state_conflict" not in text and "version_conflict" not in text:
             found.append(f"{where}: o texto do 409 diz qual é o conflito (version ou state)")
     return found
 
@@ -1550,6 +1562,28 @@ def test_a_409_of_an_operation_without_a_version_must_not_talk_about_the_version
     found = contract_problems(document)
 
     assert any("sem versão não fala de `version_conflict`" in problem for problem in found)
+
+
+@pytest.mark.parametrize(
+    "description, valid",
+    [
+        (
+            "Conflito de estado do vínculo: namespace ou formulário incompatível (`command_conflict`).",
+            True,
+        ),
+        ("Conflito de estado do vínculo (`state_conflict`).", False),
+        ("Escopo incompatível (`command_conflict`).", False),
+        ("Conflito de estado do vínculo (`version_conflict`).", False),
+    ],
+)
+def test_receipt_409_describes_its_state_conflict_without_inventing_a_wire_code(
+    document, description, valid
+):
+    changed = copy.deepcopy(document)
+    operation = operation_of(changed, "get_form_draft_test_command")
+    operation["responses"]["409"]["description"] = description
+    found = [p for p in contract_problems(changed) if "409" in p]
+    assert (found == []) is valid
 
 
 def test_a_marked_operation_must_declare_the_confirm_field() -> None:

@@ -49,8 +49,9 @@ from typing import Any
 
 from app.admin_mcp.catalog import CONFIRM, ToolSpec
 from app.admin_mcp.client import InputError
-from app.admin_mcp.results import ToolOutput
-from app.admin_mcp.runner import CANCELLED, Prompter, ToolRunner, clean, fingerprint
+from app.admin_mcp.confirmation import ConfirmationOutcome, blocked_message
+from app.admin_mcp.results import ToolOutput, known_refusal
+from app.admin_mcp.runner import Prompter, ToolRunner, clean, fingerprint
 
 logger = logging.getLogger("gerador_mcp")
 
@@ -173,13 +174,17 @@ class Steps:
         mesma** (a impressão digital leva `bound`: o que a pessoa viu). Não manda nada à API."""
         key = fingerprint(f"{self.composite.name}:{step}", bound)
         pending = self._runner.pending
-        answer = await self._prompter.ask(question)
-        if answer is False:
-            return Gate("no", CANCELLED.text)
-        if answer is True or (model_says_yes and pending.allows(key, CONFIRM)):
+        try:
+            answer = await self._prompter.ask(question)
+        except BaseException:
+            pending.forget(key)
+            raise
+        decision = pending.decide(key, answer, [CONFIRM], explicit=model_says_yes)
+        if decision is ConfirmationOutcome.APPROVED:
             pending.forget(key)
             return Gate("yes", "")
-        pending.remember(key, [CONFIRM])
+        if decision is not ConfirmationOutcome.UNSUPPORTED:
+            return Gate("no", blocked_message(decision), decision)
         return Gate(
             "wait",
             "CONFIRMAÇÃO NECESSÁRIA: nada foi executado.\n\n"
@@ -191,11 +196,12 @@ class Steps:
 
 @dataclass(frozen=True)
 class Gate:
-    """A resposta de `Steps.gate`: `yes`, `no` (a pessoa recusou) ou `wait` (o cliente não sabe
-    perguntar: `text` é o que a pessoa precisa ver, e nada foi executado)."""
+    """A resposta de `Steps.gate`: `yes`, `no` (confirmação bloqueada) ou `wait` (sem suporte declarado
+    a formulário: `text` descreve o efeito a confirmar, e nada foi executado)."""
 
     answer: str
     text: str
+    outcome: ConfirmationOutcome | None = None
 
 
 class Prefaced:
@@ -205,7 +211,7 @@ class Prefaced:
         self._inner = inner
         self._preface = preface
 
-    async def ask(self, message: str) -> bool | None:
+    async def ask(self, message: str) -> ConfirmationOutcome:
         return await self._inner.ask(f"{self._preface}\n\n{message}")
 
 
@@ -432,15 +438,19 @@ class Progress:
 
 
 def untouched(output: ToolOutput) -> bool:
-    """A chamada falhou **sem deixar nada gravado**: a pessoa disse não, a API recusou (4xx: ela não
+    """A chamada falhou **sem deixar nada gravado**: a confirmação foi bloqueada, a API recusou (4xx: ela não
     grava ao recusar) ou o Baserow não respondeu (`502 upstream_failed`, que o contrato diz que não
-    grava). Uma falha de rede, ou outro 5xx, não prova nada: a escrita pode ter acontecido."""
-    if output.text == CANCELLED.text:
+    grava). Uma tentativa idêntica em andamento, falha de rede ou outro 5xx não prova nada: a escrita
+    pode ter acontecido."""
+    if output.confirmation is not None and output.confirmation not in (
+        ConfirmationOutcome.APPROVED,
+        ConfirmationOutcome.UNSUPPORTED,
+        ConfirmationOutcome.IN_PROGRESS,
+    ):
         return True
     if output.status is None:
         return False
-    refusal = output.data.get("code") if isinstance(output.data, dict) else None
-    return 400 <= output.status < 500 or (output.status == 502 and refusal == "upstream_failed")
+    return known_refusal(output.status, output.data)
 
 
 def refused(
@@ -462,7 +472,9 @@ def refused(
             "antes de repetir.",
         ]
     lines += progress.lines()
-    return ToolOutput("\n".join(lines), is_error=True, status=output.status)
+    return ToolOutput(
+        "\n".join(lines), is_error=True, status=output.status, confirmation=output.confirmation
+    )
 
 
 def waiting(report: Sequence[str], output: ToolOutput) -> ToolOutput:

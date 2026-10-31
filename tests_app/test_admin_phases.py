@@ -114,7 +114,7 @@ def test_another_simulated_date_gives_another_calendar(client: TestClient) -> No
 
 def test_without_a_simulated_date_the_calendar_starts_today(client: TestClient) -> None:
     # O relógio do teste marca 15 de janeiro de 2027, e a página já abre com o prompt montado.
-    for response in (client.get(TESTS), post(client, f"{DRAFT}/prompt")):
+    for response in (client.get(TESTS, follow_redirects=True), post(client, f"{DRAFT}/prompt")):
         assert response.status_code == 200
         shown = calendar_of(response)
         assert "hoje: 15 de janeiro de 2027" in shown

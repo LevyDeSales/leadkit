@@ -13690,3 +13690,180 @@ SIGNATURES["0019_persisted_webhook_v2"] = {
         "O",
     ],
 }
+
+# DDL aditivo 0020, conferido no catálogo PostgreSQL 16.
+SIGNATURES["0020_draft_test_commands"] = {
+    **SIGNATURES["0019_persisted_webhook_v2"],
+    "column:public.draft_test_commands.audit_id": ["uuid", "true", "", "", "", ""],
+    "column:public.draft_test_commands.channel": [
+        "character varying(16)",
+        "true",
+        "",
+        "",
+        "",
+        "pg_catalog.default",
+    ],
+    "column:public.draft_test_commands.command_id": [
+        "character varying(128)",
+        "true",
+        "",
+        "",
+        "",
+        "pg_catalog.default",
+    ],
+    "column:public.draft_test_commands.committed_at": [
+        "timestamp with time zone",
+        "true",
+        "",
+        "",
+        "",
+        "",
+    ],
+    "column:public.draft_test_commands.dispatch_at": [
+        "timestamp with time zone",
+        "false",
+        "",
+        "",
+        "",
+        "",
+    ],
+    "column:public.draft_test_commands.dispatch_state": [
+        "character varying(16)",
+        "true",
+        "",
+        "",
+        "",
+        "pg_catalog.default",
+    ],
+    "column:public.draft_test_commands.effective_digest": [
+        "character varying(64)",
+        "true",
+        "",
+        "",
+        "",
+        "pg_catalog.default",
+    ],
+    "column:public.draft_test_commands.expected_version": [
+        "text",
+        "true",
+        "",
+        "",
+        "",
+        "pg_catalog.default",
+    ],
+    "column:public.draft_test_commands.expires_at": [
+        "timestamp with time zone",
+        "true",
+        "",
+        "",
+        "",
+        "",
+    ],
+    "column:public.draft_test_commands.form_id": ["uuid", "true", "", "", "", ""],
+    "column:public.draft_test_commands.form_slug": [
+        "text",
+        "true",
+        "",
+        "",
+        "",
+        "pg_catalog.default",
+    ],
+    "column:public.draft_test_commands.input_digest": [
+        "character varying(64)",
+        "true",
+        "",
+        "",
+        "",
+        "pg_catalog.default",
+    ],
+    "column:public.draft_test_commands.issued_at": [
+        "timestamp with time zone",
+        "true",
+        "",
+        "",
+        "",
+        "",
+    ],
+    "column:public.draft_test_commands.namespace": ["uuid", "true", "", "", "", ""],
+    "column:public.draft_test_commands.principal_id": [
+        "text",
+        "true",
+        "",
+        "",
+        "",
+        "pg_catalog.default",
+    ],
+    "column:public.draft_test_commands.principal_kind": [
+        "character varying(16)",
+        "true",
+        "",
+        "",
+        "",
+        "pg_catalog.default",
+    ],
+    "column:public.draft_test_commands.test_id": ["uuid", "true", "", "", "", ""],
+    "constraint:public.draft_test_commands.ck_draft_test_commands_dispatch_state": [
+        (
+            "CHECK "
+            "(((dispatch_state)::text "
+            "= ANY "
+            "(ARRAY[('committed'::character "
+            "varying)::text, "
+            "('dispatching'::character "
+            "varying)::text, "
+            "('enqueued'::character "
+            "varying)::text, "
+            "('not_started'::character "
+            "varying)::text, "
+            "('uncertain'::character "
+            "varying)::text])))"
+        ),
+        "true",
+        "false",
+        "false",
+    ],
+    "constraint:public.draft_test_commands.ck_draft_test_commands_principal_kind": [
+        (
+            "CHECK "
+            "(((principal_kind)::text "
+            "= ANY "
+            "(ARRAY[('admin'::character "
+            "varying)::text, "
+            "('api_key'::character "
+            "varying)::text])))"
+        ),
+        "true",
+        "false",
+        "false",
+    ],
+    "constraint:public.draft_test_commands.pk_draft_test_commands": [
+        "PRIMARY KEY (command_id)",
+        "true",
+        "false",
+        "false",
+    ],
+    "index:public.pk_draft_test_commands": [
+        (
+            "CREATE UNIQUE INDEX pk_draft_test_commands ON "
+            "public.draft_test_commands USING btree (command_id)"
+        ),
+        "true",
+        "true",
+        "false",
+        "false",
+    ],
+    "index:public.ix_draft_test_commands_expires_at": [
+        (
+            "CREATE INDEX "
+            "ix_draft_test_commands_expires_at ON "
+            "public.draft_test_commands USING btree "
+            "(expires_at)"
+        ),
+        "true",
+        "true",
+        "false",
+        "false",
+    ],
+    "namespace_object:table:public.draft_test_commands": ["table"],
+    "relation:public.draft_test_commands": ["r", "p", "false", "false", "d", "", ""],
+}
