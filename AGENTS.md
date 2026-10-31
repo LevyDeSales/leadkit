@@ -15,6 +15,8 @@ pt-BR com quem solicita. Interface e documentação do produto se dirigem ao pú
 - **Aceites de produto, UX, editor, projeções ou recuperação:** leia
   [product-quality.md](docs/agents/product-quality.md) ao especificar, implementar ou revisar
   o comportamento alterado.
+- **PR com código, testes, dependências, CI ou estrutura:** acione a revisora independente
+  [guardiao-da-qualidade](docs/agents/guardiao-da-qualidade.md), além da guardiã da API quando aplicável.
 - **Validação e release:** consulte [docs/ci.md](docs/ci.md). Testes usam Python 3.11, dados sintéticos
   e banco próprio terminado em `_test`; a suíte apaga tabelas. Documentação isolada exige validar
   links e diff, sem pytest local. Nenhuma credencial, asset ou dado de instalação entra em exemplos.
