@@ -41,6 +41,7 @@ from app.deps import get_deps
 from app.errors import RetryableError, TerminalError
 from app.forms import GenerationUnavailable, UnknownForm, draft_previews, draft_tests, drafts
 from app.forms import assets as form_assets
+from app.forms import draft_test_commands as test_commands
 from app.forms import retention as form_retention
 from app.forms import stored as stored_forms
 from app.forms.definition import DefinitionError, Problem, compile_definition
@@ -1814,6 +1815,7 @@ def _simulation_post(slug: str, form: FormData) -> dict[str, Any]:
         problems = (Problem("answers", "Escolha campos ou JSON para simular."),)
     return {
         "answers": answers,
+        "command_id": str(form.get("command_id", "")) or None,
         "day": str(form.get("date", "")),
         "input_mode": mode,
         "values": values,
@@ -1837,6 +1839,7 @@ def _tests_page(
     values=None,
     expected_version: str | None = None,
     input_problems: tuple[Problem, ...] = (),
+    command_id: str | None = None,
 ) -> Response:
     """A simulação usa as mesmas ações da API e conserva a entrada recuperável."""
     try:
@@ -1887,6 +1890,7 @@ def _tests_page(
         "admin/form_draft_tests.html",
         {
             "page": page,
+            "command_id": command_id or request.query_params.get("command_id"),
             "simulation": simulation.context(
                 state.draft,
                 values=values,
@@ -1966,7 +1970,129 @@ def _given(answers: str) -> str | None:
 
 @protected.get("/forms/{slug}/draft/tests")
 def draft_tests_page(request: Request, slug: str) -> Response:
-    return _tests_page(request, slug)
+    identity = request.query_params.get("command_id")
+    try:
+        if not identity:
+            if _draft(slug).document.get("generation") == "none":
+                return _tests_page(request, slug)
+            context = test_commands.issue_context(get_deps(), slug, now=_now(request))
+            return RedirectResponse(_test_command_url(slug, context.command_id), status_code=303)
+        receipt = test_commands.resolve(
+            get_deps(),
+            slug,
+            identity,
+            principal=test_commands.Principal("admin", request.state.admin_session.username),
+            now=_now(request),
+        )
+        return _test_receipt_page(request, slug, receipt=receipt)
+    except test_commands.CommandError as error:
+        if error.code == "command_not_found":
+            return _tests_page(request, slug, command_id=identity)
+        return _test_receipt_page(request, slug, error=error)
+    except UnknownForm:
+        return _error(request, 404, DRAFT_NOT_FOUND)
+
+
+def _test_command_url(slug: str, identity: str) -> str:
+    return f"/admin/forms/{slug}/draft/tests?{urlencode({'command_id': identity})}"
+
+
+def _test_receipt_page(request, slug, *, receipt=None, error=None):
+    status = (
+        {
+            "command_forbidden": 403,
+            "command_conflict": 409,
+            "command_expired": 410,
+            "unavailable": 503,
+        }.get(error.code, 422)
+        if error
+        else 200
+    )
+    return _page(
+        request,
+        "admin/form_draft_test_receipt.html",
+        {
+            "slug": slug,
+            "receipt": receipt,
+            "error": error,
+            "created": views.moment(receipt.committed_at) if receipt else None,
+            "expires": views.moment(receipt.expires_at) if receipt else None,
+        },
+        status_code=status,
+    )
+
+
+async def _start_identified_test(request, slug, session, form):
+    identity = str(form.get("command_id", ""))
+    mode = str(form.get("input_mode", "json"))
+    if mode not in ("fields", "json"):
+        return _tests_page(request, slug, **_simulation_post(slug, form), status_code=422)
+    answers = (
+        sorted(
+            (name, value)
+            for name, value in form.multi_items()
+            if name.startswith(simulation.FIELD_PREFIX) and isinstance(value, str)
+        )
+        if mode == "fields"
+        else _given(str(form.get("answers", "")))
+    )
+    options = {
+        "actor": session.username,
+        "answers": answers,
+        "day": str(form.get("date", "")),
+        "now": _now(request),
+        "expected_version": str(form.get("expected", "")),
+        "command_id": identity,
+        "principal": test_commands.Principal("admin", session.username),
+        "confirmed": form.get("confirm") == "on",
+        "clock": lambda: _now(request),
+        "input_kind": "html_fields" if mode == "fields" else "json",
+    }
+    try:
+        try:
+            await draft_test_actions.start(
+                get_deps(), request.app.state.test_trigger, slug, replay_only=True, **options
+            )
+        except test_commands.CommandError as missing:
+            if missing.code != "command_not_found":
+                raise
+            await draft_test_actions.start(
+                get_deps(), request.app.state.test_trigger, slug, **options
+            )
+    except test_commands.CommandError as error:
+        if error.code == "confirmation_required":
+            return _tests_page(
+                request,
+                slug,
+                **_simulation_post(slug, form),
+                message=error.message,
+                status_code=422,
+            )
+        return _test_receipt_page(request, slug, error=error)
+    except (
+        DefinitionError,
+        draft_tests.DraftVersionConflict,
+        draft_tests.DraftTestRefused,
+    ) as error:
+        options = _simulation_post(slug, form)
+        message = (
+            draft_tests.VERSION_CONFLICT
+            if isinstance(error, draft_tests.DraftVersionConflict)
+            else error.message
+            if isinstance(error, draft_tests.DraftTestRefused)
+            else None
+        )
+        status = (
+            429
+            if isinstance(error, draft_tests.DraftTestRefused) and error.paused
+            else 409
+            if isinstance(error, (draft_tests.DraftVersionConflict, draft_tests.DraftTestRefused))
+            else 422
+        )
+        return _tests_page(request, slug, **options, message=message, status_code=status)
+    except UnknownForm:
+        return _error(request, 404, DRAFT_NOT_FOUND)
+    return RedirectResponse(_test_command_url(slug, identity), status_code=303)
 
 
 @protected.post("/forms/{slug}/draft/prompt")
@@ -1991,6 +2117,8 @@ async def start_draft_test(
 ) -> Response:
     """Só a ação explícita confirmada põe um teste na fila, com seu ID."""
     form = await posted_form(request)
+    if form.get("command_id"):
+        return await _start_identified_test(request, slug, session, form)
     options = await run_in_threadpool(_simulation_post, slug, form)
     try:
         if options["input_problems"]:

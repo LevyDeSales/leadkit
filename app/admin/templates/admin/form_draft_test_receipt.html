@@ -1,0 +1,37 @@
+{% extends "admin/layout.html" %}
+{% import "admin/macros.html" as m %}
+{% set section = "forms" %}
+{% block title %}Recibo do teste{% endblock %}
+{% block content %}
+<nav class="crumbs" aria-label="Você está em"><a href="/admin/forms">Formulários</a><span aria-hidden="true">/</span><a href="/admin/forms/{{ slug }}/draft">Rascunho</a><span aria-hidden="true">/</span><span>Recibo do teste</span></nav>
+<header class="detail-head"><div><h1>Recibo do teste</h1><p class="meta">Acompanhe a mesma execução, sem iniciar outro teste.</p></div></header>
+<div class="stackcol">
+{% if error %}
+<section class="box"><p role="alert">{{ error.message }}</p></section>
+{% else %}
+<section class="box" aria-labelledby="estado-teste">
+  <div role="status" aria-live="polite">
+  {% if receipt.result_state == 'expired' %}<h2 id="estado-teste">Resultado expirado</h2><p>O conteúdo do teste foi removido. Recuperar este recibo não inicia outro teste.</p>
+  {% elif receipt.test_status == 'succeeded' %}<h2 id="estado-teste">Teste concluído</h2><p>O resultado desta execução está disponível abaixo.</p>
+  {% elif receipt.test_status == 'running' %}<h2 id="estado-teste">Teste em execução</h2><p>Atualize o recibo para acompanhar.</p>
+  {% elif receipt.test_status == 'interrupted' %}<h2 id="estado-teste">Teste interrompido</h2><p>Este comando não será reenviado. Confira o resultado antes de iniciar outro teste.</p>
+  {% elif receipt.dispatch_state in ('dispatching', 'uncertain') %}<h2 id="estado-teste">Despacho incerto</h2><p>Ainda não há confirmação do enfileiramento. Isso não significa custo zero. Atualize o recibo; reenviar não inicia outro teste.</p>
+  {% elif receipt.dispatch_state == 'not_started' %}<h2 id="estado-teste">Teste não iniciado</h2><p>Para outra execução, escolha Novo teste e confirme novamente o possível custo.</p>
+  {% elif receipt.test_status == 'failed' %}<h2 id="estado-teste">O teste falhou</h2><p>Este comando conserva a execução original. Confira o resultado antes de iniciar outro teste.</p>
+  {% elif receipt.dispatch_state == 'enqueued' %}<h2 id="estado-teste">Teste enfileirado</h2><p>Aguardando a execução. Atualize o recibo para acompanhar.</p>
+  {% else %}<h2 id="estado-teste">Criação confirmada</h2><p>O teste foi salvo. O enfileiramento ainda não foi confirmado.</p>{% endif %}
+  </div>
+  <dl class="kv footnote"><dt>Criação confirmada</dt><dd>{{ m.when(created) }}</dd><dt>Recibo disponível até</dt><dd>{{ m.when(expires) }}</dd></dl>
+  <p class="muted footnote">Datas no horário de Brasília. O recibo confirma a criação; o estado mostra a execução e o resultado.</p>
+  <div class="btns footnote">
+    {% if receipt.result_state == 'retained' %}<a class="btn btn--primary" href="/admin/forms/{{ slug }}/draft/tests/{{ receipt.test_id }}">Ver resultado do teste</a>{% endif %}
+    <a class="btn {{ 'btn--secondary' if receipt.result_state == 'retained' else 'btn--primary' }}" href="?command_id={{ receipt.command_id }}">Atualizar recibo</a>
+  </div>
+</section>
+<details class="box"><summary>Detalhes para suporte</summary>
+  <dl class="kv kv--stack footnote"><dt>Comando</dt><dd class="mono">{{ receipt.command_id }}</dd><dt>Teste</dt><dd class="mono">{{ receipt.test_id }}</dd><dt>Auditoria</dt><dd class="mono">{{ receipt.audit_id }}</dd><dt>Revisão</dt><dd class="mono">{{ receipt.expected_version }}</dd><dt>Instalação</dt><dd class="mono">{{ receipt.namespace }}</dd></dl>
+</details>
+{% endif %}
+<div class="box"><p>Outro teste é uma nova execução de IA, com possível custo. Confira este recibo antes de começar.</p><p class="btns footnote"><a class="btn btn--secondary" href="/admin/forms/{{ slug }}/draft/tests">Novo teste</a><a class="btn btn--ghost" href="/admin/forms/{{ slug }}/draft">Voltar ao rascunho</a></p></div>
+</div>
+{% endblock %}

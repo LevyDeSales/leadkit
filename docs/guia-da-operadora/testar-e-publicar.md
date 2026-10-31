@@ -40,6 +40,23 @@
 
 **Se falhar:** leia a mensagem e o que foi enviado. Corrija e salve antes de testar de novo. Se a infraestrutura estiver indisponível, peça ajuda técnica; não repita cliques esperando acelerar a fila. Um teste antigo pode não cobrir as mudanças atuais.
 
+## Recuperar um teste sem gastar outro
+
+Ao abrir o teste, a página conserva o endereço da ação. Depois de confirmar, você recebe o
+“Recibo do teste”, com o estado da criação, do enfileiramento e do resultado. Se a resposta se
+perder, recarregue esse endereço ou reenvie o mesmo formulário: ele recupera o teste original,
+sem outra chamada de geração. A recuperação funciona também sem JavaScript.
+
+“Despacho incerto” significa que ainda não há confirmação de recebimento pela infraestrutura;
+não significa custo zero. Atualize o recibo para acompanhar. Se o resultado já foi removido,
+“Resultado expirado” conserva a identificação original enquanto o recibo estiver disponível.
+O recibo fica disponível por três dias após a criação e a identidade antiga não inicia outro
+teste depois disso. Esses prazos técnicos não são uma autorização reutilizável.
+
+Para iniciar outra execução, escolha **Novo teste**, confira a revisão e as respostas e confirme
+novamente o possível custo. Não escolha Novo teste apenas porque a resposta anterior demorou:
+primeiro confira o recibo. Um teste novo continua sujeito à ocupação e à pausa de 30 segundos.
+
 ## Usar respostas JSON no modo avançado
 
 Abra “Avançado: respostas JSON” e selecione “Usar somente o JSON abaixo”. Esse modo ignora os campos visuais: as entradas não são mescladas. JSON em branco usa explicitamente os exemplos salvos; `{}` representa respostas vazias e pode falhar nas perguntas obrigatórias. Para voltar, selecione “Preencher campos”. A data simulada vale para o modo escolhido.
