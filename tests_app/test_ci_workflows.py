@@ -1588,6 +1588,15 @@ def test_composed_probe_creates_and_replays_both_capabilities_over_http(database
             ._mapping
         )
     try:
+        # A fixture legada rollout_engine pode conservar piso1 neste módulo.
+        # O cenário composto começa explicitamente em3/blocked, sem atestação.
+        with engine.begin() as connection:
+            connection.execute(
+                sa.text(
+                    "UPDATE deployment_contract SET minimum_contract=3, phase='blocked', "
+                    "epoch=NULL, evidence='{}'::jsonb, attested_at=NULL WHERE id=1"
+                )
+            )
         for phase in ("baseline", "blocked", "create", "return"):
             if phase == "create":
                 # Só a fixture local: o manifesto sintético não atesta uma frota Docker.

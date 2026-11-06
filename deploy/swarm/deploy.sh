@@ -23,7 +23,7 @@
 # Na primeira adoção do contrato1, o helper pausa API e worker e comprova saída
 # antes das migrations. Depois exige Spec/PreviousSpec compatíveis, réplicas saudáveis
 # e atestação persistida. Atualizações compatíveis mantêm o rolling; rollback não
-# reduz o piso. Copie rollout.py junto e leia README.md antes da operação.
+# reduz o piso. Copie rollout.py e recovery.py juntos e leia README.md antes da operação.
 set -euo pipefail
 
 here="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
@@ -37,6 +37,26 @@ rollback="${ROLLBACK:-0}"
 if [[ "$rollback" != 0 && "$rollback" != 1 ]]; then
   echo "deploy.sh: ROLLBACK aceita só 1 (volta de versão, sem migrations) ou 0" >&2
   exit 2
+fi
+recover_current="${RECOVER_CURRENT:-0}"
+recovery_args=()
+if [[ "$recover_current" != 0 && "$recover_current" != 1 ]]; then
+  echo "deploy.sh: RECOVER_CURRENT aceita só 0 ou 1" >&2
+  exit 2
+fi
+if [[ "$recover_current" == 1 ]]; then
+  if [[ "$rollback" != 0 || -z "${RECOVERY_CURRENT_ID:-}" || "$IMAGE" != "$RECOVERY_CURRENT_ID" ||
+        -z "${EXPECTED_PREVIOUS_API:-}" || -z "${EXPECTED_PREVIOUS_WORKER:-}" || -z "${RECOVERY_RECEIPT:-}" ]]; then
+    echo "deploy.sh: recuperação exclusiva exige IMAGE=RECOVERY_CURRENT_ID, Previous de cada papel e RECOVERY_RECEIPT; não combine ROLLBACK" >&2
+    exit 2
+  fi
+  recovery_args=(--recover-current --expected-current "$RECOVERY_CURRENT_ID"
+    --expected-previous-api "$EXPECTED_PREVIOUS_API" --expected-previous-worker "$EXPECTED_PREVIOUS_WORKER"
+    --recovery-receipt "$RECOVERY_RECEIPT")
+  if [[ ! -r "$here/recovery.py" ]]; then
+    echo "deploy.sh: copie recovery.py junto de rollout.py antes da recuperação; nada foi mexido" >&2
+    exit 1
+  fi
 fi
 for file in stack.yaml app.env db.env; do
   if [[ ! -r "$here/$file" ]]; then
@@ -145,4 +165,4 @@ if ! command -v python3 >/dev/null 2>&1 || [[ ! -r "$here/rollout.py" ]]; then
   echo "deploy.sh: instale Python 3 e copie rollout.py ao lado deste script; nada foi mexido" >&2
   exit 1
 fi
-exec python3 "$here/rollout.py" --folder "$here" --image "$IMAGE" --stack "$stack" --rollback "$rollback"
+exec python3 "$here/rollout.py" --folder "$here" --image "$IMAGE" --stack "$stack" --rollback "$rollback" "${recovery_args[@]}"

@@ -390,6 +390,11 @@ SCRIPT_VARIABLES = (
     "DOMAIN",
     "IMAGE",
     "ROLLBACK",
+    "RECOVER_CURRENT",
+    "RECOVERY_CURRENT_ID",
+    "EXPECTED_PREVIOUS_API",
+    "EXPECTED_PREVIOUS_WORKER",
+    "RECOVERY_RECEIPT",
     "BACKUP_DIR",
     "BACKUP_KEEP_DAYS",
     "RATE_LIMIT_AVERAGE",
@@ -449,7 +454,7 @@ class Server:
         self.staging = staging
         self.folder = root / "swarm"
         self.folder.mkdir()
-        for name in ("stack.yaml", "deploy.sh", "rollout.py"):
+        for name in ("stack.yaml", "deploy.sh", "rollout.py", "recovery.py"):
             self.install(name)
         (self.folder / "db.env").write_text("POSTGRES_PASSWORD=exemplo\n")
         self.write_app_env()
@@ -528,6 +533,39 @@ def staging(tmp_path_factory: pytest.TempPathFactory) -> Staging:
 @pytest.fixture
 def server(tmp_path: Path, staging: Staging) -> Server:
     return Server(tmp_path, staging)
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"RECOVER_CURRENT": "yes"},
+        {"RECOVER_CURRENT": "1", "ROLLBACK": "1"},
+        {"RECOVER_CURRENT": "1"},
+        {"RECOVER_CURRENT": "1", "RECOVERY_CURRENT_ID": "sha256:" + "a" * 64},
+    ],
+)
+def test_recovery_wrapper_requires_exclusive_complete_opt_in(server, overrides):
+    result = server.run("deploy.sh", IMAGE="gerador-planos:abc123", **overrides)
+    assert result.returncode != 0
+    assert not server.touched_the_swarm()
+
+
+def test_recovery_wrapper_reports_missing_module_without_traceback(server):
+    (server.folder / "recovery.py").unlink()
+    current = "sha256:" + "a" * 64
+    result = server.run(
+        "deploy.sh",
+        IMAGE=current,
+        RECOVER_CURRENT="1",
+        RECOVERY_CURRENT_ID=current,
+        EXPECTED_PREVIOUS_API="lost:api",
+        EXPECTED_PREVIOUS_WORKER="lost:worker",
+        RECOVERY_RECEIPT="recovery.json",
+    )
+    assert result.returncode != 0
+    assert "Traceback" not in result.stderr
+    assert "copie recovery.py" in result.stderr
+    assert not server.touched_the_swarm()
 
 
 def stack_deploy_call(server: Server) -> str:
