@@ -24,6 +24,18 @@ class ImageMissing(RolloutError):
     """Somente ImageInspect autenticado no daemon local pode produzir esta classificação."""
 
 
+class UpdateNotSent(RolloutError):
+    """A tentativa falhou antes de iniciar o POST de atualização."""
+
+
+class UpdateRejected(RolloutError):
+    """O Engine devolveu recusa conclusiva; estado equivalente não autoriza reentrada."""
+
+
+class UpdateUnknown(RolloutError):
+    """O envio iniciou, mas a resposta não comprova o desfecho da atualização."""
+
+
 class EngineUnix:
     """Transporte operacional local; não fornece Docker ao app."""
 
@@ -78,8 +90,9 @@ class EngineUnix:
             raise RolloutError("Só socket Unix local explicitamente validado é aceito.")
         return endpoint
 
-    def request(self, method, route, document=None, *, missing=None):
+    def request(self, method, route, document=None, *, missing=None, update=False):
         connection = http.client.HTTPConnection("localhost", timeout=30)
+        send_started = False
         try:
             transport = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             transport.settimeout(30)
@@ -93,13 +106,48 @@ class EngineUnix:
                 else None
             )
             if body is not None and len(body) > 1048576:
-                raise RolloutError("A Spec excede o limite operacional; nada foi enviado.")
+                error = UpdateNotSent if update else RolloutError
+                raise error("A Spec excede o limite operacional; nada foi enviado.")
+            send_started = True
             connection.request(method, route, body, {"Content-Type": "application/json"})
             response = connection.getresponse()
+            if update and 400 <= response.status < 500:
+                raise UpdateRejected(
+                    "O Engine recusou o POST; esta tentativa não pode adotar outra escrita."
+                )
             raw = response.read(1048577)
             if len(raw) > 1048576:
                 raise ValueError
+            if update and not raw:
+                raise UpdateUnknown(
+                    "O POST não devolveu documento de resultado; preserve o recibo."
+                )
             value = json.loads(raw) if raw else {}
+            if update:
+                # O SwarmKit devolve esse conflito antes do commit. Outros500
+                # podem esconder falha RPC depois do commit e ficam indeterminados.
+                if response.status == 500 and value in (
+                    {"message": "update out of sequence"},
+                    {"message": "rpc error: code = Unknown desc = update out of sequence"},
+                ):
+                    raise UpdateRejected(
+                        "CAS recusada pelo Engine; esta tentativa permanece fechada."
+                    )
+                if (
+                    response.status != 200
+                    or not isinstance(value, dict)
+                    or set(value) - {"Warnings"}
+                    or (
+                        value.get("Warnings") is not None
+                        and (
+                            not isinstance(value["Warnings"], list)
+                            or not all(isinstance(warning, str) for warning in value["Warnings"])
+                        )
+                    )
+                ):
+                    raise UpdateUnknown(
+                        "A resposta do POST não comprova o resultado; preserve o recibo."
+                    )
             if (
                 missing is not None
                 and response.status == 404
@@ -112,7 +160,8 @@ class EngineUnix:
                 )
             return value
         except (OSError, http.client.HTTPException, ValueError, TypeError):
-            raise RolloutError(
+            error = (UpdateUnknown if send_started else UpdateNotSent) if update else RolloutError
+            raise error(
                 "Resposta do Engine inválida ou sem conclusão; reconcilie sem retry cego."
             ) from None
         finally:
@@ -156,8 +205,11 @@ class EngineUnix:
 
     def update(self, service_id, version, spec):
         if type(version) is not int or version < 1:
-            raise RolloutError("Versão da baseline inválida para CAS.")
-        self.confirm()
+            raise UpdateNotSent("Versão da baseline inválida para CAS; POST não iniciado.")
+        try:
+            self.confirm()
+        except (RolloutError, OSError, ValueError, TypeError, KeyError, IndexError, AttributeError):
+            raise UpdateNotSent("A confirmação do daemon falhou antes de iniciar o POST.") from None
         # A versão é a baseline validada; não há inspect/refresh/retry no envio.
         self.request(
             "POST",
@@ -165,6 +217,7 @@ class EngineUnix:
             + quote(service_id, safe="")
             + f"/update?version={version}&registryAuthFrom=spec&rollback=none",
             spec,
+            update=True,
         )
 
 
@@ -298,7 +351,7 @@ class Recovery:
                 "roles",
                 "attestation_hash",
             }
-            or value["format"] != 1
+            or value["format"] != 2
             or value["stack"] != self.r.stack
             or value["engine"] != self.engine.identity
             or value["current"] != self.current
@@ -314,6 +367,14 @@ class Recovery:
         if str(uuid.UUID(value["epoch"])) != value["epoch"]:
             raise RolloutError("Epoch inválido no recibo.")
         for role, row in value["baseline"].items():
+            progress = value["roles"][role]
+            allowed = {
+                "pending": {"not_attempted", "not_sent"},
+                "inflight": {"intent_recorded", "unknown", "acknowledged"},
+                "complete": {"intent_recorded", "unknown", "acknowledged"},
+                "rejected": {"rejected"},
+                "failed": {"unclassified"},
+            }
             if (
                 set(row) != {"id", "version", "spec", "previous", "previous_ref", "tasks"}
                 or type(row["version"]) is not int
@@ -322,8 +383,28 @@ class Recovery:
                 or not all(
                     re.fullmatch(r"[a-f0-9]{64}", row[key]) for key in ("spec", "previous", "tasks")
                 )
-                or set(value["roles"][role]) != {"phase", "version"}
-                or value["roles"][role]["phase"] not in {"pending", "inflight", "complete"}
+                or set(value["roles"][role]) != {"phase", "version", "request_result"}
+                or value["roles"][role]["phase"]
+                not in {"pending", "inflight", "complete", "rejected", "failed"}
+                or value["roles"][role]["request_result"]
+                not in {
+                    "not_attempted",
+                    "intent_recorded",
+                    "acknowledged",
+                    "unknown",
+                    "rejected",
+                    "not_sent",
+                    "unclassified",
+                }
+                or progress["request_result"] not in allowed[progress["phase"]]
+                or (
+                    progress["phase"] == "complete"
+                    and (
+                        type(progress["version"]) is not int
+                        or progress["version"] <= row["version"]
+                    )
+                )
+                or (progress["phase"] != "complete" and progress["version"] is not None)
             ):
                 raise RolloutError("Baseline incompleta no recibo; não repita a escrita.")
         return value
@@ -351,6 +432,13 @@ class Recovery:
                 os.unlink(name)
 
     def reconcile(self, snapshot):
+        if any(
+            progress["phase"] in {"rejected", "failed"}
+            for progress in self.receipt["roles"].values()
+        ):
+            raise RolloutError(
+                "Há recusa ou erro não classificado no recibo; estado equivalente não autoriza retomada."
+            )
         for role, row in snapshot.items():
             baseline = self.receipt["baseline"][role]
             progress = self.receipt["roles"][role]
@@ -365,10 +453,19 @@ class Recovery:
             if progress["phase"] == "complete":
                 if not committed or row["version"] != progress["version"]:
                     raise RolloutError("Outro writer alterou o retorno recomposto; não ateste.")
-            elif progress["phase"] == "inflight" and committed:
-                # Resposta perdida: reconhecer o commit comprovado, sem reenviar.
+            elif (
+                progress["phase"] == "inflight"
+                and committed
+                and progress["request_result"] in {"intent_recorded", "unknown", "acknowledged"}
+            ):
+                # Observa compatibilidade do estado, sem deduzir autoria quando
+                # não houve resposta. O resultado do envio permanece no recibo.
                 progress.update(phase="complete", version=row["version"])
                 self.save()
+            elif progress["request_result"] == "acknowledged":
+                raise RolloutError(
+                    "A resposta positiva não corresponde ao estado observado; não repita o POST."
+                )
             elif not untouched:
                 raise RolloutError("Não foi possível atribuir este estado à tentativa; não repita.")
             else:
@@ -562,7 +659,7 @@ class Recovery:
             if baseline != self.snapshot() or status != self.state():
                 raise RolloutError("A baseline mudou antes de begin; nada foi iniciado.")
             self.receipt = {
-                "format": 1,
+                "format": 2,
                 "stack": r.stack,
                 "engine": self.engine.identity,
                 "current": self.current,
@@ -572,11 +669,22 @@ class Recovery:
                 "initial_state": status,
                 "result": "current_replaces_lost_history",
                 "stage": "prepared",
-                "roles": {role: {"phase": "pending", "version": None} for role in baseline},
+                "roles": {
+                    role: {"phase": "pending", "version": None, "request_result": "not_attempted"}
+                    for role in baseline
+                },
                 "attestation_hash": None,
             }
             self.save(create=True)
         r.epoch = self.receipt["epoch"]
+        if self.receipt["stage"] == "done" and (
+            status["phase"] != "verified"
+            or status["epoch"] != r.epoch
+            or status["evidence_hash"] != self.receipt["attestation_hash"]
+        ):
+            raise RolloutError(
+                "Recibo concluído só verifica a atestação correspondente; não reabre bloqueio posterior."
+            )
         self.reconcile(baseline)
         if status == self.receipt["initial_state"] and self.receipt["stage"] == "prepared":
             if r.contract("begin", {"epoch": r.epoch}) != {"ok": True}:
@@ -600,14 +708,36 @@ class Recovery:
             progress = self.receipt["roles"][role]
             if progress["phase"] == "complete":
                 continue
-            # Persiste a intenção antes do CAS, inclusive para morte do processo.
-            progress["phase"] = "inflight"
-            self.save()
             body = self.specs[role]
             if hashlib.sha256(body).hexdigest() != row["spec"]:
                 raise RolloutError("A Spec mudou antes do CAS; preserve o gate bloqueado.")
             self.require_blocked()
-            self.engine.update(row["id"], row["version"], body)
+            # Só registra intenção após as verificações locais; morte sem
+            # desfecho persistido continua explicitamente indeterminada.
+            progress.update(phase="inflight", request_result="intent_recorded")
+            self.save()
+            try:
+                self.engine.update(row["id"], row["version"], body)
+            except UpdateRejected:
+                progress.update(phase="rejected", request_result="rejected")
+                self.save()
+                raise
+            except UpdateNotSent:
+                progress.update(phase="pending", request_result="not_sent")
+                self.save()
+                raise
+            except UpdateUnknown:
+                progress["request_result"] = "unknown"
+                self.save()
+                raise
+            except Exception:  # noqa: BLE001 — não classifica erro arbitrário como resultado desconhecido.
+                progress.update(phase="failed", request_result="unclassified")
+                self.save()
+                raise RolloutError(
+                    "Erro de envio não classificado; reconciliação automática recusada."
+                ) from None
+            progress["request_result"] = "acknowledged"
+            self.save()
             self.reconcile(self.snapshot())
             if progress["phase"] != "complete":
                 raise RolloutError("O Engine não confirmou commit; reconcilie sem retry cego.")

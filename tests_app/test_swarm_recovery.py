@@ -5,7 +5,9 @@ import hashlib
 import io
 import json
 import os
+import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 import threading
@@ -143,6 +145,10 @@ class DockerFixture:
             elif args[-1] == "attest":
                 from app.deployment_contract import _validate_evidence
 
+                if getattr(self, "attest_before_failure", False):
+                    raise RolloutError("Interrompido antes de attest")
+                if getattr(self, "attest_exit", False):
+                    raise SystemExit(87)
                 doc = json.loads(input)
                 assert doc["epoch"] == self.state["epoch"]
                 _validate_evidence(doc["evidence"], required=3)
@@ -231,15 +237,25 @@ def recovery_client(tmp_path, docker, monkeypatch):
                 spec = json.loads(spec)
             service = docker.services[service_id]
             if getattr(docker, "before_update", None):
-                docker.before_update(service_id)
+                try:
+                    docker.before_update(service_id)
+                except (recovery.UpdateNotSent, recovery.UpdateRejected, recovery.UpdateUnknown):
+                    raise
+                except RolloutError:
+                    raise recovery.UpdateNotSent("Fixture interrompida antes do POST") from None
+            if getattr(docker, "unclassified_update", False):
+                raise RolloutError("Erro de adapter não classificado")
             if service["Version"]["Index"] != version:
-                raise RolloutError("CAS recusada")
+                raise recovery.UpdateRejected("CAS recusada")
             docker.updates.append(service_id)
             service["PreviousSpec"] = copy.deepcopy(service["Spec"])
             service["Spec"] = copy.deepcopy(spec)
             service["Version"]["Index"] += 1
             if getattr(docker, "after_update", None):
-                docker.after_update(service_id)
+                try:
+                    docker.after_update(service_id)
+                except RolloutError:
+                    raise recovery.UpdateUnknown("Fixture perdeu a resposta após commit") from None
 
     monkeypatch.setattr(recovery, "EngineUnix", Engine)
 
@@ -472,6 +488,118 @@ def test_full_operation_does_not_refresh_stale_cas(docker, recovery_client):
     assert not docker.updates
 
 
+def test_conclusive_cas_refusal_never_claims_external_same_spec_commit(
+    docker, recovery_client, tmp_path
+):
+    def writer(role):
+        service = docker.services[role]
+        service["PreviousSpec"] = copy.deepcopy(service["Spec"])
+        service["Version"]["Index"] += 7
+
+    docker.before_update = writer
+    with pytest.raises(RolloutError):
+        recovery_client()
+    docker.before_update = None
+    with pytest.raises(RolloutError):
+        recovery_client()
+    assert docker.state["phase"] == "blocked"
+    assert not docker.updates
+    assert not any("attest" in call for call in docker.calls)
+    receipt = json.loads((tmp_path / "recovery.json").read_text())
+    assert receipt["roles"]["api"]["phase"] == "rejected"
+
+
+def test_done_receipt_never_reattests_a_later_block_with_same_epoch(docker, recovery_client):
+    recovery_client()
+    docker.state.update(
+        phase="blocked",
+        attested_at=None,
+        evidence_valid=False,
+        evidence_hash=None,
+        evidence_scope=None,
+    )
+    with pytest.raises(RolloutError):
+        recovery_client()
+    assert docker.state["phase"] == "blocked"
+    assert sum("attest" in call for call in docker.calls) == 1
+
+
+def test_unknown_response_keeps_uncertainty_after_compatible_state_reconciliation(
+    docker, recovery_client, tmp_path
+):
+    docker.after_update = lambda role: (_ for _ in ()).throw(RolloutError("Resposta perdida"))
+    with pytest.raises(RolloutError):
+        recovery_client()
+    receipt = json.loads((tmp_path / "recovery.json").read_text())
+    assert receipt["roles"]["api"]["request_result"] == "unknown"
+    docker.after_update = None
+    recovery_client()
+    receipt = json.loads((tmp_path / "recovery.json").read_text())
+    assert receipt["roles"]["api"]["phase"] == "complete"
+    assert receipt["roles"]["api"]["request_result"] == "unknown"
+    assert receipt["roles"]["worker"]["request_result"] == "acknowledged"
+    assert docker.updates == ["api", "worker"]
+
+
+@pytest.mark.parametrize("failure", ["not_sent", "unclassified"])
+def test_known_no_send_or_unclassified_error_cannot_adopt_external_commit(
+    docker, recovery_client, tmp_path, failure
+):
+    from deploy.swarm.recovery import UpdateNotSent
+
+    def writer(role):
+        service = docker.services[role]
+        service["PreviousSpec"] = copy.deepcopy(service["Spec"])
+        service["Version"]["Index"] += 7
+        if failure == "not_sent":
+            raise UpdateNotSent("POST não iniciado")
+
+    docker.before_update = writer
+    docker.unclassified_update = failure == "unclassified"
+    with pytest.raises(RolloutError):
+        recovery_client()
+    docker.before_update = None
+    docker.unclassified_update = False
+    with pytest.raises(RolloutError):
+        recovery_client()
+    assert docker.state["phase"] == "blocked" and not docker.updates
+    assert not any("attest" in call for call in docker.calls)
+
+
+def test_interruption_before_attest_can_resume_its_unfinished_receipt(docker, recovery_client):
+    docker.attest_before_failure = True
+    with pytest.raises(RolloutError):
+        recovery_client()
+    assert docker.state["phase"] == "blocked"
+    docker.attest_before_failure = False
+    recovery_client()
+    assert docker.state["phase"] == "verified"
+    assert docker.updates == ["api", "worker"]
+    assert sum("begin" in call for call in docker.calls) == 1
+
+
+@pytest.mark.parametrize("cutpoint", ["after_first", "before_attest"])
+def test_process_exit_retains_reconcilable_intent_or_attesting_stage(
+    docker, recovery_client, tmp_path, cutpoint
+):
+    if cutpoint == "after_first":
+        docker.after_update = lambda role: (_ for _ in ()).throw(SystemExit(86))
+    else:
+        docker.attest_exit = True
+    with pytest.raises(SystemExit):
+        recovery_client()
+    receipt = json.loads((tmp_path / "recovery.json").read_text())
+    if cutpoint == "after_first":
+        assert receipt["roles"]["api"]["request_result"] == "intent_recorded"
+    else:
+        assert receipt["stage"] == "attesting"
+    assert docker.state["phase"] == "blocked"
+    docker.after_update = None
+    docker.attest_exit = False
+    recovery_client()
+    assert docker.updates == ["api", "worker"] and docker.state["phase"] == "verified"
+
+
 @pytest.mark.parametrize("damage", ["mode", "symlink", "oversize", "extra", "hardlink"])
 def test_receipt_security_refuses_reentry(tmp_path, docker, recovery_client, damage):
     docker.before_update = lambda role: (_ for _ in ()).throw(RolloutError("Interrompido"))
@@ -583,6 +711,7 @@ def unix_engine(monkeypatch):
         "body": {"message": "No such image: " + LOST},
         "posts": [],
         "version": {"Version": "29.1.3", "ApiVersion": "1.52", "MinAPIVersion": "1.44"},
+        "real_run": subprocess.run,
     }
 
     class Handler(BaseHTTPRequestHandler):
@@ -613,14 +742,21 @@ def unix_engine(monkeypatch):
             state["posts"].append(
                 (self.path, json.loads(self.rfile.read(int(self.headers["Content-Length"]))))
             )
-            self.send_response(409)
-            self.send_header("Content-Length", "0")
+            if state.get("post_disconnect"):
+                self.close_connection = True
+                return
+            content = state.get("post_body", "")
+            body = content.encode() if isinstance(content, str) else json.dumps(content).encode()
+            self.send_response(state.get("post_status", 409))
+            self.send_header("Content-Length", str(len(body)))
             self.end_headers()
+            self.wfile.write(body)
 
     with tempfile.TemporaryDirectory(
         prefix="leadkit-recovery80-runtime-", dir=Path(__file__).resolve().parents[2]
     ) as folder:
         endpoint = "unix://" + folder + "/engine.sock"
+        state["endpoint"] = endpoint
         server = UnixStreamServer(endpoint.removeprefix("unix://"), Handler)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
@@ -663,6 +799,60 @@ def test_engine_classifies_only_exact_imageinspect_missing(unix_engine, tmp_path
         engine.image(LOST)
 
 
+def test_real_wrapper_catches_the_same_recovery_exception_class(unix_engine, tmp_path):
+    state, _ = unix_engine
+    state["version"].update(Version="28.5.1", ApiVersion="1.51")
+    source = Path(__file__).resolve().parents[1] / "deploy/swarm"
+    for name in ("deploy.sh", "rollout.py", "recovery.py"):
+        shutil.copy2(source / name, tmp_path / name)
+    (tmp_path / "app.env").write_text(
+        "STACK_NAME=fixture\nPUBLIC_BASE_URL=https://example.test\nFORWARDED_ALLOW_IPS=127.0.0.1\n"
+    )
+    (tmp_path / "db.env").touch()
+    (tmp_path / "stack.yaml").write_text("services: {}\n")
+    binary = tmp_path / "bin"
+    binary.mkdir()
+    (binary / "python3").symlink_to(sys.executable)
+    context = [{"Endpoints": {"docker": {"Host": state["endpoint"], "SkipTLSVerify": False}}}]
+    cli = binary / "docker"
+    cli.write_text(
+        "#!/usr/bin/env python3\nimport sys,json\na=sys.argv[1:]\n"
+        'if a==["context","show"]: print("fixture")\n'
+        'elif a==["context","inspect","fixture"]: print(json.dumps(' + repr(context) + "))\n"
+        'elif a[:2] in [["image","inspect"],["service","inspect"]]: pass\n'
+        "else: raise SystemExit(90)\n"
+    )
+    cli.chmod(0o700)
+    environment = {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith("DOCKER_") and key not in {"STACK", "DOMAIN", "FORWARDED_ALLOW_IPS"}
+    }
+    environment.update(
+        PATH=str(binary) + os.pathsep + os.environ["PATH"],
+        IMAGE=CURRENT,
+        RECOVER_CURRENT="1",
+        RECOVERY_CURRENT_ID=CURRENT,
+        EXPECTED_PREVIOUS_API=LOST,
+        EXPECTED_PREVIOUS_WORKER=LOST,
+        RECOVERY_RECEIPT="recovery.json",
+        ROLLBACK="0",
+    )
+    result = state["real_run"](
+        [str(tmp_path / "deploy.sh")],
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=20,
+        check=False,
+    )
+    assert result.returncode == 1
+    assert "Traceback" not in result.stderr
+    assert result.stderr.startswith("deploy.sh: Recuperação requer Engine29")
+    assert not (tmp_path / "recovery.json").exists()
+    assert not state["posts"]
+
+
 @pytest.mark.parametrize(
     "status,body",
     [
@@ -699,6 +889,62 @@ def test_engine_sends_original_cas_version_once(unix_engine, tmp_path):
             {"Name": "fixture_api"},
         )
     ]
+
+
+@pytest.mark.parametrize(
+    "status,body,kind",
+    [
+        (409, "", "UpdateRejected"),
+        (403, {"message": "PRIVATE"}, "UpdateRejected"),
+        (500, {"message": "update out of sequence"}, "UpdateRejected"),
+        (
+            500,
+            {"message": "rpc error: code = Unknown desc = update out of sequence"},
+            "UpdateRejected",
+        ),
+        (500, {"message": "PRIVATE"}, "UpdateUnknown"),
+        (200, "", "UpdateUnknown"),
+        (200, "invalid", "UpdateUnknown"),
+        (200, {"message": "PRIVATE"}, "UpdateUnknown"),
+    ],
+)
+def test_update_transport_distinguishes_refusal_from_unknown(
+    unix_engine, tmp_path, status, body, kind
+):
+    from deploy.swarm.recovery import EngineUnix
+
+    state, _ = unix_engine
+    state.update(post_status=status, post_body=body)
+    engine = EngineUnix(Rollout(tmp_path, CURRENT, "fixture", False))
+    with pytest.raises(RolloutError) as error:
+        engine.update("api", 10, {"Name": "fixture_api"})
+    assert type(error.value).__name__ == kind
+    assert "PRIVATE" not in str(error.value)
+    assert len(state["posts"]) == 1
+
+
+def test_update_transport_marks_known_no_send(unix_engine, tmp_path):
+    from deploy.swarm.recovery import EngineUnix
+
+    state, _ = unix_engine
+    engine = EngineUnix(Rollout(tmp_path, CURRENT, "fixture", False))
+    Path(state["endpoint"].removeprefix("unix://")).unlink()
+    with pytest.raises(RolloutError) as error:
+        engine.update("api", 10, {"Name": "fixture_api"})
+    assert type(error.value).__name__ == "UpdateNotSent"
+    assert not state["posts"]
+
+
+def test_update_transport_marks_lost_response_unknown(unix_engine, tmp_path):
+    from deploy.swarm.recovery import EngineUnix
+
+    state, _ = unix_engine
+    state["post_disconnect"] = True
+    engine = EngineUnix(Rollout(tmp_path, CURRENT, "fixture", False))
+    with pytest.raises(RolloutError) as error:
+        engine.update("api", 10, {"Name": "fixture_api"})
+    assert type(error.value).__name__ == "UpdateUnknown"
+    assert len(state["posts"]) == 1
 
 
 @pytest.mark.parametrize(

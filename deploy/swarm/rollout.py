@@ -894,4 +894,8 @@ def main():
 
 
 if __name__ == "__main__":
+    # CLI e imports operacionais compartilham este mesmo módulo e RolloutError.
+    import sys
+
+    sys.modules[f"{__package__}.rollout" if __package__ else "rollout"] = sys.modules[__name__]
     raise SystemExit(main())

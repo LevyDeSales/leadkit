@@ -112,10 +112,23 @@ Se houver falha após begin, preserve o gate blocked e o recibo. Um papel pode t
 enquanto o outro ainda aponta para a histórica ausente. Timeout pode esconder um commit: **não
 execute rollback da histórica, force ou comandos avulsos para tentar repetir**. Repita a mesma
 entrada explícita e o mesmo recibo somente para reconciliar fatos da própria tentativa. O helper
-reconhece commit já comprovado e não o reenvia; estado alheio, epoch diferente, task reiniciada ou
-versão/Spec desconhecida recusam retomada e exigem reconciliação operacional. Resposta perdida
-de attest é reconhecida por epoch e hash da evidência persistida. Replay concluído verifica os
-fatos novamente. Uma falha sem correspondência permanece fechada; não existe retomada universal.
+preserva no recibo o resultado observado do envio: `not_sent` antes de iniciar POST,
+`rejected` para recusa conclusiva, `acknowledged` para resposta positiva ou `unknown` quando o
+envio iniciou sem resposta conclusiva. Morte do processo pode deixar somente `intent_recorded`.
+Erro não classificado é terminal; não vira resultado desconhecido. Uma recusa conclusiva registrada impede
+reentrada mesmo que outro cliente tenha instalado Spec idêntica. Sem envio confirmado, somente
+a baseline intocada permite nova tentativa explícita.
+
+Após envio incerto, a reconciliação observa Spec/Previous/versão/execução compatíveis e não reenvia
+o update já refletido nesse estado. **Sem resposta, a versão avançada não demonstra autoria:**
+o protocolo de Spec idêntica não identifica qual cliente escreveu. O recibo conserva a incerteza
+e registra a versão efetivamente observada, sem convertê-la em prova de commit próprio.
+Estado alheio, epoch diferente, task reiniciada ou versão/Spec desconhecida recusam retomada.
+Resposta perdida de attest é reconhecida por epoch e hash da evidência persistida; a etapa
+`attesting` interrompida pode ser reconciliada. Um recibo `done` apenas verifica sua atestação
+verified correspondente e nunca atesta novamente um bloqueio posterior, mesmo com o mesmo epoch.
+Recibos usam formato2; o formato anterior não distingue recusa de incerteza e é recusado, exigindo
+reconciliação operacional. Uma falha sem correspondência permanece fechada; não há retomada universal.
 
 A CI usa a perna `contract-two` do Swarm existente, com guard real de Engine29/containerd e
 fixture OCI com provenance. Ela ensaia perda da Previous própria, CAS obsoleta, interrupção após
