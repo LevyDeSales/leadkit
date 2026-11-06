@@ -455,6 +455,189 @@ def test_oci_fixture_proof_accepts_runtime_config_in_complete_graph(tmp_path):
     oci_proof(archive)
 
 
+@pytest.mark.parametrize(
+    "returncode,phase", [(1, "verified"), (86, "verified"), (0, "blocked"), (87, "blocked")]
+)
+def test_cut_checkpoint_explains_failure_without_accepting_wrong_exit_or_gate(
+    tmp_path, capsys, returncode, phase
+):
+    import swarm_recovery_scenario as scenario
+
+    message = "Uma task está suja em relação à Current ou endpoint."
+    child = subprocess.CompletedProcess(
+        ["SYNTHETIC_PRIVATE_ARG"],
+        returncode,
+        "SYNTHETIC_PRIVATE_STDOUT",
+        "deploy.sh: " + message + "\nSYNTHETIC_PRIVATE_STDERR\n",
+    )
+    with pytest.raises(AssertionError):
+        scenario.assert_cut(
+            "after_first",
+            child,
+            lambda: {"phase": phase, "minimum_contract": 3},
+            tmp_path / "missing.json",
+        )
+    output = capsys.readouterr().out
+    data = json.loads(output)
+    assert data["cutpoint"] == "after_first" and data["returncode"] == returncode
+    assert data["expected_returncode"] == 86 and data["phase"] == phase
+    assert data["helper_error"]["message"] == message
+    assert data["receipt"]["status"] == "absent"
+    assert "SYNTHETIC_PRIVATE" not in output
+
+
+@pytest.mark.parametrize("cutpoint,returncode", [("after_first", 86), ("before_attest", 87)])
+def test_cut_checkpoint_selects_only_receipt_metadata_and_preserves_success(
+    tmp_path, capsys, cutpoint, returncode
+):
+    import swarm_recovery_scenario as scenario
+
+    receipt = tmp_path / "recovery.json"
+    receipt.write_text(
+        json.dumps(
+            {
+                "format": 2,
+                "stage": "begun",
+                "roles": {
+                    "api": {
+                        "phase": "inflight",
+                        "request_result": "unknown",
+                        "Env": "SYNTHETIC_PRIVATE",
+                    },
+                    "worker": {"phase": "pending", "request_result": "not_attempted"},
+                },
+                "Spec": "SYNTHETIC_PRIVATE",
+                "epoch": "SYNTHETIC_PRIVATE",
+            }
+        )
+    )
+    receipt.chmod(0o600)
+    child = subprocess.CompletedProcess([], returncode, "", "")
+    scenario.assert_cut(
+        cutpoint, child, lambda: {"phase": "blocked", "minimum_contract": 3}, receipt
+    )
+    output = capsys.readouterr().out
+    data = json.loads(output)
+    assert data["receipt"]["stage"] == "begun"
+    assert data["receipt"]["roles"] == {
+        "api": {"phase": "inflight", "request_result": "unknown"},
+        "worker": {"phase": "pending", "request_result": "not_attempted"},
+    }
+    assert data["helper_error"] is None
+    assert "SYNTHETIC_PRIVATE" not in output and "Spec" not in output and "Env" not in output
+
+
+@pytest.mark.parametrize("unsafe", ["oversized", "symlink", "invalid_values", "invalid_json"])
+def test_cut_checkpoint_bounds_and_sanitizes_untrusted_evidence(tmp_path, capsys, unsafe):
+    import swarm_recovery_scenario as scenario
+
+    receipt = tmp_path / "recovery.json"
+    if unsafe == "symlink":
+        target = tmp_path / "private.json"
+        target.write_text("SYNTHETIC_PRIVATE")
+        receipt.symlink_to(target)
+    elif unsafe == "invalid_values":
+        receipt.write_text(
+            json.dumps(
+                {
+                    "stage": "SYNTHETIC_PRIVATE",
+                    "roles": {
+                        "api": {"phase": "SYNTHETIC_PRIVATE", "request_result": "SYNTHETIC_PRIVATE"}
+                    },
+                }
+            )
+        )
+    else:
+        receipt.write_text("SYNTHETIC_PRIVATE" * (4000 if unsafe == "oversized" else 1))
+    if not receipt.is_symlink():
+        receipt.chmod(0o600)
+    child = subprocess.CompletedProcess(
+        [], 1, "SYNTHETIC_PRIVATE" * 1000, "SYNTHETIC_PRIVATE" * 1000
+    )
+    with pytest.raises(AssertionError):
+        scenario.assert_cut("after_first", child, lambda: {"phase": "SYNTHETIC_PRIVATE"}, receipt)
+    output = capsys.readouterr().out
+    data = json.loads(output)
+    assert data["phase"] == "invalid" and data["helper_error"] is None
+    assert data["stderr"] == data["stdout"] == "oversized"
+    assert (
+        data["receipt"]["status"]
+        == {
+            "oversized": "oversized",
+            "symlink": "unsafe",
+            "invalid_values": "selected",
+            "invalid_json": "invalid",
+        }[unsafe]
+    )
+    assert "SYNTHETIC_PRIVATE" not in output and len(output) < 4096
+
+
+@pytest.mark.parametrize(
+    "stderr",
+    [
+        "deploy.sh: Uma task está suja em relação à Current ou endpoint. SYNTHETIC_PRIVATE",
+        "Traceback: SYNTHETIC_PRIVATE",
+        '{"Env":"SYNTHETIC_PRIVATE"}',
+    ],
+)
+def test_cut_checkpoint_never_echoes_unknown_short_stderr(tmp_path, capsys, stderr):
+    import swarm_recovery_scenario as scenario
+
+    with pytest.raises(AssertionError):
+        scenario.assert_cut(
+            "after_first",
+            subprocess.CompletedProcess([], 1, "", stderr),
+            lambda: {"phase": "blocked"},
+            tmp_path / "missing.json",
+        )
+    output = capsys.readouterr().out
+    assert json.loads(output)["helper_error"] is None
+    assert "SYNTHETIC_PRIVATE" not in output
+
+
+def test_cut_checkpoint_emits_evidence_before_state_read_failure(tmp_path, capsys):
+    import swarm_recovery_scenario as scenario
+
+    def unavailable():
+        raise RolloutError("SYNTHETIC_PRIVATE_ERROR")
+
+    with pytest.raises(RolloutError):
+        scenario.assert_cut(
+            "before_attest",
+            subprocess.CompletedProcess([], 87, "", ""),
+            unavailable,
+            tmp_path / "missing.json",
+        )
+    output = capsys.readouterr().out
+    data = json.loads(output)
+    assert data["returncode"] == 87 and data["phase"] == "unavailable"
+    assert data["state_error"] == "RolloutError"
+    assert "SYNTHETIC_PRIVATE" not in output
+
+
+def test_cut_checkpoint_selects_known_traceback_type_and_location_without_paths(tmp_path, capsys):
+    import swarm_recovery_scenario as scenario
+
+    stderr = (
+        "Traceback (most recent call last):\n"
+        '  File "/SYNTHETIC_PRIVATE/rollout.py", line 870, in main\n'
+        '  File "<string>", line 15, in <module>\n'
+        "NameError: SYNTHETIC_PRIVATE_MESSAGE\n"
+    )
+    with pytest.raises(AssertionError):
+        scenario.assert_cut(
+            "after_first",
+            subprocess.CompletedProcess([], 1, "", stderr),
+            lambda: {"phase": "verified"},
+            tmp_path / "missing.json",
+        )
+    output = capsys.readouterr().out
+    data = json.loads(output)
+    assert data["traceback"] is True and data["child_exception"] == "NameError"
+    assert data["child_location"] == {"file": "harness", "line": 15}
+    assert "SYNTHETIC_PRIVATE" not in output
+
+
 def test_lost_attestation_response_reentry_does_not_reopen_or_rewrite(docker, recovery_client):
     docker.attest_response_lost = True
     with pytest.raises(RolloutError):

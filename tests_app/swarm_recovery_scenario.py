@@ -6,11 +6,14 @@ Não importa fixtures/fakes de pytest nem oferece flags de falha ao produto.
 from __future__ import annotations
 
 import argparse
+import ast
+import errno
 import hashlib
 import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tarfile
@@ -38,6 +41,188 @@ def docker(*args, **kwargs):
 
 def decoded(*args):
     return json.loads(docker(*args))
+
+
+def _controlled_error(stderr):
+    if not isinstance(stderr, str) or len(stderr) > 8192:
+        return None
+    # Só mensagens literais de raises conhecidos do código público podem sair.
+    # Valores interpolados, mensagens arbitrárias do daemon e traceback não entram.
+    allowed = set()
+    for name in ("rollout.py", "recovery.py"):
+        source = Path(__file__).resolve().parents[1] / "deploy/swarm" / name
+        try:
+            tree = ast.parse(source.read_text())
+        except (OSError, SyntaxError, UnicodeError):
+            continue
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Raise)
+                and isinstance(node.exc, ast.Call)
+                and isinstance(node.exc.func, ast.Name)
+                and node.exc.func.id
+                in {
+                    "RolloutError",
+                    "ImageMissing",
+                    "UpdateNotSent",
+                    "UpdateRejected",
+                    "UpdateUnknown",
+                    "error",
+                }
+                and node.exc.args
+                and isinstance(node.exc.args[0], ast.Constant)
+                and isinstance(node.exc.args[0].value, str)
+                and len(node.exc.args[0].value) <= 512
+            ):
+                allowed.add("deploy.sh: " + node.exc.args[0].value)
+    for line in stderr.splitlines()[:64]:
+        if line in allowed:
+            return {
+                "code": "sha256:" + hashlib.sha256(line.encode()).hexdigest()[:16],
+                "message": line.removeprefix("deploy.sh: "),
+            }
+    return None
+
+
+def _selected(value, allowed):
+    return (
+        value
+        if isinstance(value, str) and value in allowed
+        else "missing"
+        if value is None
+        else "invalid"
+    )
+
+
+def _child_traceback(stderr):
+    if not isinstance(stderr, str) or len(stderr) > 8192:
+        return {"traceback": "unavailable"}
+    lines = stderr.splitlines()[:64]
+    if "Traceback (most recent call last):" not in lines:
+        return {"traceback": False}
+    result = {"traceback": True, "child_exception": None, "child_location": None}
+    for line in lines:
+        kind = re.match(
+            r"^(?:(?:rollout|recovery)\.)?(AssertionError|AttributeError|KeyError|TypeError|ValueError|RuntimeError|ImportError|ModuleNotFoundError|NameError|OSError|RolloutError|UpdateNotSent|UpdateRejected|UpdateUnknown)(?::|$)",
+            line,
+        )
+        if kind:
+            result["child_exception"] = kind[1]
+        location = re.match(
+            r'^\s*File "(?:[^"\n]*/)?(rollout\.py|recovery\.py|<string>)", line ([1-9][0-9]{0,4})(?:,|$)',
+            line,
+        )
+        if location:
+            result["child_location"] = {
+                "file": "harness" if location[1] == "<string>" else location[1],
+                "line": int(location[2]),
+            }
+    return result
+
+
+def _receipt_checkpoint(path):
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except FileNotFoundError:
+        return {"status": "absent"}
+    except OSError as error:
+        return {"status": "unsafe" if error.errno == errno.ELOOP else "unavailable"}
+    try:
+        with os.fdopen(fd) as stream:
+            info = os.fstat(stream.fileno())
+            if (
+                not stat.S_ISREG(info.st_mode)
+                or stat.S_IMODE(info.st_mode) != 0o600
+                or info.st_uid != os.getuid()
+                or info.st_nlink != 1
+            ):
+                return {"status": "unsafe"}
+            if info.st_size > 65536:
+                return {"status": "oversized"}
+            raw = stream.read(65537)
+            if len(raw) > 65536:
+                return {"status": "oversized"}
+            document = json.loads(raw)
+        if not isinstance(document, dict):
+            return {"status": "invalid"}
+        roles = document.get("roles", {})
+        result = {
+            "status": "selected",
+            "stage": _selected(document.get("stage"), {"prepared", "begun", "attesting", "done"}),
+            "roles": {},
+        }
+        for role in ("api", "worker"):
+            row = roles.get(role, {}) if isinstance(roles, dict) else {}
+            if not isinstance(row, dict):
+                row = {}
+            result["roles"][role] = {
+                "phase": _selected(
+                    row.get("phase"), {"pending", "inflight", "complete", "rejected", "failed"}
+                ),
+                "request_result": _selected(
+                    row.get("request_result"),
+                    {
+                        "not_attempted",
+                        "intent_recorded",
+                        "not_sent",
+                        "rejected",
+                        "acknowledged",
+                        "unknown",
+                        "unclassified",
+                    },
+                ),
+            }
+        return result
+    except (OSError, ValueError, TypeError, UnicodeError):
+        return {"status": "invalid"}
+
+
+def assert_cut(cutpoint, child, read_state, receipt):
+    """Registra só metadados seguros antes de exigir corte exato e gate bloqueado."""
+    if cutpoint not in {"after_first", "before_attest"}:
+        raise ValueError("Ponto de corte inválido para o ensaio.")
+    expected = 86 if cutpoint == "after_first" else 87
+    state_error = None
+    try:
+        state = read_state()
+        phase = _selected(state.get("phase"), {"verified", "blocked"})
+    except Exception as error:  # noqa: BLE001 — diagnostica sem esconder a falha original.
+        state_error = error
+        phase = "unavailable"
+    checkpoint = {
+        "stage": "recovery_cut_checkpoint",
+        "cutpoint": cutpoint,
+        "returncode": child.returncode
+        if type(child.returncode) is int and -255 <= child.returncode <= 255
+        else "invalid",
+        "expected_returncode": expected,
+        "phase": phase,
+        "receipt": _receipt_checkpoint(receipt),
+        "helper_error": _controlled_error(child.stderr),
+    }
+    checkpoint.update(_child_traceback(child.stderr))
+    for name in ("stdout", "stderr"):
+        value = getattr(child, name)
+        checkpoint[name] = (
+            "invalid"
+            if not isinstance(value, str)
+            else "oversized"
+            if len(value) > 8192
+            else "present"
+            if value
+            else "empty"
+        )
+    if state_error is not None:
+        checkpoint["state_error"] = (
+            type(state_error).__name__
+            if type(state_error)
+            in {RolloutError, OSError, ValueError, TypeError, KeyError, AttributeError}
+            else "unclassified"
+        )
+    print(json.dumps(checkpoint), flush=True)
+    if state_error is not None:
+        raise state_error
+    assert child.returncode == expected and phase == "blocked"
 
 
 def runtime(stack):
@@ -322,10 +507,7 @@ raise SystemExit(rollout.main())
     cut = run(
         sys.executable, "-c", harness, str(folder), stack, cutpoint, env=environment, optional=True
     )
-    assert (
-        cut.returncode == (86 if cutpoint == "after_first" else 87)
-        and reader.state()["phase"] == "blocked"
-    )
+    assert_cut(cutpoint, cut, reader.state, folder / "recovery-ci.json")
     partial_receipt = json.loads((folder / "recovery-ci.json").read_text())
     witness = [json.loads(line) for line in cut.stdout.splitlines()]
     assert len(witness) == (1 if cutpoint == "after_first" else 2)
