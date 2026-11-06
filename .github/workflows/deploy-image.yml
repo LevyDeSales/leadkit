@@ -351,7 +351,7 @@ jobs:
           conf="$RUNNER_TEMP/swarm"
           echo "CONF=$conf" >> "$GITHUB_ENV"
           mkdir -p "$conf"
-          cp deploy/swarm/stack.yaml deploy/swarm/deploy.sh deploy/swarm/rollout.py "$conf/"
+          cp deploy/swarm/stack.yaml deploy/swarm/deploy.sh deploy/swarm/rollout.py deploy/swarm/recovery.py "$conf/"
           docker run --rm -i --user "$(id -u):$(id -g)" --env DOMAIN --env CI_STACK_NAME \
             -v "$PWD/deploy/swarm:/modelos:ro" -v "$conf:/conf" -v "$RUNNER_TEMP:/out" \
             gerador-planos:ci python - /modelos /conf /out <<'PY'
@@ -679,7 +679,7 @@ jobs:
           find "$source" -type d -exec chmod 755 {} +
           find "$source" -type f -exec chmod 644 {} +
           docker build --quiet --tag "$old_image" "$source"
-          cp "$CONF/stack.yaml" "$CONF/deploy.sh" "$CONF/rollout.py" "$CONF/app.env" "$CONF/db.env" "$folder/"
+          cp "$CONF/stack.yaml" "$CONF/deploy.sh" "$CONF/rollout.py" "$CONF/recovery.py" "$CONF/app.env" "$CONF/db.env" "$folder/"
           python3 - "$folder/app.env" "$compat" <<'PY'
           import re
           import sys
@@ -1473,6 +1473,10 @@ jobs:
           test "$(runtime verified)" = "$db_before"
           test "$(runtime snapshot)" = "$stable"
 
+      - name: Rehearse explicit Current recovery on Engine29 containerd
+        if: matrix.adoption_baseline == 'contract-two'
+        run: python3 tests_app/swarm_recovery_scenario.py --folder "$CONF"
+
       - name: Update, break and go back with deploy.sh, including drained recovery
         run: |
           cd "$CONF"
@@ -1784,7 +1788,7 @@ jobs:
           conf_b="$RUNNER_TEMP/swarm-b"
           echo "CONF_B=$conf_b" >> "$GITHUB_ENV"
           mkdir -p "$conf_b"
-          cp "$CONF/stack.yaml" "$CONF/deploy.sh" "$CONF/rollout.py" "$CONF/app.env" "$CONF/db.env" "$conf_b/"
+          cp "$CONF/stack.yaml" "$CONF/deploy.sh" "$CONF/rollout.py" "$CONF/recovery.py" "$CONF/app.env" "$CONF/db.env" "$conf_b/"
           python3 - "$conf_b/app.env" "$DOMAIN_B" gerador-planos-b <<'PY'
           import re
           import sys

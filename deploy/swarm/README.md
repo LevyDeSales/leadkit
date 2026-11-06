@@ -5,7 +5,7 @@ pela operadora. Confira rede, entrypoint e certresolver em [stack.yaml](stack.ya
 compartilham banco, storage e, quando houver, o overlay de marca somente leitura. Use domínio,
 banco e segredos próprios e ensaie a atualização em ambiente isolado antes da instalação.
 
-Copie **`stack.yaml`, `deploy.sh` e `rollout.py` juntos** para uma pasta de configuração fora do
+Copie **`stack.yaml`, `deploy.sh`, `rollout.py` e `recovery.py` juntos** para uma pasta de configuração fora do
 código. Copie os modelos `app.env.example` e `db.env.example` como `app.env` e `db.env`, preencha-os
 e restrinja ambos a modo `600`. `DATABASE_URL` deve apontar para o serviço Postgres da mesma stack
 e usar o usuário/banco de `db.env`. Escolha `STACK_NAME` e domínio próprios. Não reutilize a pasta
@@ -54,6 +54,75 @@ em voo pela mesma trava de configuração. As entregas internas autorizadas segu
 existente. Falha conserva intenções e configurações; repetir entrega não gera outro plano/PDF.
 
 ## Imagens, retorno e recuperação
+
+### Recompor o retorno com a Current comprovada
+
+Se a imagem da Previous histórica foi perdida, o deploy normal continua recusando antes de
+`begin`, migrations ou alteração da frota. Uma recuperação separada e explícita pode **substituir
+esse histórico por um novo ponto de retorno igual à Current**. Ela não restaura os bytes perdidos
+e não instala outra versão. Use somente após revisão, CI e ensaio no daemon da instalação.
+
+Pré-condições: backup atual do banco verificado e bytes completos da Current preservados e
+ensaiados; o alias `leadkit-local:<hash-do-ID>` já precisa resolver a Current exata. Este modo
+recusa alias ausente ou divergente, sem criar ou sobrescrever tags. O backup
+de banco não preserva imagens. Prepare essas provas pelo procedimento autorizado de backup;
+este modo não chama `backup.sh` nem faz retenção ou exclusão de arquivos.
+
+O escopo é Engine29 com store `io.containerd.snapshotter.v1`, API1.52, manager local ready/reachable,
+schema exatamente `0020_draft_test_commands`, piso3 e estado verified com evidência existente
+válida para a stack/nó/Current. A operadora informa o ID `sha256:` exato da Current comum à API e
+worker e as duas referências Previous observadas. TLS, contexto remoto ou daemon diferente do
+CLI são recusados. Use uma pasta operacional privada e a mesma identidade de sistema na retomada.
+
+Na pasta de configuração, preencha os valores a partir das provas da instalação:
+
+```sh
+# Variáveis de metadados, sem segredos; recibo novo nesta pasta.
+RECOVER_CURRENT=1 IMAGE="$CURRENT_ID" RECOVERY_CURRENT_ID="$CURRENT_ID" \
+  EXPECTED_PREVIOUS_API="$PREVIOUS_API_REF" EXPECTED_PREVIOUS_WORKER="$PREVIOUS_WORKER_REF" \
+  RECOVERY_RECEIPT=recovery-tentativa.json ./deploy.sh
+```
+
+`RECOVER_CURRENT` aceita `0` (padrão) ou `1` e não combina com `ROLLBACK=1`. `IMAGE` precisa ser
+literalmente o ID esperado, sem tag. O recibo `.json` fica diretamente na pasta canônica; não use
+symlink nem compartilhe o arquivo com permissão de escrita. Não remova, edite ou reutilize um
+recibo de outra tentativa. Ele é criado atomicamente em modo600 **antes de begin** e guarda só
+IDs, referências, hashes, versões, epoch e progresso; Spec/Env integrais ficam apenas em memória.
+
+O helper prova ausência somente pelo404 exato de ImageInspect da referência esperada no mesmo
+daemon. Permissão, timeout, JSON inválido,500 ou404 de outra rota não autorizam recuperação.
+Current, tasks e containers precisam estar saudáveis, locais e sem reinícios; TaskTemplate e
+endpoint precisam corresponder à Current. Diferença de placement também é recusada por cautela.
+A exceção de PullOptions aplica-se somente às tasks comprovadamente running. Colisão de alias,
+atualização/rollback em andamento ou inventário incompleto impede begin.
+
+Após confirmar `begin` com piso3/blocked e epoch próprio, cada serviço recebe sua **mesma Spec
+integral**, sem force, scale, migrations, stack deploy, imagem nova ou mudança das políticas de
+rollback. O POST usa a versão da baseline validada por CAS, conserva autenticação da Current e
+não usa um novo inspect do CLI como versão. O manager grava legitimamente Current→Previous.
+Uma versão obsoleta é erro; não há refresh/retry automático. A disponibilidade interna continua
+conforme o contrato existente enquanto novas entregas participantes permanecem bloqueadas.
+
+O helper exige Current/Previous executáveis3, hashes de Spec/endpoint preservados, mesmos
+task/containerIDs, StartedAt, RestartCount e saúde. Faz duas coletas completas iguais antes de
+atestar o epoch próprio. O recibo declara `current_replaces_lost_history`; a mensagem final
+explica que a imagem histórica não foi restaurada.
+
+Se houver falha após begin, preserve o gate blocked e o recibo. Um papel pode ter sido recomposto
+enquanto o outro ainda aponta para a histórica ausente. Timeout pode esconder um commit: **não
+execute rollback da histórica, force ou comandos avulsos para tentar repetir**. Repita a mesma
+entrada explícita e o mesmo recibo somente para reconciliar fatos da própria tentativa. O helper
+reconhece commit já comprovado e não o reenvia; estado alheio, epoch diferente, task reiniciada ou
+versão/Spec desconhecida recusam retomada e exigem reconciliação operacional. Resposta perdida
+de attest é reconhecida por epoch e hash da evidência persistida. Replay concluído verifica os
+fatos novamente. Uma falha sem correspondência permanece fechada; não existe retomada universal.
+
+A CI usa a perna `contract-two` do Swarm existente, com guard real de Engine29/containerd e
+fixture OCI com provenance. Ela ensaia perda da Previous própria, CAS obsoleta, interrupção após
+commit e antes de attest, reentrada, retorno utilizável e atualização posterior. Esse ensaio
+precisa passar no SHA proposto; fake de Docker não comprova ausência de reinício. A patch exata
+do daemon é registrada: resultado de29.4.2 não afirma equivalência à29.1.3. Se tasks mudarem no
+ensaio, interrompa a proposta sem acrescentar force ou escolher pausa automaticamente.
 
 A capacidade vem de **executar o comando da imagem exata**, nunca de um label arbitrário.
 O deploy sempre conserva a referência `leadkit-local:<hash-do-ID>` no daemon local antes de

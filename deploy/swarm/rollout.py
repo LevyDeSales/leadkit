@@ -836,6 +836,11 @@ def main():
     parser.add_argument("--image", required=True)
     parser.add_argument("--stack", required=True)
     parser.add_argument("--rollback", choices=["0", "1"], required=True)
+    parser.add_argument("--recover-current", action="store_true")
+    parser.add_argument("--expected-current")
+    parser.add_argument("--expected-previous-api")
+    parser.add_argument("--expected-previous-worker")
+    parser.add_argument("--recovery-receipt")
     args = parser.parse_args()
     try:
         lock_path = Path(args.folder) / ".deployment.lock"
@@ -847,7 +852,35 @@ def main():
                 raise RolloutError(
                     "Já há um deploy nesta pasta; aguarde a conclusão antes de repetir."
                 ) from None
-            Rollout(args.folder, args.image, args.stack, args.rollback == "1").execute()
+            rollout = Rollout(args.folder, args.image, args.stack, args.rollback == "1")
+            recovery_values = (
+                args.expected_current,
+                args.expected_previous_api,
+                args.expected_previous_worker,
+                args.recovery_receipt,
+            )
+            if args.recover_current:
+                if not all(recovery_values):
+                    raise RolloutError(
+                        "Recuperação exige CurrentID, Previous dos dois papéis e recibo."
+                    )
+                if __package__:
+                    from .recovery import Recovery
+                else:
+                    from recovery import Recovery
+                receipt = Path(args.recovery_receipt)
+                if not receipt.is_absolute():
+                    receipt = Path(args.folder) / receipt
+                Recovery(
+                    rollout,
+                    args.expected_current,
+                    {"api": args.expected_previous_api, "worker": args.expected_previous_worker},
+                    receipt,
+                ).execute()
+            elif any(recovery_values):
+                raise RolloutError("Parâmetros de recuperação exigem o modo explícito.")
+            else:
+                rollout.execute()
         return 0
     except RolloutError as exc:
         print(f"deploy.sh: {exc}", file=__import__("sys").stderr)
