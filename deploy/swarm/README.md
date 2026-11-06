@@ -100,6 +100,11 @@ Após confirmar `begin` com piso3/blocked e epoch próprio, cada serviço recebe
 integral**, sem force, scale, migrations, stack deploy, imagem nova ou mudança das políticas de
 rollback. O POST usa a versão da baseline validada por CAS, conserva autenticação da Current e
 não usa um novo inspect do CLI como versão. O manager grava legitimamente Current→Previous.
+A baseline é lida com `insertDefaults=false`: hashes e corpo do POST usam somente essa Spec
+bruta. Como `docker service inspect` solicita defaults, uma segunda visão do Engine com
+`insertDefaults=true` serve exclusivamente para comparar Spec/PreviousSpec completas com a CLI.
+As três leituras devem manter ID e versão originais; drift recusa a recuperação, sem adotar uma
+baseline nova nem enviar defaults interpolados no update.
 Uma versão obsoleta é erro; não há refresh/retry automático. A disponibilidade interna continua
 conforme o contrato existente enquanto novas entregas participantes permanecem bloqueadas.
 

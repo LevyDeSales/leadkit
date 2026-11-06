@@ -85,6 +85,16 @@ class DockerFixture:
                 "Config": {"Labels": {"com.docker.swarm.task.id": role + "-task"}},
             }
 
+    def service_projection(self, role, *, view="engine"):
+        value = copy.deepcopy(self.services[role])
+        if getattr(self, "insert_defaults", False):
+            # SwarmKit docker-v29.4.2 interpola somente Spec, não PreviousSpec.
+            # Resources ausente vira ResourceRequirements vazio na projeção API.
+            value["Spec"]["TaskTemplate"].setdefault("Resources", {})
+        if getattr(self, "projection_fault", None):
+            self.projection_fault(view, value)
+        return value
+
     def run(self, command, *, input=None, **kwargs):
         args = command[1:]
         self.calls.append(args)
@@ -104,7 +114,7 @@ class DockerFixture:
         elif head == ["network", "inspect"]:
             value = []
         elif head == ["service", "inspect"]:
-            value = [self.services[args[-1].rsplit("_", 1)[-1]]]
+            value = [self.service_projection(args[-1].rsplit("_", 1)[-1], view="cli")]
         elif head == ["service", "ps"]:
             role = args[-1].rsplit("_", 1)[-1]
             value = "\n".join(
@@ -213,8 +223,13 @@ def recovery_client(tmp_path, docker, monkeypatch):
         def confirm(self):
             pass
 
-        def service(self, name):
-            return copy.deepcopy(docker.services[name.rsplit("_", 1)[-1]])
+        def service(self, name, *, insert_defaults=False):
+            role = name.rsplit("_", 1)[-1]
+            return (
+                docker.service_projection(role)
+                if insert_defaults
+                else copy.deepcopy(docker.services[role])
+            )
 
         def image(self, ref):
             if getattr(docker, "alias_collision", False) and ref.startswith("leadkit-local:"):
@@ -233,6 +248,8 @@ def recovery_client(tmp_path, docker, monkeypatch):
             return copy.deepcopy(docker.containers[cid])
 
         def update(self, service_id, version, spec):
+            docker.update_requests = getattr(docker, "update_requests", [])
+            docker.update_requests.append((service_id, version, spec))
             if isinstance(spec, bytes):
                 spec = json.loads(spec)
             service = docker.services[service_id]
@@ -266,6 +283,112 @@ def recovery_client(tmp_path, docker, monkeypatch):
         ).execute()
 
     return run
+
+
+def test_recovery_confirms_defaulted_projection_but_posts_original_raw_spec(
+    tmp_path, docker, recovery_client
+):
+    from deploy.swarm.recovery import canonical, fingerprint
+
+    docker.insert_defaults = True
+    original = copy.deepcopy(docker.services)
+    tasks = copy.deepcopy(docker.tasks)
+    assert docker.service_projection("api")["Spec"] != original["api"]["Spec"]
+    recovery_client()
+    assert docker.update_requests == [
+        (role, 10, canonical(original[role]["Spec"])) for role in ("api", "worker")
+    ]
+    receipt = json.loads((tmp_path / "recovery.json").read_text())
+    for role in ("api", "worker"):
+        assert receipt["baseline"][role]["spec"] == fingerprint(original[role]["Spec"])
+        assert docker.services[role]["PreviousSpec"] == original[role]["Spec"]
+        assert "Resources" not in docker.services[role]["Spec"]["TaskTemplate"]
+    assert docker.tasks == tasks
+    assert docker.state["phase"] == "verified"
+
+
+@pytest.mark.parametrize("view", ["engine", "cli"])
+@pytest.mark.parametrize("field", ["ID", "Version"])
+def test_recovery_refuses_projection_identity_drift_before_begin(
+    tmp_path, docker, recovery_client, view, field
+):
+    docker.insert_defaults = True
+
+    def drift(source, value):
+        if source == view:
+            value[field] = "foreign-service" if field == "ID" else {"Index": 11}
+
+    docker.projection_fault = drift
+    with pytest.raises(RolloutError, match="identidade ou versão"):
+        recovery_client()
+    assert docker.state["phase"] == "verified"
+    assert not (tmp_path / "recovery.json").exists()
+    assert not docker.updates
+    assert not any("begin" in call for call in docker.calls)
+
+
+def test_defaulted_projections_cannot_mask_a_different_raw_current(
+    tmp_path, docker, recovery_client
+):
+    docker.insert_defaults = True
+    docker.services["worker"]["Spec"]["TaskTemplate"]["ContainerSpec"]["Image"] = OTHER
+
+    def mask(source, value):
+        value["Spec"]["TaskTemplate"]["ContainerSpec"]["Image"] = CURRENT
+
+    docker.projection_fault = mask
+    with pytest.raises(RolloutError, match="Current dos dois papéis"):
+        recovery_client()
+    assert not docker.updates
+    assert not (tmp_path / "recovery.json").exists()
+    assert not any("begin" in call for call in docker.calls)
+
+
+@pytest.mark.parametrize("field", ["Spec", "PreviousSpec"])
+@pytest.mark.parametrize("fault", ["env", "service", "image", "default"])
+def test_recovery_refuses_full_cli_projection_difference_before_begin(
+    tmp_path, docker, recovery_client, field, fault
+):
+    docker.insert_defaults = True
+
+    def mismatch(source, value):
+        if source != "cli":
+            return
+        spec = value[field]
+        if fault == "env":
+            spec["TaskTemplate"]["ContainerSpec"]["Env"] = ["KEY=OTHER_PRIVATE"]
+        elif fault == "service":
+            spec["Name"] = "fixture_other"
+        elif fault == "image":
+            spec["TaskTemplate"]["ContainerSpec"]["Image"] = OTHER
+        else:
+            spec["TaskTemplate"]["Resources"] = {"Limits": {"MemoryBytes": 1024}}
+
+    docker.projection_fault = mismatch
+    with pytest.raises(RolloutError, match="projeção com defaults") as error:
+        recovery_client()
+    assert "PRIVATE" not in str(error.value)
+    assert docker.state["phase"] == "verified"
+    assert not (tmp_path / "recovery.json").exists()
+    assert not docker.updates
+    assert not any("begin" in call for call in docker.calls)
+
+
+@pytest.mark.parametrize("field", ["ID", "Version"])
+def test_recovery_does_not_adopt_new_baseline_shared_by_both_projections(
+    tmp_path, docker, recovery_client, field
+):
+    docker.insert_defaults = True
+
+    def writer(source, value):
+        value[field] = "new-service" if field == "ID" else {"Index": 11}
+
+    docker.projection_fault = writer
+    with pytest.raises(RolloutError, match="identidade ou versão"):
+        recovery_client()
+    assert not docker.updates
+    assert not (tmp_path / "recovery.json").exists()
+    assert not any("begin" in call for call in docker.calls)
 
 
 def test_recovery_replaces_lost_history_without_restarting_tasks(tmp_path, docker, recovery_client):
@@ -893,6 +1016,8 @@ def unix_engine(monkeypatch):
         "status": 404,
         "body": {"message": "No such image: " + LOST},
         "posts": [],
+        "post_bytes": [],
+        "gets": [],
         "version": {"Version": "29.1.3", "ApiVersion": "1.52", "MinAPIVersion": "1.44"},
         "real_run": subprocess.run,
     }
@@ -902,6 +1027,7 @@ def unix_engine(monkeypatch):
             pass
 
         def do_GET(self):
+            state["gets"].append(self.path)
             status = 200
             if self.path == "/version":
                 value = state["version"]
@@ -913,6 +1039,8 @@ def unix_engine(monkeypatch):
                     "Status": {"State": "ready"},
                     "ManagerStatus": {"Reachability": "reachable"},
                 }
+            elif self.path in state.get("services", {}):
+                value = state["services"][self.path]
             else:
                 status, value = state["status"], state["body"]
             body = value.encode() if isinstance(value, str) else json.dumps(value).encode()
@@ -922,9 +1050,9 @@ def unix_engine(monkeypatch):
             self.wfile.write(body)
 
         def do_POST(self):
-            state["posts"].append(
-                (self.path, json.loads(self.rfile.read(int(self.headers["Content-Length"]))))
-            )
+            body = self.rfile.read(int(self.headers["Content-Length"]))
+            state["post_bytes"].append(body)
+            state["posts"].append((self.path, json.loads(body)))
             if state.get("post_disconnect"):
                 self.close_connection = True
                 return
@@ -1057,6 +1185,36 @@ def test_engine_other_failures_are_not_image_absence(unix_engine, tmp_path, stat
         engine.image(LOST)
     assert not isinstance(error.value, ImageMissing)
     assert "PRIVATE" not in str(error.value)
+
+
+def test_engine_keeps_raw_and_defaulted_reads_separate_from_original_cas_post(
+    unix_engine, tmp_path
+):
+    from deploy.swarm.recovery import EngineUnix, canonical
+
+    state, _ = unix_engine
+    raw = DockerFixture().services["api"]
+    projected = copy.deepcopy(raw)
+    projected["Spec"]["TaskTemplate"]["Resources"] = {}
+    state["services"] = {
+        "/v1.52/services/fixture_api?insertDefaults=false": raw,
+        "/v1.52/services/api?insertDefaults=true": projected,
+    }
+    state.update(post_status=200, post_body={})
+    engine = EngineUnix(Rollout(tmp_path, CURRENT, "fixture", False))
+    baseline = engine.service("fixture_api")
+    view = engine.service(baseline["ID"], insert_defaults=True)
+    assert baseline == raw
+    assert view == projected
+    engine.update(baseline["ID"], baseline["Version"]["Index"], canonical(baseline["Spec"]))
+    assert state["posts"] == [
+        (
+            "/v1.52/services/api/update?version=10&registryAuthFrom=spec&rollback=none",
+            raw["Spec"],
+        )
+    ]
+    assert state["post_bytes"] == [canonical(raw["Spec"])]
+    assert [path for path in state["gets"] if "/services/" in path] == list(state["services"])
 
 
 def test_engine_sends_original_cas_version_once(unix_engine, tmp_path):

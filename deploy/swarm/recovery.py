@@ -195,9 +195,10 @@ class EngineUnix:
             raise RolloutError("O Engine não confirmou identidade executável da imagem.")
         return value["Id"]
 
-    def service(self, name):
+    def service(self, name, *, insert_defaults=False):
+        projection = "true" if insert_defaults else "false"
         return self.request(
-            "GET", "/v1.52/services/" + quote(name, safe="") + "?insertDefaults=false"
+            "GET", "/v1.52/services/" + quote(name, safe="") + "?insertDefaults=" + projection
         )
 
     def container(self, cid):
@@ -513,12 +514,17 @@ class Recovery:
                 or spec["Mode"]["Replicated"]["Replicas"] < 1
             ):
                 raise RolloutError("A Current dos dois papéis deve ser a identidade esperada.")
+            # A CLI inspeciona com defaults; compare documentos da mesma projeção.
+            # Somente a leitura bruta acima fornece hashes e bytes para o POST CAS.
+            projected = self.engine.service(service["ID"], insert_defaults=True)
             cli = r.decoded("service", "inspect", f"{r.stack}_{role}")[0]
             if any(
-                cli.get(key) != service.get(key)
-                for key in ("ID", "Version", "Spec", "PreviousSpec")
+                view.get("ID") != service["ID"] or view.get("Version") != service["Version"]
+                for view in (projected, cli)
             ):
-                raise RolloutError("CLI e Engine não confirmam a mesma baseline.")
+                raise RolloutError("A identidade ou versão mudou entre as leituras da baseline.")
+            if any(cli.get(key) != projected.get(key) for key in ("Spec", "PreviousSpec")):
+                raise RolloutError("CLI e Engine divergem na projeção com defaults da baseline.")
             rows = r.observe(role)
             active = [row for row in rows if row["running"]]
             if (
