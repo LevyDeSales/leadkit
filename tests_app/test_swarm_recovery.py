@@ -327,6 +327,64 @@ def test_recovery_refuses_projection_identity_drift_before_begin(
     assert not any("begin" in call for call in docker.calls)
 
 
+@pytest.mark.parametrize("field", ["Spec", "PreviousSpec"])
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "absent",
+        "null",
+        "empty",
+        "list",
+        "name",
+        "task_template",
+        "container_spec",
+        "image",
+        "mode",
+        "replicated",
+        "replicas",
+        "boolean_replicas",
+    ],
+)
+def test_incomplete_projections_are_refused_before_begin(
+    tmp_path, docker, recovery_client, field, damage
+):
+    docker.insert_defaults = True
+
+    def incomplete(source, value):
+        if damage == "absent":
+            del value[field]
+        elif damage == "null":
+            value[field] = None
+        elif damage == "empty":
+            value[field] = {}
+        elif damage == "list":
+            value[field] = []
+        elif damage == "boolean_replicas":
+            value[field]["Mode"]["Replicated"]["Replicas"] = True
+        else:
+            paths = {
+                "name": ["Name"],
+                "task_template": ["TaskTemplate"],
+                "container_spec": ["TaskTemplate", "ContainerSpec"],
+                "image": ["TaskTemplate", "ContainerSpec", "Image"],
+                "mode": ["Mode"],
+                "replicated": ["Mode", "Replicated"],
+                "replicas": ["Mode", "Replicated", "Replicas"],
+            }
+            target = value[field]
+            for key in paths[damage][:-1]:
+                target = target[key]
+            del target[paths[damage][-1]]
+
+    docker.projection_fault = incomplete
+    with pytest.raises(RolloutError):
+        recovery_client()
+    assert docker.state["phase"] == "verified"
+    assert not (tmp_path / "recovery.json").exists()
+    assert not any("begin" in call for call in docker.calls)
+    assert not docker.updates
+
+
 def test_defaulted_projections_cannot_mask_a_different_raw_current(
     tmp_path, docker, recovery_client
 ):

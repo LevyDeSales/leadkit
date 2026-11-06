@@ -523,7 +523,24 @@ class Recovery:
                 for view in (projected, cli)
             ):
                 raise RolloutError("A identidade ou versão mudou entre as leituras da baseline.")
-            if any(cli.get(key) != projected.get(key) for key in ("Spec", "PreviousSpec")):
+            # Igualdade entre documentos ausentes não comprova inventário. Os
+            # campos essenciais da Current não são alterados pela interpolação;
+            # PreviousSpec não é interpolada e deve continuar íntegra como a RAW.
+            if any(
+                not isinstance(view["Spec"], dict)
+                or view["Spec"]["Name"] != spec["Name"]
+                or view["Spec"]["TaskTemplate"]["ContainerSpec"]["Image"]
+                != spec["TaskTemplate"]["ContainerSpec"]["Image"]
+                or canonical(view["Spec"]["Mode"]) != canonical(spec["Mode"])
+                or not isinstance(view["PreviousSpec"], dict)
+                or not view["PreviousSpec"]
+                or canonical(view["PreviousSpec"]) != canonical(service["PreviousSpec"])
+                for view in (projected, cli)
+            ):
+                raise RolloutError(
+                    "A projeção com defaults está incompleta ou diverge da baseline bruta."
+                )
+            if any(cli[key] != projected[key] for key in ("Spec", "PreviousSpec")):
                 raise RolloutError("CLI e Engine divergem na projeção com defaults da baseline.")
             rows = r.observe(role)
             active = [row for row in rows if row["running"]]

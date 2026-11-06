@@ -105,6 +105,8 @@ bruta. Como `docker service inspect` solicita defaults, uma segunda visão do En
 `insertDefaults=true` serve exclusivamente para comparar Spec/PreviousSpec completas com a CLI.
 As três leituras devem manter ID e versão originais; drift recusa a recuperação, sem adotar uma
 baseline nova nem enviar defaults interpolados no update.
+Documentos ausentes, nulos ou sem a estrutura essencial recusam antes de `begin`;
+PreviousSpec precisa também corresponder integralmente à RAW, pois não recebe defaults.
 Uma versão obsoleta é erro; não há refresh/retry automático. A disponibilidade interna continua
 conforme o contrato existente enquanto novas entregas participantes permanecem bloqueadas.
 
