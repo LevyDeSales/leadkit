@@ -363,7 +363,7 @@ raise SystemExit(rollout.main())
     competing = engine.service(f"{stack}_api")
     try:
         engine.update(service["ID"], service["Version"]["Index"], service["Spec"])
-    except RolloutError:
+    except recovery.UpdateRejected:
         pass
     else:
         raise AssertionError("CAS stale foi aceita.")
