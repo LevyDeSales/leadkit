@@ -51,7 +51,11 @@ class DockerFixture:
         for role in ("api", "worker"):
             spec = {
                 "Name": "fixture_" + role,
-                "TaskTemplate": {"ContainerSpec": {"Image": CURRENT, "Env": ["KEY=PRIVATE"]}},
+                "TaskTemplate": {
+                    "ContainerSpec": {"Image": CURRENT, "Env": ["KEY=PRIVATE"]},
+                    "Runtime": "container",
+                    "Networks": [{"Target": "fixture-network"}],
+                },
                 "Mode": {"Replicated": {"Replicas": 1}},
                 "EndpointSpec": {"Mode": "vip"},
             }
@@ -62,6 +66,15 @@ class DockerFixture:
                 "Version": {"Index": 10},
                 "Spec": spec,
                 "PreviousSpec": previous,
+                "Endpoint": {
+                    "Spec": {"Mode": "vip"},
+                    "VirtualIPs": [
+                        {
+                            "NetworkID": "fixture-network",
+                            "Addr": "198.51.100." + ("1" if role == "api" else "2") + "/24",
+                        }
+                    ],
+                },
             }
             cid = hashlib.sha256(role.encode()).hexdigest()
             self.tasks[role] = {
@@ -70,9 +83,16 @@ class DockerFixture:
                 "NodeID": "local-node",
                 "DesiredState": "running",
                 "Spec": copy.deepcopy(spec["TaskTemplate"]),
-                "Endpoint": {"Spec": spec["EndpointSpec"]},
+                "NetworksAttachments": [
+                    {
+                        "Network": {"ID": "fixture-network", "Spec": {"Name": "fixture-internal"}},
+                        "Addresses": ["198.51.100." + ("10" if role == "api" else "11") + "/24"],
+                    }
+                ],
                 "Status": {"State": "running", "ContainerStatus": {"ContainerID": cid}},
             }
+            # TaskFromGRPC omite Runtime para container; ServiceSpec o explicita.
+            self.tasks[role]["Spec"].pop("Runtime")
             self.containers[cid] = {
                 "Id": cid,
                 "Image": CURRENT,
@@ -83,6 +103,18 @@ class DockerFixture:
                     "Health": {"Status": "healthy"},
                 },
                 "Config": {"Labels": {"com.docker.swarm.task.id": role + "-task"}},
+                "NetworkSettings": {
+                    "Networks": {
+                        "fixture-internal": {
+                            "NetworkID": "fixture-network",
+                            "EndpointID": hashlib.sha256((role + "-endpoint").encode()).hexdigest(),
+                            "IPAddress": "198.51.100." + ("10" if role == "api" else "11"),
+                            "IPPrefixLen": 24,
+                            "GlobalIPv6Address": "",
+                            "GlobalIPv6PrefixLen": 0,
+                        }
+                    }
+                },
             }
 
     def service_projection(self, role, *, view="engine"):
@@ -449,6 +481,274 @@ def test_recovery_does_not_adopt_new_baseline_shared_by_both_projections(
     assert not any("begin" in call for call in docker.calls)
 
 
+def test_public_task_shape_recovers_with_service_endpoint_and_raw_cas(
+    tmp_path, docker, recovery_client
+):
+    from deploy.swarm.recovery import canonical
+
+    original = copy.deepcopy(docker.services)
+    tasks, containers = copy.deepcopy(docker.tasks), copy.deepcopy(docker.containers)
+    assert all("Endpoint" not in task and "SpecVersion" not in task for task in tasks.values())
+    assert all("Runtime" not in task["Spec"] for task in tasks.values())
+    recovery_client()
+    assert docker.update_requests == [
+        (role, 10, canonical(original[role]["Spec"])) for role in ("api", "worker")
+    ]
+    assert (docker.tasks, docker.containers) == (tasks, containers)
+    assert docker.state["phase"] == "verified"
+    assert (tmp_path / "recovery.json").exists()
+    assert "198.51.100" not in (tmp_path / "recovery.json").read_text()
+
+
+def test_public_vip_networks_support_multiple_networks_and_dual_stack(docker, recovery_client):
+    for role in ("api", "worker"):
+        service = docker.services[role]
+        task = docker.tasks[role]
+        service["Spec"]["TaskTemplate"]["Networks"].append({"Target": "fixture-two"})
+        task["Spec"]["Networks"] = copy.deepcopy(service["Spec"]["TaskTemplate"]["Networks"])
+        suffix = "10" if role == "api" else "11"
+        vip = "1" if role == "api" else "2"
+        service["Endpoint"]["VirtualIPs"].extend(
+            [
+                {"NetworkID": "fixture-two", "Addr": "203.0.113." + vip + "/24"},
+                {"NetworkID": "fixture-two", "Addr": "2001:db8:1::" + vip + "/64"},
+            ]
+        )
+        task["NetworksAttachments"].append(
+            {
+                "Network": {"ID": "fixture-two", "Spec": {"Name": "fixture-two"}},
+                "Addresses": ["203.0.113." + suffix + "/24", "2001:db8:1::" + suffix + "/64"],
+            }
+        )
+        cid = task["Status"]["ContainerStatus"]["ContainerID"]
+        docker.containers[cid]["NetworkSettings"]["Networks"]["fixture-two"] = {
+            "NetworkID": "fixture-two",
+            "EndpointID": hashlib.sha256((role + "-two").encode()).hexdigest(),
+            "IPAddress": "203.0.113." + suffix,
+            "IPPrefixLen": 24,
+            "GlobalIPv6Address": "2001:db8:1::" + suffix,
+            "GlobalIPv6PrefixLen": 64,
+        }
+    before = copy.deepcopy(docker.tasks), copy.deepcopy(docker.containers)
+    recovery_client()
+    assert docker.state["phase"] == "verified"
+    assert (docker.tasks, docker.containers) == before
+
+
+def test_public_vip_cidr_prefix_does_not_define_the_task_subnet(docker, recovery_client):
+    # O contrato EndpointVirtualIP usa o IP; o prefixo é compatibilidade de formato.
+    docker.services["api"]["Endpoint"]["VirtualIPs"][0]["Addr"] = "198.51.100.1/32"
+    recovery_client()
+    assert docker.state["phase"] == "verified"
+
+
+@pytest.mark.parametrize("runtime", ["", "container"])
+def test_explicit_container_runtime_representation_is_supported(docker, recovery_client, runtime):
+    docker.tasks["api"]["Spec"]["Runtime"] = runtime
+    recovery_client()
+    assert docker.state["phase"] == "verified"
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "runtime_unknown",
+        "runtime_null",
+        "runtime_missing_raw",
+        "runtime_plugin",
+        "runtime_attachment",
+        "container_spec_missing",
+        "container_spec_null",
+        "endpoint_missing",
+        "endpoint_null",
+        "endpoint_empty",
+        "endpoint_spec_missing",
+        "endpoint_spec_mismatch",
+        "endpoint_dnsrr",
+        "desired_ports",
+        "allocated_ports",
+        "task_ports",
+        "vips_missing",
+        "vips_empty",
+        "vip_extra_network",
+        "vip_duplicate",
+        "vip_invalid_address",
+        "vip_duplicate_family",
+        "desired_networks_empty",
+        "desired_network_duplicate",
+        "attachments_missing",
+        "attachments_empty",
+        "attachment_extra",
+        "attachment_duplicate",
+        "attachment_addresses_missing",
+        "attachment_ingress",
+        "container_networks_missing",
+        "container_networks_empty",
+        "container_extra_network",
+        "container_duplicate_network",
+        "container_endpoint_missing",
+        "container_endpoint_invalid",
+        "container_wrong_address",
+        "container_wrong_prefix",
+        "container_extra_address",
+        "task_container_extra_address",
+        "container_ipam_extra",
+        "container_ipv6_null",
+        "container_empty_family_prefix",
+        "attachment_ingress_invalid",
+    ],
+)
+def test_public_endpoint_network_runtime_fail_closed_before_begin(
+    tmp_path, docker, recovery_client, fault
+):
+    service = docker.services["api"]
+    task = docker.tasks["api"]
+    container = docker.containers[task["Status"]["ContainerStatus"]["ContainerID"]]
+    network = container["NetworkSettings"]["Networks"]["fixture-internal"]
+    endpoint = service["Endpoint"]
+    if fault == "runtime_unknown":
+        task["Spec"]["Runtime"] = "PRIVATE"
+    elif fault == "runtime_null":
+        task["Spec"]["Runtime"] = None
+    elif fault == "runtime_missing_raw":
+        del service["Spec"]["TaskTemplate"]["Runtime"]
+    elif fault == "runtime_plugin":
+        task["Spec"]["PluginSpec"] = {}
+    elif fault == "runtime_attachment":
+        task["Spec"]["NetworkAttachmentSpec"] = {}
+    elif fault == "container_spec_missing":
+        del task["Spec"]["ContainerSpec"]
+    elif fault == "container_spec_null":
+        task["Spec"]["ContainerSpec"] = None
+    elif fault == "endpoint_missing":
+        del service["Endpoint"]
+    elif fault == "endpoint_null":
+        service["Endpoint"] = None
+    elif fault == "endpoint_empty":
+        service["Endpoint"] = {}
+    elif fault == "endpoint_spec_missing":
+        del endpoint["Spec"]
+    elif fault == "endpoint_spec_mismatch":
+        endpoint["Spec"]["Mode"] = "dnsrr"
+    elif fault == "endpoint_dnsrr":
+        service["Spec"]["EndpointSpec"]["Mode"] = endpoint["Spec"]["Mode"] = "dnsrr"
+    elif fault == "desired_ports":
+        service["Spec"]["EndpointSpec"]["Ports"] = [{"TargetPort": 8080}]
+        endpoint["Spec"] = copy.deepcopy(service["Spec"]["EndpointSpec"])
+    elif fault == "allocated_ports":
+        endpoint["Ports"] = [{"TargetPort": 8080}]
+    elif fault == "task_ports":
+        task["Status"]["PortStatus"] = {"Ports": [{"TargetPort": 8080}]}
+    elif fault == "vips_missing":
+        del endpoint["VirtualIPs"]
+    elif fault == "vips_empty":
+        endpoint["VirtualIPs"] = []
+    elif fault == "vip_extra_network":
+        endpoint["VirtualIPs"].append({"NetworkID": "other", "Addr": "203.0.113.1/24"})
+    elif fault == "vip_duplicate":
+        endpoint["VirtualIPs"] *= 2
+    elif fault == "vip_invalid_address":
+        endpoint["VirtualIPs"][0]["Addr"] = "PRIVATE"
+    elif fault == "vip_duplicate_family":
+        endpoint["VirtualIPs"].append({"NetworkID": "fixture-network", "Addr": "198.51.100.3/24"})
+    elif fault in {"desired_networks_empty", "desired_network_duplicate"}:
+        values = [] if fault == "desired_networks_empty" else [{"Target": "fixture-network"}] * 2
+        service["Spec"]["TaskTemplate"]["Networks"] = values
+        task["Spec"]["Networks"] = copy.deepcopy(values)
+    elif fault == "attachments_missing":
+        del task["NetworksAttachments"]
+    elif fault == "attachments_empty":
+        task["NetworksAttachments"] = []
+    elif fault == "attachment_extra":
+        extra = copy.deepcopy(task["NetworksAttachments"][0])
+        extra["Network"]["ID"] = "other"
+        task["NetworksAttachments"].append(extra)
+    elif fault == "attachment_duplicate":
+        task["NetworksAttachments"] *= 2
+    elif fault == "attachment_addresses_missing":
+        del task["NetworksAttachments"][0]["Addresses"]
+    elif fault == "attachment_ingress":
+        task["NetworksAttachments"][0]["Network"]["Spec"]["Ingress"] = True
+    elif fault == "container_networks_missing":
+        del container["NetworkSettings"]
+    elif fault == "container_networks_empty":
+        container["NetworkSettings"]["Networks"] = {}
+    elif fault in {"container_extra_network", "container_duplicate_network"}:
+        extra = copy.deepcopy(network)
+        if fault == "container_extra_network":
+            extra["NetworkID"] = "other"
+        container["NetworkSettings"]["Networks"]["other"] = extra
+    elif fault == "container_endpoint_missing":
+        del network["EndpointID"]
+    elif fault == "container_endpoint_invalid":
+        network["EndpointID"] = "PRIVATE"
+    elif fault == "container_wrong_address":
+        network["IPAddress"] = "198.51.100.12"
+    elif fault == "container_wrong_prefix":
+        network["IPPrefixLen"] = 25
+    elif fault in {"container_extra_address", "task_container_extra_address"}:
+        network.update(GlobalIPv6Address="2001:db8::10", GlobalIPv6PrefixLen=64)
+        if fault == "task_container_extra_address":
+            task["NetworksAttachments"][0]["Addresses"].append("2001:db8::10/64")
+    elif fault == "container_ipam_extra":
+        network["IPAMConfig"] = {"LinkLocalIPs": ["169.254.1.1"]}
+    elif fault == "container_ipv6_null":
+        network["GlobalIPv6Address"] = None
+    elif fault == "container_empty_family_prefix":
+        network["GlobalIPv6PrefixLen"] = 64
+    elif fault == "attachment_ingress_invalid":
+        task["NetworksAttachments"][0]["Network"]["Spec"]["Ingress"] = 0
+    with pytest.raises(RolloutError) as error:
+        recovery_client()
+    assert "PRIVATE" not in str(error.value)
+    assert "198.51." not in str(error.value)
+    assert docker.state["phase"] == "verified"
+    assert not (tmp_path / "recovery.json").exists()
+    assert not any("begin" in call for call in docker.calls)
+    assert not docker.updates
+
+
+@pytest.mark.parametrize("view", ["engine", "cli"])
+def test_endpoint_drift_between_same_version_views_is_refused(
+    tmp_path, docker, recovery_client, view
+):
+    def drift(source, value):
+        if source == view:
+            value["Endpoint"]["VirtualIPs"][0]["Addr"] = "198.51.100.3/24"
+
+    docker.projection_fault = drift
+    with pytest.raises(RolloutError, match="endpoint público"):
+        recovery_client()
+    assert docker.state["phase"] == "verified"
+    assert not docker.updates
+    assert not (tmp_path / "recovery.json").exists()
+
+
+@pytest.mark.parametrize("change", ["vip", "endpoint_id", "task_and_container_address"])
+def test_public_network_facts_are_frozen_across_updates(docker, recovery_client, change):
+    def changed(role):
+        if role != "api":
+            return
+        service = docker.services["api"]
+        task = docker.tasks["api"]
+        network = docker.containers[task["Status"]["ContainerStatus"]["ContainerID"]][
+            "NetworkSettings"
+        ]["Networks"]["fixture-internal"]
+        if change == "vip":
+            service["Endpoint"]["VirtualIPs"][0]["Addr"] = "198.51.100.3/24"
+        elif change == "endpoint_id":
+            network["EndpointID"] = "f" * 64
+        else:
+            task["NetworksAttachments"][0]["Addresses"] = ["198.51.100.12/24"]
+            network["IPAddress"] = "198.51.100.12"
+
+    docker.after_update = changed
+    with pytest.raises(RolloutError):
+        recovery_client()
+    assert docker.state["phase"] == "blocked"
+    assert not any("attest" in call for call in docker.calls)
+
+
 def test_recovery_replaces_lost_history_without_restarting_tasks(tmp_path, docker, recovery_client):
     before = copy.deepcopy(docker.tasks), copy.deepcopy(docker.containers)
     receipt = tmp_path / "recovery.json"
@@ -548,7 +848,7 @@ def test_preconditions_refuse_before_begin(docker, recovery_client, fault):
     elif fault == "dirty":
         docker.tasks["api"]["Spec"]["ContainerSpec"]["Env"] = ["OTHER=PRIVATE"]
     elif fault == "endpoint":
-        docker.tasks["api"]["Endpoint"] = {"Spec": {"Mode": "dnsrr"}}
+        docker.services["api"]["Endpoint"]["Spec"] = {"Mode": "dnsrr"}
     elif fault == "other_image":
         docker.services["worker"]["Spec"]["TaskTemplate"]["ContainerSpec"]["Image"] = OTHER
     elif fault == "schema":

@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import http.client
+import ipaddress
 import json
 import os
 import re
@@ -489,6 +490,116 @@ class Recovery:
         ):
             raise RolloutError("O gate não confirma piso3/blocked e epoch próprio; não atualize.")
 
+    def public_endpoint(self, service, projected, cli):
+        """Confere apenas o endpoint público suportado: VIP sem portas publicadas."""
+        desired = service["Spec"]["EndpointSpec"]
+        endpoint = service["Endpoint"]
+        if (
+            desired.get("Mode") != "vip"
+            or set(desired) - {"Mode", "Ports"}
+            or desired.get("Ports", []) != []
+            or not isinstance(endpoint, dict)
+            or canonical(endpoint["Spec"]) != canonical(desired)
+            or endpoint.get("Ports", []) != []
+        ):
+            raise RolloutError("Recuperação exige endpoint VIP alocado, sem portas publicadas.")
+        if any(canonical(view["Endpoint"]) != canonical(endpoint) for view in (projected, cli)):
+            raise RolloutError("O endpoint público divergiu entre as leituras da baseline.")
+        return endpoint
+
+    def public_networks(self, spec, endpoint, task, container):
+        """Vincula redes e endereços públicos; não observa Task.Endpoint interno."""
+
+        def addresses(values):
+            if not isinstance(values, list) or not values:
+                raise RolloutError("Endereços públicos ausentes ou inválidos para recuperação.")
+            result = set()
+            for value in values:
+                if not isinstance(value, str) or "/" not in value:
+                    raise RolloutError("Endereços públicos ausentes ou inválidos para recuperação.")
+                address = ipaddress.ip_interface(value)
+                if address.ip.is_unspecified or address.ip.is_multicast or address in result:
+                    raise RolloutError("Endereços públicos ausentes ou inválidos para recuperação.")
+                result.add(address)
+            return result
+
+        configs = spec["TaskTemplate"]["Networks"]
+        if not isinstance(configs, list) or not configs:
+            raise RolloutError("Redes desejadas ausentes ou inválidas para recuperação.")
+        targets = [row["Target"] for row in configs]
+        if any(not re.fullmatch(r"[a-zA-Z0-9_-]{1,128}", value) for value in targets) or len(
+            set(targets)
+        ) != len(targets):
+            raise RolloutError("Redes desejadas ausentes ou inválidas para recuperação.")
+        vips = {}
+        for row in endpoint["VirtualIPs"]:
+            key = row["NetworkID"]
+            vips.setdefault(key, []).append(row["Addr"])
+        if set(vips) != set(targets):
+            raise RolloutError("VIPs não correspondem às redes desejadas.")
+        vips = {key: addresses(values) for key, values in vips.items()}
+        if any(len({value.version for value in values}) != len(values) for values in vips.values()):
+            raise RolloutError("VIPs duplicados na mesma família de endereços.")
+        attached = {}
+        for row in task["NetworksAttachments"]:
+            key = row["Network"]["ID"]
+            ingress = row["Network"]["Spec"].get("Ingress", False)
+            if key in attached or type(ingress) is not bool or ingress:
+                raise RolloutError("Redes da task são duplicadas ou estão fora do contrato VIP.")
+            attached[key] = addresses(row["Addresses"])
+        if (
+            set(attached) != set(targets)
+            or task["Status"].get("PortStatus", {}).get("Ports", []) != []
+        ):
+            raise RolloutError("Redes ou portas da task divergem do contrato VIP.")
+        runtime = container["NetworkSettings"]["Networks"]
+        if not isinstance(runtime, dict) or not runtime:
+            raise RolloutError("Redes do container ausentes ou inválidas para recuperação.")
+        executions = {}
+        for row in runtime.values():
+            key = row["NetworkID"]
+            if key in executions or not re.fullmatch(r"[a-f0-9]{64}", row["EndpointID"]):
+                raise RolloutError("Vínculo de rede do container inválido para recuperação.")
+            observed = []
+            for field, prefix, family in (
+                ("IPAddress", "IPPrefixLen", 4),
+                ("GlobalIPv6Address", "GlobalIPv6PrefixLen", 6),
+            ):
+                value = row.get(field, "")
+                length = row.get(prefix, 0)
+                if not isinstance(value, str) or type(length) is not int or (not value and length):
+                    raise RolloutError("Endereço do container inválido para recuperação.")
+                if value:
+                    if prefix not in row or ipaddress.ip_address(value).version != family:
+                        raise RolloutError("Endereço do container inválido para recuperação.")
+                    observed.append(f"{value}/{length}")
+            ipam = row.get("IPAMConfig")
+            if ipam is not None and (
+                ipam.get("LinkLocalIPs", []) != []
+                or any(
+                    ipam.get(field, "") not in {"", row.get(actual, "")}
+                    for field, actual in (
+                        ("IPv4Address", "IPAddress"),
+                        ("IPv6Address", "GlobalIPv6Address"),
+                    )
+                )
+            ):
+                raise RolloutError("Endereços adicionais do container estão fora do contrato VIP.")
+            observed = addresses(observed)
+            if key not in attached or observed != attached[key]:
+                raise RolloutError("Endereços do container não correspondem à task.")
+            # EndpointVirtualIP não oferece prova da sub-rede pelo prefixo CIDR.
+            # A rede é vinculada pelo ID; os IPs da execução vêm da task/container.
+            if {value.version for value in observed} != {value.version for value in vips[key]}:
+                raise RolloutError("A execução contém família de endereço sem VIP correspondente.")
+            executions[key] = {
+                "endpoint": row["EndpointID"],
+                "addresses": sorted(map(str, observed)),
+            }
+        if set(executions) != set(targets):
+            raise RolloutError("O container não está vinculado a todas as redes desejadas.")
+        return executions
+
     def snapshot(self):
         r = self.r
         self.engine.confirm()
@@ -542,6 +653,7 @@ class Recovery:
                 )
             if any(cli[key] != projected[key] for key in ("Spec", "PreviousSpec")):
                 raise RolloutError("CLI e Engine divergem na projeção com defaults da baseline.")
+            endpoint = self.public_endpoint(service, projected, cli)
             rows = r.observe(role)
             active = [row for row in rows if row["running"]]
             if (
@@ -563,6 +675,23 @@ class Recovery:
                 task = r.tracked[role][row["id"]]
                 expected = copy.deepcopy(spec["TaskTemplate"])
                 actual = copy.deepcopy(task["Spec"])
+                # Moby explicita Runtime=container na ServiceSpec, mas o omite
+                # na Task pública. Só esse runtime comprovado pode ser preenchido.
+                if (
+                    expected.get("Runtime") != "container"
+                    or actual.get("Runtime", "") not in {"", "container"}
+                    or any(
+                        key in value
+                        for value in (expected, actual)
+                        for key in ("PluginSpec", "NetworkAttachmentSpec")
+                    )
+                    or not isinstance(actual["ContainerSpec"], dict)
+                    or actual["ContainerSpec"]["Image"] != expected["ContainerSpec"]["Image"]
+                ):
+                    raise RolloutError(
+                        "Runtime da task não comprova execução container da Current."
+                    )
+                actual["Runtime"] = "container"
                 # SwarmKit ignora PullOptions de tasks já running. Qualquer outra
                 # diferença é recusada conservadoramente, inclusive placement.
                 expected["ContainerSpec"].pop("PullOptions", None)
@@ -570,8 +699,7 @@ class Recovery:
                 if (
                     task["DesiredState"] != "running"
                     or task["ServiceID"] != service["ID"]
-                    or expected != actual
-                    or task.get("Endpoint", {}).get("Spec", {}) != spec.get("EndpointSpec", {})
+                    or canonical(expected) != canonical(actual)
                 ):
                     raise RolloutError("Uma task está suja em relação à Current ou endpoint.")
                 container = self.engine.container(row["container_id"])
@@ -594,6 +722,7 @@ class Recovery:
                         "task": row,
                         "started_at": container["State"]["StartedAt"],
                         "restarts": container["RestartCount"],
+                        "networks": self.public_networks(spec, endpoint, task, container),
                     }
                 )
             result[role] = {
@@ -604,6 +733,7 @@ class Recovery:
                 "previous_ref": service["PreviousSpec"]["TaskTemplate"]["ContainerSpec"]["Image"],
                 "tasks": fingerprint(
                     {
+                        "endpoint": endpoint,
                         "active": sorted(executions, key=lambda row: row["task"]["id"]),
                         "retired": sorted(
                             [row for row in rows if row not in active], key=lambda row: row["id"]

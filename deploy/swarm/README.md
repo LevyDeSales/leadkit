@@ -91,10 +91,28 @@ IDs, referências, hashes, versões, epoch e progresso; Spec/Env integrais ficam
 
 O helper prova ausência somente pelo404 exato de ImageInspect da referência esperada no mesmo
 daemon. Permissão, timeout, JSON inválido,500 ou404 de outra rota não autorizam recuperação.
-Current, tasks e containers precisam estar saudáveis, locais e sem reinícios; TaskTemplate e
-endpoint precisam corresponder à Current. Diferença de placement também é recusada por cautela.
-A exceção de PullOptions aplica-se somente às tasks comprovadamente running. Colisão de alias,
-atualização/rollback em andamento ou inventário incompleto impede begin.
+Current, tasks e containers precisam estar saudáveis, locais e sem reinícios. A TaskSpec pública
+precisa corresponder à TaskTemplate bruta, inclusive placement. A exceção de PullOptions aplica-se
+somente às tasks comprovadamente running. Moby explicita `Runtime=container` na ServiceSpec e
+omite esse campo na Task pública: somente essa representação de container é preenchida na cópia
+de comparação, exigindo ContainerSpec/imagem válidos e recusando runtimes desconhecidos ou
+contraditórios. A RAW e o corpo do POST permanecem intactos.
+
+Este modo aceita somente **VIP sem portas publicadas**. Exige Service.Endpoint presente e
+Endpoint.Spec integral igual à RAW.EndpointSpec nas mesmas leituras de ID/Version. Os IDs de
+TaskTemplate.Networks, NetworksAttachments, redes do container e VIPs precisam corresponder,
+sem ausências, duplicatas ou redes extras. Endereços e prefixos da task precisam coincidir com
+os do container. VIPs são vinculados pelo ID da rede, com endereço válido e no máximo um por
+família em cada rede, nas mesmas famílias da execução; seu prefixo CIDR não comprova a sub-rede
+da task. Portas publicadas,
+endereços extras e dados incompletos recusam antes de begin. Endpoint, VIPs e vínculos de rede/endereços são congelados nos hashes e
+nas coletas antes/depois. Colisão de alias ou atualização/rollback em andamento também recusa.
+
+**Limite da prova:** a API pública não expõe Task.Endpoint nem SpecVersion internas. Esses
+controles comprovam o endpoint ativo do serviço e a vinculação pública da execução às redes;
+não equivalem integralmente a IsTaskDirty da SwarmKit. Um fato interno invisível ainda pode
+causar recriação no update; a checagem posterior detecta a mudança, mas não a desfaz. Ensaio real
+e homologação com preservação observada das execuções continuam obrigatórios antes de produção.
 
 Após confirmar `begin` com piso3/blocked e epoch próprio, cada serviço recebe sua **mesma Spec
 integral**, sem force, scale, migrations, stack deploy, imagem nova ou mudança das políticas de
