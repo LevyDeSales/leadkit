@@ -26,11 +26,31 @@
   // Página do pedido: o envio deu certo, o rascunho deste formulário sai do aparelho.
   const sent = document.body.dataset.clearDraft;
   if (sent && store) {
+    store.removeItem(`partial:${sent}`);
     Object.keys(store)
       .filter((key) => key.startsWith(`${PREFIX}${sent}:`))
       .forEach((key) => store.removeItem(key));
   }
 
+  // O fragmento não vai ao servidor nem ao log de acesso. Remova-o antes de qualquer requisição.
+  const partialSlug = /^\/p\/([^/]+)$/.exec(window.location.pathname)?.[1];
+  const resumeToken = new URLSearchParams(window.location.hash.slice(1)).get("resume")
+    || (partialSlug && store && !form?.elements.namedItem("_partial_token")?.value ? store.getItem(`partial:${partialSlug}`) : null);
+  if (resumeToken && !preview && /^\/p\/[^/]+$/.test(window.location.pathname)) {
+    if (store && partialSlug) store.removeItem(`partial:${partialSlug}`);
+    history.replaceState(null, "", window.location.pathname);
+    const exchange = document.createElement("form");
+    exchange.method = "post";
+    exchange.action = window.location.pathname + "/retomar";
+    const input = document.createElement("input");
+    input.type = "hidden";
+    input.name = "token";
+    input.value = resumeToken;
+    exchange.append(input);
+    document.body.append(exchange);
+    exchange.submit();
+    return;
+  }
   if (!form) return;
   const steps = [...form.querySelectorAll("[data-step]")];
   const bar = form.querySelector("[data-progress]");
@@ -205,7 +225,57 @@
     return controls(scope).find((field) => !field.checkValidity());
   }
 
-  function next() {
+  let savingPartial = false;
+  let pendingSave = null;
+  let partialRevision = Number(form.dataset.partialRevision) || 0;
+  function rememberPartial(token) {
+    const slug = form.action.split("/").filter(Boolean).pop();
+    try { if (store) store.setItem(`partial:${slug}`, token); } catch (error) { /* o link continua disponível na tela */ }
+    const link = form.querySelector("[data-resume-link]");
+    link.href = form.action.replace(/\/$/, "") + "#resume=" + encodeURIComponent(token);
+    form.querySelector("[data-resume-link-wrap]").hidden = false;
+  }
+  const initialPartial = form.elements.namedItem("_partial_token");
+  if (initialPartial?.value) rememberPartial(initialPartial.value);
+
+  async function savePartial() {
+    if (!form.dataset.partialUrl || preview) return true;
+    const notice = form.querySelector("[data-partial-status]");
+    const tokenField = form.elements.namedItem("_partial_token");
+    const data = new FormData(form);
+    const allowed = new Set(steps.slice(0, current + 1).flatMap((step) =>
+      [...step.querySelectorAll("[data-question]")].map((q) => q.dataset.question)));
+    const found = Object.fromEntries(Object.entries(answers()).filter(([name]) => allowed.has(name)));
+    const tracking = {};
+    for (const [name, value] of data) if (name.startsWith("_t_")) tracking[name.slice(3)] = value;
+    const payload = {step: current, revision: partialRevision, answers: found, tracking,
+      consent: {privacy: data.get("_privacy") === "1", text_version: data.get("_consent_version"),
+        marketing_email: data.has("_mkt_email"), marketing_whatsapp: data.has("_mkt_whatsapp")}};
+    if (tokenField.value) payload.token = tokenField.value;
+    const fingerprint = JSON.stringify(payload);
+    if (!pendingSave) pendingSave = {fingerprint, payload: {...payload, request_id: crypto.randomUUID()}};
+    const submittedFingerprint = pendingSave.fingerprint;
+    notice.textContent = "Salvando suas respostas…";
+    try {
+      const response = await fetch(form.dataset.partialUrl, {method: "POST",
+        headers: {"Content-Type": "application/json"}, body: JSON.stringify(pendingSave.payload)});
+      if (!response.ok) throw new Error("save_failed");
+      const saved = await response.json();
+      tokenField.value = saved.token;
+      partialRevision = saved.revision;
+      pendingSave = null;
+      rememberPartial(saved.token);
+      notice.textContent = "Respostas salvas. Guarde o link para retomar em outro aparelho.";
+      if (submittedFingerprint !== fingerprint) return savePartial();
+      return true;
+    } catch (error) {
+      notice.textContent = "Não foi possível confirmar o salvamento. Suas respostas continuam nesta tela; tente continuar novamente.";
+      return false;
+    }
+  }
+
+  async function next() {
+    if (savingPartial) return;
     if (!preview) { // a prévia anda pelas etapas sem exigir as respostas
       const invalid = firstInvalid(steps[current]);
       if (invalid) {
@@ -213,11 +283,16 @@
         return;
       }
     }
+    savingPartial = true;
+    const saved = await savePartial();
+    savingPartial = false;
+    if (!saved) return;
     const after = openSteps().find((i) => i > current);
     if (after !== undefined) show(after, true);
   }
 
   function back() {
+    if (savingPartial) return;
     const before = openSteps().filter((i) => i < current).pop();
     if (before !== undefined) show(before, true);
   }
@@ -233,6 +308,7 @@
   form.addEventListener("change", () => refresh(true));
 
   form.addEventListener("submit", (event) => {
+    if (savingPartial) { event.preventDefault(); return; }
     const open = openSteps();
     if (current !== open[open.length - 1]) { // Enter numa etapa do meio vale como "Continuar"
       event.preventDefault();
@@ -272,7 +348,7 @@
   });
 
   const key = form.dataset.draftKey;
-  if (!store || !key) return;
+  if (!store || !key || form.dataset.partialUrl) return;
   const fields = [...form.querySelectorAll("[data-draft]")];
   const status = form.querySelector("[data-save-status]");
   const isBox = (field) => field.type === "radio" || field.type === "checkbox";
